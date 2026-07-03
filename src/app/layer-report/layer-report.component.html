@@ -1,0 +1,25 @@
+<div class="module-container">
+  <div class="module-header">
+    <div>
+      <h3>Layer Report</h3>
+      <p class="subtitle">{{ currentFarm?.farm_name }}</p>
+    </div>
+    <button class="btn-generate" (click)="generatePDF()" [disabled]="isGenerating">
+      {{ isGenerating ? 'Generating...' : '📄 Generate PDF Report' }}
+    </button>
+  </div>
+
+  <div class="summary-grid" *ngIf="batches.length > 0">
+    <div class="summary-card"><div class="card-label">Total Batches</div><div class="card-value">{{ batches.length }}</div></div>
+    <div class="summary-card"><div class="card-label">Total Eggs Collected</div><div class="card-value">{{ totalEggs | number }}</div></div>
+    <div class="summary-card"><div class="card-label">Egg Sales</div><div class="card-value">Rs. {{ totalEggSales | number:'1.0-0' }}</div></div>
+    <div class="summary-card"><div class="card-label">Total Mortality</div><div class="card-value">{{ totalMortality | number }}</div></div>
+  </div>
+
+  <div class="sections-list">
+    <div class="section-item"><span>🥚 Egg Collection</span><span>{{ eggCollections.length }} records</span></div>
+    <div class="section-item"><span>🛒 Egg Sales</span><span>{{ eggSales.length }} records</span></div>
+    <div class="section-item"><span>💉 Vaccinations</span><span>{{ vaccinations.length }} records</span></div>
+    <div class="section-item"><span>⚠️ Mortality</span><span>{{ mortalities.length }} records</span></div>
+  </div>
+</div>

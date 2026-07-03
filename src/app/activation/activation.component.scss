@@ -1,0 +1,155 @@
+.activation-container {
+  width: 100vw;
+  height: 100vh;
+  background: #f0f4f8;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.activation-card {
+  background: white;
+  border-radius: 16px;
+  padding: 40px 36px;
+  width: 460px;
+  box-shadow: 0 4px 24px rgba(0,0,0,0.08);
+}
+
+.logo-section {
+  text-align: center;
+  margin-bottom: 28px;
+
+  img {
+    width: 80px;
+    height: 80px;
+    object-fit: contain;
+    border-radius: 12px;
+    margin-bottom: 10px;
+  }
+
+  h1 {
+    font-size: 20px;
+    font-weight: 700;
+    color: #1a1a1a;
+    margin: 0 0 4px;
+  }
+
+  p {
+    font-size: 13px;
+    color: #888;
+    margin: 0;
+  }
+}
+
+.machine-id-section {
+  background: #f8f9fa;
+  border-radius: 10px;
+  padding: 16px;
+  margin-bottom: 24px;
+}
+
+.section-label {
+  font-size: 12px;
+  font-weight: 600;
+  color: #666;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  margin-bottom: 10px;
+}
+
+.machine-id-box {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  background: white;
+  border: 1.5px solid #e0e0e0;
+  border-radius: 8px;
+  padding: 10px 14px;
+  margin-bottom: 10px;
+}
+
+.machine-id-text {
+  font-family: monospace;
+  font-size: 13px;
+  color: #333;
+  word-break: break-all;
+}
+
+.copy-btn {
+  background: #e8f5e9;
+  color: #1a5c38;
+  border: none;
+  padding: 6px 12px;
+  border-radius: 6px;
+  font-size: 12px;
+  cursor: pointer;
+  white-space: nowrap;
+  margin-left: 10px;
+  &:hover { background: #c8e6c9; }
+}
+
+.hint {
+  font-size: 12px;
+  color: #888;
+  margin: 0;
+  line-height: 1.5;
+}
+
+.form-group {
+  margin-bottom: 18px;
+
+  label {
+    display: block;
+    font-size: 13px;
+    font-weight: 500;
+    color: #444;
+    margin-bottom: 7px;
+  }
+
+  input {
+    width: 100%;
+    padding: 12px 14px;
+    border: 1.5px solid #e0e0e0;
+    border-radius: 8px;
+    font-size: 14px;
+    font-family: monospace;
+    outline: none;
+    box-sizing: border-box;
+    letter-spacing: 2px;
+    &:focus { border-color: #1a5c38; }
+  }
+}
+
+.error-message {
+  color: #e53935;
+  font-size: 13px;
+  margin-bottom: 14px;
+  text-align: center;
+  background: #fce4ec;
+  padding: 10px;
+  border-radius: 8px;
+}
+
+.activate-btn {
+  width: 100%;
+  padding: 13px;
+  background: #1a5c38;
+  color: white;
+  border: none;
+  border-radius: 8px;
+  font-size: 15px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background 0.2s;
+  margin-bottom: 16px;
+
+  &:hover { background: #144d2e; }
+  &:disabled { background: #aaa; cursor: not-allowed; }
+}
+
+.contact-info {
+  text-align: center;
+  font-size: 12px;
+  color: #aaa;
+  p { margin: 0; }
+}

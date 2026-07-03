@@ -1,0 +1,157 @@
+<div class="module-container">
+
+  <div class="module-header">
+    <div>
+      <h3>Flock Management</h3>
+      <p class="subtitle">{{ currentFarm?.farm_name }}</p>
+    </div>
+    <button
+      class="btn-primary"
+      [disabled]="isSaving"
+      (click)="addNewRow()"
+      *ngIf="!showNewRow">
+      + Add Flock
+    </button>
+  </div>
+
+  <!-- Empty state -->
+  <div class="empty-state" *ngIf="flocks.length === 0 && !showNewRow">
+    <p>No flocks yet. Click "Add Flock" to create your first flock.</p>
+  </div>
+
+  <div class="table-card" *ngIf="flocks.length > 0 || showNewRow">
+    <table>
+      <thead>
+        <tr>
+          <th>Flock Name</th>
+          <th>Start Date</th>
+          <th>End Date</th>
+          <th>Status</th>
+          <th>Actions</th>
+        </tr>
+      </thead>
+      <tbody>
+
+        <!-- NEW ROW -->
+        <tr *ngIf="showNewRow" class="new-row">
+          <td>
+            <input class="inline-input" type="text"
+              [(ngModel)]="newRow.flock_name"
+              placeholder="e.g. F#1-Y26" />
+          </td>
+          <td>
+            <input class="inline-input" type="date"
+              [(ngModel)]="newRow.start_date" />
+          </td>
+          <td>
+            <input class="inline-input" type="date"
+              [(ngModel)]="newRow.end_date" />
+          </td>
+          <td>
+            <select class="inline-input" [(ngModel)]="newRow.status" (ngModelChange)="onStatusChangeForNew()">
+              <option value="active">Active</option>
+              <option value="closed">Closed</option>
+            </select>
+          </td>
+          <td class="actions">
+            <button
+              class="btn-save"
+              [disabled]="isSaving"
+              (click)="saveNewRow()">
+              {{ isSaving ? 'Saving…' : 'Save' }}
+            </button>
+            <button
+              class="btn-cancel-edit"
+              [disabled]="isSaving"
+              (click)="cancelNewRow()">
+              Cancel
+            </button>
+          </td>
+        </tr>
+
+        <!-- EXISTING FLOCKS -->
+        <tr *ngFor="let flock of flocks"
+          [class.editing]="editingId === flock.flock_id"
+          [class.closed-row]="flock.status === 'closed'">
+
+          <!-- VIEW MODE -->
+          <ng-container *ngIf="editingId !== flock.flock_id">
+            <td class="flock-name">{{ flock.flock_name }}</td>
+            <td>{{ flock.start_date | dateOnly }}</td>
+            <td>{{ flock.end_date ? (flock.end_date | dateOnly) : '—' }}</td>
+            <td>
+              <span class="status-badge"
+                [class.active]="flock.status === 'active'"
+                [class.closed]="flock.status === 'closed'">
+                {{ flock.status }}
+              </span>
+            </td>
+            <td class="actions">
+              <button
+                class="btn-edit"
+                [disabled]="isSaving"
+                (click)="startEdit(flock)">
+                Edit
+              </button>
+              <button
+                class="btn-delete"
+                [disabled]="isSaving"
+                (click)="confirmDelete(flock.flock_id)">
+                Delete
+              </button>
+            </td>
+          </ng-container>
+
+          <!-- EDIT MODE -->
+          <ng-container *ngIf="editingId === flock.flock_id">
+            <td>
+              <input class="inline-input" type="text"
+                [(ngModel)]="editForm.flock_name" />
+            </td>
+            <td>
+              <input class="inline-input" type="date"
+                [(ngModel)]="editForm.start_date" />
+            </td>
+            <td>
+              <input class="inline-input" type="date"
+                [(ngModel)]="editForm.end_date" />
+            </td>
+            <td>
+              <select class="inline-input" [(ngModel)]="editForm.status" (ngModelChange)="onStatusChangeForEdit()">
+                <option value="active">Active</option>
+                <option value="closed">Closed</option>
+              </select>
+            </td>
+            <td class="actions">
+              <button
+                class="btn-save"
+                [disabled]="isSaving"
+                (click)="saveEdit(flock.flock_id)">
+                {{ isSaving ? 'Saving…' : 'Save' }}
+              </button>
+              <button
+                class="btn-cancel-edit"
+                [disabled]="isSaving"
+                (click)="cancelEdit()">
+                Cancel
+              </button>
+            </td>
+          </ng-container>
+
+        </tr>
+      </tbody>
+    </table>
+  </div>
+
+</div>
+
+<app-confirm-dialog
+  *ngIf="showDeleteDialog"
+  title="Delete Flock"
+  message="This will permanently delete the flock and ALL its data including expenses, ledgers, medicine, sales, income and health records. This cannot be undone."
+  confirmText="Delete"
+  cancelText="Cancel"
+  type="danger"
+  (confirmed)="onDeleteConfirmed()"
+  (cancelled)="onDeleteCancelled()"
+/>

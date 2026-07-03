@@ -1,0 +1,47 @@
+<div class="activation-container">
+  <div class="activation-card">
+
+    <div class="logo-section">
+      <img src="logo.jpeg" alt="S&G" class="activation-logo"/>
+      <h1>S&G Protien Farm</h1>
+      <p>Software Activation</p>
+    </div>
+
+    <div class="machine-id-section">
+      <div class="section-label">Your Machine ID</div>
+      <div class="machine-id-box">
+        <span class="machine-id-text">{{ machineId }}</span>
+        <button class="copy-btn" (click)="copyMachineId()"
+          title="Copy to clipboard">
+          📋 Copy
+        </button>
+      </div>
+      <p class="hint">
+        Send this Machine ID to your software provider
+        to receive your activation code.
+      </p>
+    </div>
+
+    <div class="form-group">
+      <label>Activation Code</label>
+      <input type="text" [(ngModel)]="activationCode"
+        placeholder="e.g. SNG-XXXX-XXXX"
+        (keyup.enter)="activate()"
+        style="text-transform: uppercase"/>
+    </div>
+
+    <div class="error-message" *ngIf="errorMessage">
+      {{ errorMessage }}
+    </div>
+
+    <button class="activate-btn" (click)="activate()"
+      [disabled]="isChecking">
+      {{ isChecking ? 'Verifying...' : 'Activate Software' }}
+    </button>
+
+    <div class="contact-info">
+      <p>Need help? Contact DevInfantary</p>
+    </div>
+
+  </div>
+</div>

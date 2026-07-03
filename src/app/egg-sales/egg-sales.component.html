@@ -1,0 +1,125 @@
+<div class="module-container">
+  <div class="module-header">
+    <div>
+      <h3>Egg Sales</h3>
+      <p class="subtitle">{{ currentFarm?.farm_name }}</p>
+    </div>
+    <div class="header-actions">
+      <ng-container *ngIf="hasPendingRows">
+        <button class="btn-secondary" (click)="cancelAllRows()">Cancel</button>
+        <button class="btn-primary" (click)="saveAllRows()" [disabled]="isSavingAll">{{ isSavingAll ? 'Saving...' : 'Save All' }}</button>
+      </ng-container>
+      <button class="btn-add" (click)="addPendingRow()" *ngIf="batches.length > 0" title="Add row (Ctrl+A)">+</button>
+    </div>
+  </div>
+
+  <div class="shortcuts-hint" *ngIf="hasPendingRows">
+    <span>Ctrl+A — new row</span>
+    <span>Ctrl+S — save all</span>
+  </div>
+
+  <div class="empty-state" *ngIf="batches.length === 0">
+    <p>No active batches found. Create a batch first in Batch Management.</p>
+  </div>
+
+  <div class="empty-state" *ngIf="batches.length > 0 && sales.length === 0 && pendingRows.length === 0">
+    <p>No egg sales yet. Click + or press Ctrl+A to record sales.</p>
+  </div>
+
+  <div class="table-card" *ngIf="sales.length > 0 || pendingRows.length > 0">
+    <table>
+      <thead>
+        <tr>
+          <th style="width:32px"></th>
+          <th>Batch</th>
+          <th>Date</th>
+          <th>Customer</th>
+          <th>Grade</th>
+          <th>Quantity</th>
+          <th>Rate/Egg</th>
+          <th>Amount</th>
+          <th>Payment</th>
+          <th>Actions</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr *ngFor="let row of pendingRows; let i = index" class="pending-row">
+          <td class="row-plus-cell"><button class="row-plus-btn" (click)="addRowAfter(i)" title="Add row below">+</button></td>
+          <td><select class="inline-input" [(ngModel)]="row.batch_id"><option *ngFor="let b of batches" [value]="b.batch_id">{{ b.batch_name }}</option></select></td>
+          <td><input class="inline-input" type="date" [(ngModel)]="row.date"/></td>
+          <td><input class="inline-input" type="text" [(ngModel)]="row.customer_name" placeholder="Customer name"/></td>
+          <td>
+            <select class="inline-input" [(ngModel)]="row.grade">
+              <option value="small">Small</option>
+              <option value="medium">Medium</option>
+              <option value="large">Large</option>
+              <option value="xl">XL</option>
+              <option value="mixed">Mixed</option>
+            </select>
+          </td>
+          <td><input class="inline-input" type="number" [(ngModel)]="row.quantity" placeholder="Qty"/></td>
+          <td><input class="inline-input" type="number" [(ngModel)]="row.rate_per_egg" placeholder="Rate"/></td>
+          <td class="amount">Rs. {{ (row.quantity || 0) * (row.rate_per_egg || 0) | number:'1.0-0' }}</td>
+          <td>
+            <select class="inline-input" [(ngModel)]="row.payment_type">
+              <option value="cash">Cash</option>
+              <option value="credit">Credit</option>
+            </select>
+          </td>
+          <td class="actions"><button class="btn-remove-row" (click)="removePendingRow(i)">✕</button></td>
+        </tr>
+
+        <tr *ngFor="let s of sales" [class.editing]="editingId === s.egg_sale_id">
+          <ng-container *ngIf="editingId !== s.egg_sale_id">
+            <td></td>
+            <td>{{ getBatchName(s.batch_id) }}</td>
+            <td>{{ s.date | dateOnly }}</td>
+            <td>{{ s.customer_name || '—' }}</td>
+            <td><span class="grade-badge" [class]="s.grade">{{ s.grade | titlecase }}</span></td>
+            <td>{{ s.quantity | number }}</td>
+            <td>Rs. {{ s.rate_per_egg | number:'1.0-2' }}</td>
+            <td class="amount">Rs. {{ s.total_amount | number:'1.0-0' }}</td>
+            <td><span class="payment-badge" [class.cash]="s.payment_type==='cash'" [class.credit]="s.payment_type==='credit'">{{ s.payment_type }}</span></td>
+            <td class="actions">
+              <button class="btn-edit" [disabled]="isSaving" (click)="startEdit(s)">Edit</button>
+              <button class="btn-delete" [disabled]="isSaving" (click)="confirmDelete(s.egg_sale_id)">Delete</button>
+            </td>
+          </ng-container>
+          <ng-container *ngIf="editingId === s.egg_sale_id">
+            <td></td>
+            <td><select class="inline-input" [(ngModel)]="editForm.batch_id"><option *ngFor="let b of batches" [value]="b.batch_id">{{ b.batch_name }}</option></select></td>
+            <td><input class="inline-input" type="date" [(ngModel)]="editForm.date"/></td>
+            <td><input class="inline-input" type="text" [(ngModel)]="editForm.customer_name"/></td>
+            <td>
+              <select class="inline-input" [(ngModel)]="editForm.grade">
+                <option value="small">Small</option>
+                <option value="medium">Medium</option>
+                <option value="large">Large</option>
+                <option value="xl">XL</option>
+                <option value="mixed">Mixed</option>
+              </select>
+            </td>
+            <td><input class="inline-input" type="number" [(ngModel)]="editForm.quantity"/></td>
+            <td><input class="inline-input" type="number" [(ngModel)]="editForm.rate_per_egg"/></td>
+            <td class="amount">Rs. {{ (editForm.quantity || 0) * (editForm.rate_per_egg || 0) | number:'1.0-0' }}</td>
+            <td>
+              <select class="inline-input" [(ngModel)]="editForm.payment_type">
+                <option value="cash">Cash</option>
+                <option value="credit">Credit</option>
+              </select>
+            </td>
+            <td class="actions">
+              <button class="btn-save" [disabled]="isSaving" (click)="saveEdit(s.egg_sale_id)">Save</button>
+              <button class="btn-cancel-edit" [disabled]="isSaving" (click)="cancelEdit()">Cancel</button>
+            </td>
+          </ng-container>
+        </tr>
+      </tbody>
+    </table>
+  </div>
+</div>
+
+<app-confirm-dialog *ngIf="showDeleteDialog" title="Delete Egg Sale"
+  message="Are you sure you want to delete this egg sale?"
+  confirmText="Delete" cancelText="Cancel" type="danger"
+  (confirmed)="onDeleteConfirmed()" (cancelled)="onDeleteCancelled()"/>

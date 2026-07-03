@@ -1,0 +1,257 @@
+<div class="module-container">
+
+  <div class="module-header">
+    <div>
+      <h3>Expenses</h3>
+      <p class="subtitle" *ngIf="currentFlock">
+        {{ currentFlock.flock_name }}
+      </p>
+    </div>
+    <div class="header-actions">
+      <ng-container *ngIf="hasPendingRows">
+        <button class="btn-secondary" (click)="cancelAllRows()">
+          Cancel
+        </button>
+        <button class="btn-primary" (click)="saveAllRows()"
+          [disabled]="isSavingAll">
+          {{ isSavingAll ? 'Saving...' : 'Save All' }}
+        </button>
+      </ng-container>
+      <button class="btn-add" (click)="addPendingRow()"
+        *ngIf="currentFlock" title="Add row (Ctrl+A)">
+        +
+      </button>
+    </div>
+  </div>
+
+  <div class="shortcuts-hint" *ngIf="hasPendingRows">
+    <span>Ctrl+A — new row</span>
+    <span>Ctrl+S — save all</span>
+  </div>
+
+  <!-- No ledgers warning -->
+  <div class="warning-card" *ngIf="currentFlock && ledgers.length === 0">
+    <span>⚠️</span>
+    <p>No ledgers found. Expenses will be saved under "Other".</p>
+  </div>
+
+  <!-- Empty state -->
+  <div class="empty-state" *ngIf="!currentFlock">
+    <p>Please select a flock first.</p>
+  </div>
+
+  <div class="empty-state"
+    *ngIf="currentFlock && expenses.length === 0 && pendingRows.length === 0">
+    <p>No expenses yet. Click + or press Ctrl+A to add expenses.</p>
+  </div>
+
+  <!-- Summary -->
+  <div class="summary-card" *ngIf="expenses.length > 0">
+    <div class="summary-item">
+      <span class="summary-label">Total Expenses</span>
+      <span class="summary-value">Rs. {{ totalExpenses | number:'1.0-0' }}</span>
+    </div>
+    <div class="summary-item">
+      <span class="summary-label">Total Entries</span>
+      <span class="summary-value">{{ expenses.length }}</span>
+    </div>
+  </div>
+
+  <!-- Table -->
+  <div class="table-card" *ngIf="expenses.length > 0 || pendingRows.length > 0">
+    <table>
+      <thead>
+        <tr>
+          <th style="width:32px"></th>
+          <th>Date</th>
+          <th>Ledger</th>
+          <th>Description</th>
+          <th>Amount (Rs.)</th>
+          <th>Payment</th>
+          <th>Bill</th>
+          <th>Actions</th>
+        </tr>
+      </thead>
+      <tbody>
+
+        <!-- PENDING NEW ROWS -->
+        <tr *ngFor="let row of pendingRows; let i = index" class="pending-row">
+          <td class="row-plus-cell">
+            <button class="row-plus-btn"
+              (click)="addRowAfter(i)"
+              title="Add row below">+</button>
+          </td>
+          <td>
+            <input class="inline-input" type="date"
+              [(ngModel)]="row.date" />
+          </td>
+          <td>
+            <select class="inline-input" [(ngModel)]="row.ledger_id">
+              <option value="other">Other</option>
+              <option *ngFor="let ledger of ledgers" [value]="ledger.ledger_id">
+                {{ ledger.ledger_name }}
+              </option>
+            </select>
+          </td>
+          <td>
+            <input class="inline-input" type="text"
+              [(ngModel)]="row.description"
+              placeholder="Details..." />
+          </td>
+          <td>
+            <input class="inline-input" type="number"
+              [(ngModel)]="row.amount"
+              placeholder="0" />
+          </td>
+          <td>
+            <select class="inline-input" [(ngModel)]="row.payment_type">
+              <option value="cash">Cash</option>
+              <option value="bank">Bank</option>
+              <option value="cheque">Cheque</option>
+            </select>
+          </td>
+          <td>
+            <select class="inline-input" [(ngModel)]="row.bill_available">
+              <option value="Yes">Yes</option>
+              <option value="No">No</option>
+            </select>
+          </td>
+          <td class="actions">
+            <button class="btn-remove-row"
+              (click)="removePendingRow(i)"
+              title="Remove row">✕</button>
+          </td>
+        </tr>
+
+        <!-- EXISTING ENTRIES -->
+        <tr *ngFor="let expense of expenses"
+          [class.editing]="editingId === expense.expense_id">
+
+          <!-- VIEW MODE -->
+          <ng-container *ngIf="editingId !== expense.expense_id">
+            <td></td>
+            <td>{{ expense.date }}</td>
+            <td>
+              <span class="ledger-badge" [class.other]="!expense.ledger_id">
+                {{ expense.ledger_name || 'Other' }}
+              </span>
+            </td>
+            <td>{{ expense.description || '—' }}</td>
+            <td class="amount">Rs. {{ expense.amount | number:'1.0-0' }}</td>
+            <td>
+              <span class="payment-badge"
+                [class.cash]="expense.payment_type === 'cash'"
+                [class.bank]="expense.payment_type === 'bank'"
+                [class.cheque]="expense.payment_type === 'cheque'">
+                {{ expense.payment_type || 'cash' }}
+              </span>
+            </td>
+            <td>
+              <span class="bill-badge" [class.yes]="expense.bill_available === 'Yes'">
+                {{ expense.bill_available }}
+              </span>
+            </td>
+            <td class="actions">
+              <button
+                class="btn-edit"
+                [disabled]="isSaving"
+                (click)="startEdit(expense)">
+                Edit
+              </button>
+              <button
+                class="btn-delete"
+                [disabled]="isSaving"
+                (click)="confirmDelete(expense.expense_id)">
+                Delete
+              </button>
+            </td>
+          </ng-container>
+
+          <!-- EDIT MODE -->
+          <ng-container *ngIf="editingId === expense.expense_id">
+            <td></td>
+            <td>
+              <input class="inline-input" type="date"
+                [(ngModel)]="editForm.date" />
+            </td>
+            <td>
+              <select class="inline-input" [(ngModel)]="editForm.ledger_id">
+                <option value="other">Other</option>
+                <option *ngFor="let ledger of ledgers" [value]="ledger.ledger_id">
+                  {{ ledger.ledger_name }}
+                </option>
+              </select>
+            </td>
+            <td>
+              <input class="inline-input" type="text"
+                [(ngModel)]="editForm.description" />
+            </td>
+            <td>
+              <input class="inline-input" type="number"
+                [(ngModel)]="editForm.amount" />
+            </td>
+            <td>
+              <select class="inline-input" [(ngModel)]="editForm.payment_type">
+                <option value="cash">Cash</option>
+                <option value="bank">Bank</option>
+                <option value="cheque">Cheque</option>
+              </select>
+            </td>
+            <td>
+              <select class="inline-input" [(ngModel)]="editForm.bill_available">
+                <option value="Yes">Yes</option>
+                <option value="No">No</option>
+              </select>
+            </td>
+            <td class="actions">
+              <button
+                class="btn-save"
+                [disabled]="isSaving"
+                (click)="saveEdit(expense.expense_id)">
+                {{ isSaving ? 'Saving…' : 'Save' }}
+              </button>
+              <button
+                class="btn-cancel-edit"
+                [disabled]="isSaving"
+                (click)="cancelEdit()">
+                Cancel
+              </button>
+            </td>
+          </ng-container>
+
+        </tr>
+
+      </tbody>
+      <tfoot>
+        <tr>
+          <td colspan="4" class="total-label">Total</td>
+          <td class="total-amount">Rs. {{ totalExpenses | number:'1.0-0' }}</td>
+          <td colspan="3"></td>
+        </tr>
+      </tfoot>
+    </table>
+  </div>
+
+</div>
+
+<app-confirm-dialog
+  *ngIf="showDeleteDialog"
+  title="Delete Expense"
+  message="Are you sure you want to delete this expense entry?"
+  confirmText="Delete"
+  cancelText="Cancel"
+  type="danger"
+  (confirmed)="onDeleteConfirmed()"
+  (cancelled)="onDeleteCancelled()"
+/>
+
+<app-confirm-dialog
+  *ngIf="showValidationDialog"
+  title="Validation Notice"
+  [message]="validationMessage"
+  confirmText="OK"
+  type="warning"
+  [hideCancel]="true"
+  (confirmed)="showValidationDialog = false"
+  (cancelled)="showValidationDialog = false">
+</app-confirm-dialog>

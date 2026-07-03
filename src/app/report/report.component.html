@@ -1,0 +1,135 @@
+<div class="module-container">
+
+  <div class="module-header">
+    <div>
+      <h3>Report</h3>
+      <p class="subtitle" *ngIf="currentFlock">{{ currentFlock.flock_name }}</p>
+    </div>
+    <button class="btn-generate"
+      (click)="generatePDF()"
+      *ngIf="currentFlock"
+      [disabled]="isGenerating">
+      {{ isGenerating ? 'Generating...' : '📄 Generate PDF Report' }}
+    </button>
+  </div>
+
+  <div class="empty-state" *ngIf="!currentFlock">
+    <p>Please select a flock first.</p>
+  </div>
+
+  <div *ngIf="currentFlock">
+
+    <!-- Summary Cards -->
+    <div class="summary-grid">
+      <div class="summary-card income">
+        <div class="card-icon">📈</div>
+        <div class="card-label">Total Income</div>
+        <div class="card-value">Rs. {{ totalIncome | number:'1.0-0' }}</div>
+      </div>
+      <div class="summary-card expense">
+        <div class="card-icon">💰</div>
+        <div class="card-label">Total Expenses</div>
+        <div class="card-value">Rs. {{ totalExpenses | number:'1.0-0' }}</div>
+      </div>
+      <div class="summary-card"
+        [class.profit]="profitLoss >= 0"
+        [class.loss]="profitLoss < 0">
+        <div class="card-icon">{{ profitLoss >= 0 ? '✅' : '❌' }}</div>
+        <div class="card-label">{{ profitLoss >= 0 ? 'Net Profit' : 'Net Loss' }}</div>
+        <div class="card-value">Rs. {{ profitLoss | number:'1.0-0' }}</div>
+      </div>
+      <div class="summary-card sale">
+        <div class="card-icon">🛒</div>
+        <div class="card-label">Total Weight Sold</div>
+        <div class="card-value">{{ totalSaleWeight | number:'1.0-0' }} kg</div>
+      </div>
+    </div>
+
+    <!-- Section Selector -->
+    <div class="sections-panel">
+      <div class="sections-panel-header">
+        <span class="sections-title">📋 Sections to Include in PDF</span>
+        <div class="sections-bulk">
+          <button class="bulk-btn" (click)="sections.expenses=true; sections.ledgers=true; sections.medicine=true; sections.sales=true; sections.income=true; sections.health=true; sections.profitLoss=true; savePreferences()">All</button>
+          <button class="bulk-btn" (click)="sections.expenses=false; sections.ledgers=false; sections.medicine=false; sections.sales=false; sections.income=false; sections.health=false; sections.profitLoss=false; savePreferences()">None</button>
+        </div>
+      </div>
+
+      <div class="sections-grid">
+
+        <label class="section-checkbox" [class.checked]="sections.expenses">
+          <input type="checkbox" [(ngModel)]="sections.expenses" (change)="savePreferences()" />
+          <span class="checkbox-icon">💰</span>
+          <span class="checkbox-info">
+            <span class="checkbox-label">Expenses</span>
+            <span class="checkbox-meta">{{ expenses.length }} entries — Rs. {{ totalExpenses | number:'1.0-0' }}</span>
+          </span>
+        </label>
+
+        <label class="section-checkbox" [class.checked]="sections.ledgers">
+          <input type="checkbox" [(ngModel)]="sections.ledgers" (change)="savePreferences()" />
+          <span class="checkbox-icon">📒</span>
+          <span class="checkbox-info">
+            <span class="checkbox-label">Ledgers</span>
+            <span class="checkbox-meta">{{ ledgers.length }} ledgers</span>
+          </span>
+        </label>
+
+        <label class="section-checkbox" [class.checked]="sections.medicine">
+          <input type="checkbox" [(ngModel)]="sections.medicine" (change)="savePreferences()" />
+          <span class="checkbox-icon">💊</span>
+          <span class="checkbox-info">
+            <span class="checkbox-label">Medicine</span>
+            <span class="checkbox-meta">{{ traders.length }} traders</span>
+          </span>
+        </label>
+
+        <label class="section-checkbox" [class.checked]="sections.sales">
+          <input type="checkbox" [(ngModel)]="sections.sales" (change)="savePreferences()" />
+          <span class="checkbox-icon">🛒</span>
+          <span class="checkbox-info">
+            <span class="checkbox-label">Sales</span>
+            <span class="checkbox-meta">{{ sales.length }} vehicles — {{ totalSaleWeight | number:'1.0-0' }} kg</span>
+          </span>
+        </label>
+
+        <label class="section-checkbox" [class.checked]="sections.income">
+          <input type="checkbox" [(ngModel)]="sections.income" (change)="savePreferences()" />
+          <span class="checkbox-icon">📈</span>
+          <span class="checkbox-info">
+            <span class="checkbox-label">Income</span>
+            <span class="checkbox-meta">{{ income.length }} entries — Rs. {{ totalIncome | number:'1.0-0' }}</span>
+          </span>
+        </label>
+
+        <label class="section-checkbox" [class.checked]="sections.health">
+          <input type="checkbox" [(ngModel)]="sections.health" (change)="savePreferences()" />
+          <span class="checkbox-icon">🐔</span>
+          <span class="checkbox-info">
+            <span class="checkbox-label">Flock Health</span>
+            <span class="checkbox-meta">{{ health.length }} weeks recorded</span>
+          </span>
+        </label>
+
+        <label class="section-checkbox" [class.checked]="sections.profitLoss">
+          <input type="checkbox" [(ngModel)]="sections.profitLoss" (change)="savePreferences()" />
+          <span class="checkbox-icon">{{ profitLoss >= 0 ? '✅' : '❌' }}</span>
+          <span class="checkbox-info">
+            <span class="checkbox-label">Profit / Loss Summary</span>
+            <span class="checkbox-meta"
+              [class.profit-text]="profitLoss >= 0"
+              [class.loss-text]="profitLoss < 0">
+              {{ profitLoss >= 0 ? 'Profit' : 'Loss' }}: Rs. {{ profitLoss | number:'1.0-0' }}
+            </span>
+          </span>
+        </label>
+
+      </div>
+    </div>
+
+    <div class="generate-hint">
+      Selections are saved automatically. Click "Generate PDF Report" to download.
+    </div>
+  </div>
+
+</div>

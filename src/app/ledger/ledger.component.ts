@@ -1,0 +1,466 @@
+import { Component, OnInit, OnDestroy, ChangeDetectorRef, HostListener } from '@angular/core';
+import { CommonModule } from '@angular/common';
+import { FormsModule } from '@angular/forms';
+import { ActivatedRoute } from '@angular/router';
+import { DatabaseService } from '../shared/services/database.service';
+import { FlockService } from '../shared/services/flock.service';
+import { ConfirmDialogComponent } from '../shared/components/confirm-dialog/confirm-dialog.component';
+import { Subscription } from 'rxjs';
+import { skip } from 'rxjs/operators';
+import { PendingStateService } from '../shared/services/pending-state.service';
+
+@Component({
+  selector: 'app-ledger',
+  standalone: true,
+  imports: [CommonModule, FormsModule, ConfirmDialogComponent],
+  templateUrl: './ledger.component.html',
+  styleUrl: './ledger.component.scss'
+})
+export class LedgerComponent implements OnInit, OnDestroy {
+  currentFlock: any = null;
+  ledgers: any[] = [];
+  selectedLedger: any = null;
+  entries: any[] = [];
+  pendingRows: any[] = [];
+  private subs = new Subscription();
+
+  showLedgerForm = false;
+  showDeleteLedgerDialog = false;
+  showDeleteEntryDialog = false;
+  deletingLedgerId: number | null = null;
+  deletingEntryId: number | null = null;
+  editingEntryId: number | null = null;
+  editEntryForm: any = {};
+  isSaving = false;
+  isSavingAll = false;
+
+  showValidationDialog = false;
+  validationMessage = '';
+
+  ledgerForm = { ledger_name: '' };
+
+  // ── Computed ─────────────────────────────────────────────────
+  get hasPendingRows(): boolean {
+    return this.pendingRows.length > 0;
+  }
+
+  get totalCredit(): number {
+    return this.entries
+      .filter(e => e.type === 'credit')
+      .reduce((s, e) => s + (e.amount || 0), 0);
+  }
+
+  get totalDebit(): number {
+    return this.entries
+      .filter(e => e.type === 'debit')
+      .reduce((s, e) => s + (e.amount || 0), 0);
+  }
+
+  get totalAmount(): number {
+    return this.entries.reduce((sum, e) => sum + (e.amount || 0), 0);
+  }
+
+  // Helper: Check if entry is from expense (read-only for manual edit/delete)
+  isExpenseEntry(entry: any): boolean {
+    return entry.source === 'expense';
+  }
+
+  @HostListener('window:keydown', ['$event'])
+  handleKeyboard(event: KeyboardEvent) {
+    if (!this.selectedLedger) return;
+    
+    if (event.ctrlKey && event.key === 'a') {
+      const activeTag = (event.target as HTMLElement)?.tagName;
+      if (activeTag === 'INPUT' || activeTag === 'TEXTAREA') return;
+      event.preventDefault();
+      this.addPendingRow();
+    }
+    if (event.ctrlKey && event.key === 's') {
+      event.preventDefault();
+      if (this.hasPendingRows) this.saveAllRows();
+    }
+  }
+
+  constructor(
+    private db: DatabaseService,
+    private flockService: FlockService,
+    private route: ActivatedRoute,
+    private cdr: ChangeDetectorRef,
+    private pendingState: PendingStateService
+  ) {}
+
+  ngOnInit() {
+    const resolved = this.route.snapshot.data['data'];
+    if (resolved) {
+      this.currentFlock = resolved.flock;
+      this.ledgers = resolved.ledgers || [];
+
+      const cached = this.pendingState.getState('LedgerComponent');
+      if (cached && cached.flockId === this.currentFlock?.flock_id) {
+        this.pendingRows = cached.pendingRows || [];
+        if (cached.selectedLedgerId) {
+          this.selectedLedger = this.ledgers.find((l: any) => l.ledger_id === cached.selectedLedgerId) || null;
+          if (this.selectedLedger) {
+            this.loadEntries();
+          }
+        }
+      }
+    }
+
+    this.subs.add(
+      this.flockService.currentFlock$.pipe(skip(1)).subscribe(flock => {
+        if (flock && flock.flock_id !== this.currentFlock?.flock_id) {
+          this.currentFlock = flock;
+          this.selectedLedger = null;
+          this.entries = [];
+          this.pendingRows = [];
+          this.editingEntryId = null;
+          this.isSaving = false;
+          this.pendingState.clearState('LedgerComponent');
+          this.loadLedgers();
+        }
+      })
+    );
+  }
+
+  ngOnDestroy() {
+    this.pendingState.saveState('LedgerComponent', {
+      flockId: this.currentFlock?.flock_id,
+      pendingRows: this.pendingRows,
+      selectedLedgerId: this.selectedLedger?.ledger_id
+    });
+    this.subs.unsubscribe();
+  }
+
+  // ── Loaders ──────────────────────────────────────────────────
+  async loadLedgers() {
+    const result = await this.db.get(
+      `SELECT l.*,
+        COALESCE(SUM(le.amount), 0) as total
+       FROM ledgers l
+       LEFT JOIN ledger_entries le ON l.ledger_id = le.ledger_id
+       WHERE l.flock_id = ?
+       GROUP BY l.ledger_id
+       ORDER BY l.created_at ASC`,
+      [this.currentFlock.flock_id]
+    );
+    if (result.success) {
+      this.ledgers = result.data;
+      this.cdr.detectChanges();
+    }
+  }
+
+  async loadEntries() {
+    const result = await this.db.get(
+      `SELECT * FROM ledger_entries
+       WHERE ledger_id = ?
+       ORDER BY date DESC`,
+      [this.selectedLedger.ledger_id]
+    );
+    if (result.success) {
+      this.entries = result.data;
+      this.cdr.detectChanges();
+    }
+  }
+
+  // ── Ledger CRUD ──────────────────────────────────────────────
+  openLedgerForm() {
+    if (this.isSaving) return;
+    this.ledgerForm = { ledger_name: '' };
+    this.showLedgerForm = true;
+  }
+
+  async saveLedger() {
+    if (this.isSaving) return;
+    if (!this.ledgerForm.ledger_name.trim()) return;
+
+    this.isSaving = true;
+    this.showLedgerForm = false;
+
+    try {
+      await this.db.run(
+        `INSERT INTO ledgers (flock_id, ledger_name) VALUES (?, ?)`,
+        [this.currentFlock.flock_id, this.ledgerForm.ledger_name.trim()]
+      );
+      await this.loadLedgers();
+    } finally {
+      this.isSaving = false;
+      this.cdr.detectChanges();
+    }
+  }
+
+  confirmDeleteLedger(ledgerId: number) {
+    if (this.isSaving) return;
+    this.deletingLedgerId = ledgerId;
+    this.showDeleteLedgerDialog = true;
+      this.cdr.detectChanges();  // ✅ ADD THIS LINE
+
+  }
+
+  async onDeleteLedgerConfirmed() {
+    if (this.isSaving) return;
+
+    this.isSaving = true;
+    this.showDeleteLedgerDialog = false;
+
+    try {
+      if (this.deletingLedgerId) {
+        // Pehle check karo kitni expense-linked entries hain
+        const linkedResult = await this.db.get(
+          `SELECT COUNT(*) as count FROM ledger_entries WHERE ledger_id = ? AND source = 'expense'`,
+          [this.deletingLedgerId]
+        );
+        const linkedCount = linkedResult.data?.[0]?.count || 0;
+
+        if (linkedCount > 0) {
+          // Expense-linked entries hain - unka link hatana hoga
+          await this.db.run(
+            `UPDATE expenses SET ledger_entry_id = NULL, ledger_id = NULL
+             WHERE ledger_id = ? AND flock_id = ?`,
+            [this.deletingLedgerId, this.currentFlock.flock_id]
+          );
+        }
+
+        // Ab entries delete karo
+        await this.db.run(
+          `DELETE FROM ledger_entries WHERE ledger_id = ?`,
+          [this.deletingLedgerId]
+        );
+        await this.db.run(
+          `DELETE FROM ledgers WHERE ledger_id = ?`,
+          [this.deletingLedgerId]
+        );
+        
+        if (this.selectedLedger?.ledger_id === this.deletingLedgerId) {
+          this.selectedLedger = null;
+          this.entries = [];
+        }
+        await this.loadLedgers();
+      }
+    } finally {
+      this.deletingLedgerId = null;
+      this.isSaving = false;
+      this.cdr.detectChanges();
+    }
+  }
+
+  onDeleteLedgerCancelled() {
+    this.showDeleteLedgerDialog = false;
+    this.deletingLedgerId = null;
+  }
+
+  // ── Select ledger ────────────────────────────────────────────
+  async selectLedger(ledger: any) {
+    if (this.isSaving) return;
+    this.selectedLedger = ledger;
+    this.pendingRows = [];
+    this.editingEntryId = null;
+    await this.loadEntries();
+  }
+
+  backToLedgers() {
+    if (this.isSaving) return;
+    this.selectedLedger = null;
+    this.entries = [];
+    this.pendingRows = [];
+    this.editingEntryId = null;
+  }
+
+  // ── Pending Rows (Multi-row add) ─────────────────────────────
+  makeNewRow(): any {
+    return {
+      date: new Date().toISOString().split('T')[0],
+      description: '',
+      amount: null,
+      type: 'debit',
+      source: 'manual'  // Manual entries ka source 'manual' hoga
+    };
+  }
+
+  addPendingRow() {
+    if (this.isSaving) return;
+    this.editingEntryId = null;
+    this.pendingRows.push(this.makeNewRow());
+  }
+
+  addRowAfter(index: number) {
+    this.pendingRows.splice(index + 1, 0, this.makeNewRow());
+  }
+
+  removePendingRow(index: number) {
+    this.pendingRows.splice(index, 1);
+  }
+
+  async saveAllRows() {
+    if (this.pendingRows.length === 0) return;
+    if (this.isSavingAll) return;
+    this.isSavingAll = true;
+
+    try {
+      const invalidRows: any[] = [];
+      let insertedCount = 0;
+
+      for (const row of this.pendingRows) {
+        if (!row.date || !row.amount) {
+          invalidRows.push(row);
+          continue;
+        }
+
+        // Manual entries - source = 'manual', NO link to expenses
+        await this.db.run(
+          `INSERT INTO ledger_entries
+            (ledger_id, flock_id, date, description, amount, type, source)
+           VALUES (?, ?, ?, ?, ?, ?, 'manual')`,
+          [
+            this.selectedLedger.ledger_id,
+            this.currentFlock.flock_id,
+            row.date,
+            row.description,
+            row.amount,
+            row.type
+          ]
+        );
+        insertedCount++;
+      }
+
+      this.pendingRows = invalidRows;
+      
+      if (insertedCount > 0) {
+        await this.loadEntries();
+        await this.loadLedgers();
+      }
+
+      if (invalidRows.length > 0) {
+        this.validationMessage = 'Some rows are missing required fields (Date or Amount) and were not saved.';
+        this.showValidationDialog = true;
+      }
+    } finally {
+      this.isSavingAll = false;
+      this.cdr.detectChanges();
+    }
+  }
+
+  cancelAllRows() {
+    this.pendingRows = [];
+  }
+
+  // ── Entry CRUD ───────────────────────────────────────────────
+  startEditEntry(entry: any) {
+    if (this.isSaving) return;
+    
+    // Expense entries cannot be edited from ledger
+    if (this.isExpenseEntry(entry)) {
+      this.validationMessage = 'This entry is linked to an expense. Please edit it from the Expenses section.';
+      this.showValidationDialog = true;
+      return;
+    }
+    
+    this.pendingRows = [];
+    this.editingEntryId = entry.entry_id;
+    this.editEntryForm = {
+      date: entry.date,
+      description: entry.description,
+      amount: entry.amount,
+      type: entry.type || 'debit'
+    };
+  }
+
+  cancelEditEntry() {
+    if (this.isSaving) return;
+    this.editingEntryId = null;
+    this.editEntryForm = {};
+  }
+
+  async saveEditEntry(entryId: number) {
+    if (this.isSaving) return;
+
+    // Check if it's expense entry (safety)
+    const entryResult = await this.db.get(
+      `SELECT source FROM ledger_entries WHERE entry_id = ?`,
+      [entryId]
+    );
+    if (entryResult.data?.[0]?.source === 'expense') {
+      this.validationMessage = 'Cannot edit expense-linked entry from ledger.';
+      this.showValidationDialog = true;
+      return;
+    }
+
+    this.isSaving = true;
+    this.editingEntryId = null;
+
+    try {
+      await this.db.run(
+        `UPDATE ledger_entries
+         SET date = ?, description = ?, amount = ?, type = ?
+         WHERE entry_id = ?`,
+        [
+          this.editEntryForm.date,
+          this.editEntryForm.description,
+          this.editEntryForm.amount,
+          this.editEntryForm.type,
+          entryId
+        ]
+      );
+      this.editEntryForm = {};
+      await this.loadEntries();
+      await this.loadLedgers();
+    } finally {
+      this.isSaving = false;
+      this.cdr.detectChanges();
+    }
+  }
+
+  confirmDeleteEntry(entryId: number) {
+    if (this.isSaving) return;
+    
+    // Check if it's expense entry
+    const entry = this.entries.find(e => e.entry_id === entryId);
+    if (entry && this.isExpenseEntry(entry)) {
+      this.validationMessage = 'This entry is linked to an expense. Please delete it from the Expenses section.';
+      this.showValidationDialog = true;
+      return;
+    }
+    
+    this.deletingEntryId = entryId;
+    this.showDeleteEntryDialog = true;
+  }
+
+  async onDeleteEntryConfirmed() {
+    if (this.isSaving) return;
+
+    this.isSaving = true;
+    this.showDeleteEntryDialog = false;
+
+    try {
+      if (this.deletingEntryId) {
+        // Final safety check
+        const entryResult = await this.db.get(
+          `SELECT source FROM ledger_entries WHERE entry_id = ?`,
+          [this.deletingEntryId]
+        );
+        
+        if (entryResult.data?.[0]?.source === 'expense') {
+          this.validationMessage = 'Cannot delete expense-linked entry from ledger.';
+          this.showValidationDialog = true;
+          return;
+        }
+        
+        await this.db.run(
+          `DELETE FROM ledger_entries WHERE entry_id = ?`,
+          [this.deletingEntryId]
+        );
+        await this.loadEntries();
+        await this.loadLedgers();
+      }
+    } finally {
+      this.deletingEntryId = null;
+      this.isSaving = false;
+      this.cdr.detectChanges();
+    }
+  }
+
+  onDeleteEntryCancelled() {
+    this.showDeleteEntryDialog = false;
+    this.deletingEntryId = null;
+  }
+}

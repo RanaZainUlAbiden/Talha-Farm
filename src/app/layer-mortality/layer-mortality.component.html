@@ -1,0 +1,69 @@
+<div class="module-container">
+  <div class="module-header">
+    <div>
+      <h3>Mortality Tracking</h3>
+      <p class="subtitle">{{ currentFarm?.farm_name }}</p>
+    </div>
+    <div class="header-actions">
+      <ng-container *ngIf="hasPendingRows">
+        <button class="btn-secondary" (click)="cancelAllRows()">Cancel</button>
+        <button class="btn-primary" (click)="saveAllRows()" [disabled]="isSavingAll">{{ isSavingAll ? 'Saving...' : 'Save All' }}</button>
+      </ng-container>
+      <button class="btn-add" (click)="addPendingRow()" *ngIf="batches.length > 0">+</button>
+    </div>
+  </div>
+
+  <div class="empty-state" *ngIf="batches.length === 0">
+    <p>No active batches found. Create a batch first.</p>
+  </div>
+
+  <div class="empty-state" *ngIf="batches.length > 0 && records.length === 0 && pendingRows.length === 0">
+    <p>No mortality records yet. Click + to add.</p>
+  </div>
+
+  <div class="table-card" *ngIf="records.length > 0 || pendingRows.length > 0">
+    <table>
+      <thead>
+        <tr><th style="width:32px"></th><th>Batch</th><th>Date</th><th>Count</th><th>Reason</th><th>Actions</th></tr>
+      </thead>
+      <tbody>
+        <tr *ngFor="let row of pendingRows; let i = index" class="pending-row">
+          <td class="row-plus-cell"><button class="row-plus-btn" (click)="addRowAfter(i)">+</button></td>
+          <td><select class="inline-input" [(ngModel)]="row.batch_id"><option *ngFor="let b of batches" [value]="b.batch_id">{{ b.batch_name }}</option></select></td>
+          <td><input class="inline-input" type="date" [(ngModel)]="row.date"/></td>
+          <td><input class="inline-input" type="number" [(ngModel)]="row.count" placeholder="0"/></td>
+          <td><input class="inline-input" type="text" [(ngModel)]="row.reason" placeholder="e.g. Disease, Heat"/></td>
+          <td class="actions"><button class="btn-remove-row" (click)="removePendingRow(i)">✕</button></td>
+        </tr>
+        <tr *ngFor="let r of records" [class.editing]="editingId === r.mortality_id">
+          <ng-container *ngIf="editingId !== r.mortality_id">
+            <td></td>
+            <td>{{ getBatchName(r.batch_id) }}</td>
+            <td>{{ r.date | dateOnly }}</td>
+            <td class="mortality-count">{{ r.count | number }}</td>
+            <td>{{ r.reason || '—' }}</td>
+            <td class="actions">
+              <button class="btn-edit" (click)="startEdit(r)">Edit</button>
+              <button class="btn-delete" (click)="confirmDelete(r.mortality_id)">Delete</button>
+            </td>
+          </ng-container>
+          <ng-container *ngIf="editingId === r.mortality_id">
+            <td></td>
+            <td><select class="inline-input" [(ngModel)]="editForm.batch_id"><option *ngFor="let b of batches" [value]="b.batch_id">{{ b.batch_name }}</option></select></td>
+            <td><input class="inline-input" type="date" [(ngModel)]="editForm.date"/></td>
+            <td><input class="inline-input" type="number" [(ngModel)]="editForm.count"/></td>
+            <td><input class="inline-input" type="text" [(ngModel)]="editForm.reason"/></td>
+            <td class="actions">
+              <button class="btn-save" (click)="saveEdit(r.mortality_id)">Save</button>
+              <button class="btn-cancel-edit" (click)="cancelEdit()">Cancel</button>
+            </td>
+          </ng-container>
+        </tr>
+      </tbody>
+    </table>
+  </div>
+</div>
+
+<app-confirm-dialog *ngIf="showDeleteDialog" title="Delete Record"
+  message="Are you sure?" confirmText="Delete" cancelText="Cancel" type="danger"
+  (confirmed)="onDeleteConfirmed()" (cancelled)="onDeleteCancelled()"/>
