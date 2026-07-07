@@ -1,0 +1,69 @@
+<div class="module-container">
+  <div class="module-header">
+    <div>
+      <h3>Inventory Management</h3>
+      <p class="subtitle">{{ currentFarm?.farm_name }}</p>
+    </div>
+    <button class="btn-primary" (click)="addNewRow()" *ngIf="!showNewRow">+ Add Product</button>
+  </div>
+
+  <div class="error-message" *ngIf="errorMessage">{{ errorMessage }}</div>
+  <div class="empty-state" *ngIf="products.length === 0 && !showNewRow">
+    <p>No products yet. Click "Add Product" to add inventory items.</p>
+  </div>
+
+  <div class="table-card" *ngIf="products.length > 0 || showNewRow">
+    <table>
+      <thead>
+        <tr>
+          <th>Product Name</th><th>Category</th><th>Unit</th><th>Stock</th><th>Min Alert</th><th>Cost Price</th><th>Sell Price</th><th>Actions</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr *ngIf="showNewRow" class="new-row">
+          <td><input class="inline-input" type="text" [(ngModel)]="newRow.product_name" placeholder="Product name"/></td>
+          <td><select class="inline-input" [(ngModel)]="newRow.category"><option value="medicine">Medicine</option><option value="feed">Feed</option><option value="equipment">Equipment</option><option value="other">Other</option></select></td>
+          <td><input class="inline-input" type="text" [(ngModel)]="newRow.unit" placeholder="e.g. Bag, Bottle"/></td>
+          <td><input class="inline-input" type="number" [(ngModel)]="newRow.current_stock" placeholder="0"/></td>
+          <td><input class="inline-input" type="number" [(ngModel)]="newRow.min_stock_alert" placeholder="0"/></td>
+          <td><input class="inline-input" type="number" [(ngModel)]="newRow.cost_price" placeholder="0"/></td>
+          <td><input class="inline-input" type="number" [(ngModel)]="newRow.selling_price" placeholder="0"/></td>
+          <td class="actions">
+            <button class="btn-save" [disabled]="isSaving" (click)="saveNewRow()">Save</button>
+            <button class="btn-cancel-edit" (click)="cancelNewRow()">Cancel</button>
+          </td>
+        </tr>
+        <tr *ngFor="let p of products" [class.editing]="editingId === p.product_id" [class.low-stock]="p.current_stock <= p.min_stock_alert && p.min_stock_alert > 0">
+          <ng-container *ngIf="editingId !== p.product_id">
+            <td class="product-name">{{ p.product_name }}</td>
+            <td><span class="category-badge">{{ p.category }}</span></td>
+            <td>{{ p.unit || '—' }}</td>
+            <td [class.low-stock-text]="p.current_stock <= p.min_stock_alert && p.min_stock_alert > 0">{{ p.current_stock | number }}</td>
+            <td>{{ p.min_stock_alert | number }}</td>
+            <td>Rs. {{ p.cost_price | number:'1.0-2' }}</td>
+            <td>Rs. {{ p.selling_price | number:'1.0-2' }}</td>
+            <td class="actions">
+              <button class="btn-edit" (click)="startEdit(p)">Edit</button>
+              <button class="btn-delete" (click)="confirmDelete(p.product_id)">Delete</button>
+            </td>
+          </ng-container>
+          <ng-container *ngIf="editingId === p.product_id">
+            <td><input class="inline-input" type="text" [(ngModel)]="editForm.product_name"/></td>
+            <td><select class="inline-input" [(ngModel)]="editForm.category"><option value="medicine">Medicine</option><option value="feed">Feed</option><option value="equipment">Equipment</option><option value="other">Other</option></select></td>
+            <td><input class="inline-input" type="text" [(ngModel)]="editForm.unit"/></td>
+            <td><input class="inline-input" type="number" [(ngModel)]="editForm.current_stock"/></td>
+            <td><input class="inline-input" type="number" [(ngModel)]="editForm.min_stock_alert"/></td>
+            <td><input class="inline-input" type="number" [(ngModel)]="editForm.cost_price"/></td>
+            <td><input class="inline-input" type="number" [(ngModel)]="editForm.selling_price"/></td>
+            <td class="actions">
+              <button class="btn-save" (click)="saveEdit(p.product_id)">Save</button>
+              <button class="btn-cancel-edit" (click)="cancelEdit()">Cancel</button>
+            </td>
+          </ng-container>
+        </tr>
+      </tbody>
+    </table>
+  </div>
+</div>
+
+<app-confirm-dialog *ngIf="showDeleteDialog" title="Delete Product" message="Are you sure?" confirmText="Delete" cancelText="Cancel" type="danger" (confirmed)="onDeleteConfirmed()" (cancelled)="onDeleteCancelled()"/>

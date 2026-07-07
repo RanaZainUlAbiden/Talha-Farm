@@ -1,0 +1,13 @@
+<div class="module-container">
+  <div class="module-header">
+    <div><h3>Distribution Report</h3><p class="subtitle">{{ currentFarm?.farm_name }}</p></div>
+    <button class="btn-generate" (click)="generatePDF()" [disabled]="isGenerating">{{ isGenerating ? 'Generating...' : '📄 Generate PDF Report' }}</button>
+  </div>
+
+  <div class="summary-grid">
+    <div class="summary-card"><div class="card-label">Total Products</div><div class="card-value">{{ products.length }}</div></div>
+    <div class="summary-card"><div class="card-label">Inventory Value</div><div class="card-value">Rs. {{ totalInventoryValue | number:'1.0-0' }}</div></div>
+    <div class="summary-card"><div class="card-label">Total Purchases</div><div class="card-value">Rs. {{ totalPurchases | number:'1.0-0' }}</div></div>
+    <div class="summary-card"><div class="card-label">Total Sales</div><div class="card-value">Rs. {{ totalSales | number:'1.0-0' }}</div></div>
+  </div>
+</div>

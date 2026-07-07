@@ -14,7 +14,7 @@
       <div class="collapse-icon expanded" *ngIf="sidebarCollapsed">›</div>
     </div>
 
-    <div class="flock-selector" *ngIf="!sidebarCollapsed">
+    <div class="flock-selector" *ngIf="!sidebarCollapsed && !isDistributionMode">
       <div class="flock-label">{{ isLayerMode ? 'Active Batch' : 'Active Flock' }}</div>
       <div class="flock-dropdown-trigger"
         (click)="toggleFlockDropdown($event)">
@@ -69,13 +69,13 @@
     <div class="content-header">
       <div class="header-left">
         <h2>{{ currentFarm?.farm_name }}</h2>
-        <span class="flock-badge" *ngIf="currentFlock">
+        <span class="flock-badge" *ngIf="currentFlock && !isDistributionMode">
           {{ currentFlock.flock_name || currentFlock.batch_name }}
         </span>
       </div>
     </div>
     <div class="content-body">
-      <div *ngIf="!currentFlock" class="no-flock-message">
+      <div *ngIf="!currentFlock && !isDistributionMode" class="no-flock-message">
         <p>{{ isLayerMode ? 'No batch found. Create your first batch to get started.' : 'No flock found. Create your first flock to get started.' }}</p>
         <button class="btn-primary" (click)="goToFlockManagement()">
           + {{ isLayerMode ? 'Create First Batch' : 'Create First Flock' }}

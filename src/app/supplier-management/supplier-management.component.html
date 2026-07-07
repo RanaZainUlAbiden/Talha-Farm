@@ -1,0 +1,34 @@
+<div class="module-container">
+  <div class="module-header">
+    <div><h3>Supplier Management</h3><p class="subtitle">{{ currentFarm?.farm_name }}</p></div>
+    <button class="btn-primary" (click)="addNewRow()" *ngIf="!showNewRow">+ Add Supplier</button>
+  </div>
+  <div class="error-message" *ngIf="errorMessage">{{ errorMessage }}</div>
+  <div class="empty-state" *ngIf="suppliers.length === 0 && !showNewRow"><p>No suppliers yet.</p></div>
+  <div class="table-card" *ngIf="suppliers.length > 0 || showNewRow">
+    <table>
+      <thead><tr><th>Supplier Name</th><th>Phone</th><th>Products Supplied</th><th>Actions</th></tr></thead>
+      <tbody>
+        <tr *ngIf="showNewRow" class="new-row">
+          <td><input class="inline-input" type="text" [(ngModel)]="newRow.supplier_name" placeholder="Supplier name"/></td>
+          <td><input class="inline-input" type="text" [(ngModel)]="newRow.phone" placeholder="Phone"/></td>
+          <td><input class="inline-input" type="text" [(ngModel)]="newRow.products_supplied" placeholder="e.g. Feed, Medicine"/></td>
+          <td class="actions"><button class="btn-save" (click)="saveNewRow()">Save</button><button class="btn-cancel-edit" (click)="cancelNewRow()">Cancel</button></td>
+        </tr>
+        <tr *ngFor="let s of suppliers" [class.editing]="editingId === s.supplier_id">
+          <ng-container *ngIf="editingId !== s.supplier_id">
+            <td class="supplier-name">{{ s.supplier_name }}</td><td>{{ s.phone || '—' }}</td><td>{{ s.products_supplied || '—' }}</td>
+            <td class="actions"><button class="btn-edit" (click)="startEdit(s)">Edit</button><button class="btn-delete" (click)="confirmDelete(s.supplier_id)">Delete</button></td>
+          </ng-container>
+          <ng-container *ngIf="editingId === s.supplier_id">
+            <td><input class="inline-input" type="text" [(ngModel)]="editForm.supplier_name"/></td>
+            <td><input class="inline-input" type="text" [(ngModel)]="editForm.phone"/></td>
+            <td><input class="inline-input" type="text" [(ngModel)]="editForm.products_supplied"/></td>
+            <td class="actions"><button class="btn-save" (click)="saveEdit(s.supplier_id)">Save</button><button class="btn-cancel-edit" (click)="cancelEdit()">Cancel</button></td>
+          </ng-container>
+        </tr>
+      </tbody>
+    </table>
+  </div>
+</div>
+<app-confirm-dialog *ngIf="showDeleteDialog" title="Delete Supplier" message="Are you sure?" confirmText="Delete" cancelText="Cancel" type="danger" (confirmed)="onDeleteConfirmed()" (cancelled)="onDeleteCancelled()"/>

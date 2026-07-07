@@ -1,0 +1,116 @@
+<div class="pos-root">
+  <!-- ========== BILL LIST MODE ========== -->
+  <ng-container *ngIf="viewMode === 'list'">
+    <div class="module-container">
+      <div class="module-header">
+        <div><h3>Sales Orders</h3><p class="subtitle">{{ currentFarm?.farm_name }}</p></div>
+        <button class="btn-primary" (click)="onCreateNewBill()">+ New Bill</button>
+      </div>
+      <div class="qbar"><div class="qbar-field">
+        <span>🔍</span><input class="qbar-input" type="text" placeholder="Search bill number or customer..." [(ngModel)]="billSearchTerm" (input)="onBillSearch()"/>
+      </div></div>
+      <div class="error-message" *ngIf="errorMessage">{{ errorMessage }}</div>
+      <div class="empty-state" *ngIf="filteredBills.length === 0"><p>No bills yet. Click "New Bill" to create one.</p></div>
+      <div class="bill-list" *ngIf="filteredBills.length > 0">
+        <div class="bill-item" *ngFor="let bill of filteredBills" (click)="selectBill(bill)">
+          <div class="bill-left"><span class="bill-num">{{ bill.bill_number }}</span><span class="bill-cust">{{ bill.customer_name || 'Walk-in' }}</span></div>
+          <div class="bill-right">
+            <span class="bill-date">{{ bill.bill_date | dateOnly }}</span>
+            <span class="bill-amt">Rs. {{ bill.total_amount | number:'1.0-0' }}</span>
+            <span class="bill-status" [class.paid]="bill.amount_paid >= bill.total_amount" [class.unpaid]="bill.amount_paid < bill.total_amount">{{ bill.amount_paid >= bill.total_amount ? 'Paid' : 'Unpaid' }}</span>
+            <button class="bill-delete" (click)="confirmDeleteBill($event, bill.bill_id)">Delete</button>
+          </div>
+        </div>
+      </div>
+    </div>
+  </ng-container>
+
+  <!-- ========== CREATE / EDIT MODE ========== -->
+  <ng-container *ngIf="viewMode !== 'list'">
+    <div class="pos-layout">
+      <!-- LEFT: Cart -->
+      <div class="pos-left">
+        <div class="pos-left-header">
+          <button class="back-btn" (click)="backToList()">← Back</button>
+          <h3>{{ isEditMode ? 'Edit Bill' : 'New Bill' }}</h3>
+        </div>
+        <div class="psearch-wrap"><div class="psf">
+          <span>🔍</span><input class="psf-input" type="text" placeholder="Search & add product..." [(ngModel)]="productSearchTerm" (input)="onProductSearch()" autocomplete="off"/>
+        </div>
+        <div class="pdrop" *ngIf="showProductDropdown">
+          <div class="pd-row" *ngFor="let p of productOptions" (click)="selectProductOption(p)">
+            <span class="pd-name">{{ p.product_name }}</span><span class="pd-price">Rs. {{ p.selling_price | number:'1.0-0' }}</span><span class="pd-stock">{{ p.current_stock }} left</span>
+          </div>
+          <div class="pdrop-empty" *ngIf="productOptions.length === 0">No products found</div>
+        </div></div>
+        <div class="cart-scroll">
+          <table class="cart-tbl" *ngIf="gridItems.length > 0">
+            <thead><tr><th>Product</th><th>Qty</th><th>Price</th><th>Total</th><th></th></tr></thead>
+            <tbody>
+              <tr *ngFor="let item of gridItems">
+                <td>{{ item.productName }}</td>
+                <td><div class="stepper"><button class="st-btn" (click)="item.quantity = item.quantity > 1 ? item.quantity - 1 : 1; recalcItem(item)">−</button><input class="st-input" type="number" [(ngModel)]="item.quantity" (input)="recalcItem(item)"/><button class="st-btn" (click)="item.quantity = item.quantity + 1; recalcItem(item)">+</button></div></td>
+                <td><input class="price-input" type="number" [(ngModel)]="item.unitPrice" (input)="recalcItem(item)"/></td>
+                <td class="mono">Rs. {{ item.totalPrice | number:'1.0-0' }}</td>
+                <td><button class="rm-btn" (click)="removeItem(item)">✕</button></td>
+              </tr>
+            </tbody>
+          </table>
+          <div class="empty-cart" *ngIf="gridItems.length === 0"><p>Cart is empty</p><span>Search a product above to add</span></div>
+        </div>
+      </div>
+
+      <!-- RIGHT: Checkout -->
+      <div class="pos-right">
+        <div class="rblock">
+          <p class="rblock-title">Customer</p>
+          <div class="ctype-row">
+            <button class="ct-opt" [class.ct-on]="customerType==='walkin'" (click)="customerType='walkin'; selectedCustomer=null; paidAmount=cartSubtotal">Walk-in</button>
+            <button class="ct-opt" [class.ct-on]="customerType==='regular'" (click)="customerType='regular'">Regular</button>
+          </div>
+          <div *ngIf="customerType==='regular'" style="margin-top:8px">
+            <select class="inline-input" [(ngModel)]="selectedCustomerId">
+              <option [ngValue]="null">Select Customer</option>
+              <option *ngFor="let c of customers" [ngValue]="c.customer_id">{{ c.customer_name }}</option>
+            </select>
+          </div>
+          <div *ngIf="customerType==='walkin'" class="walkin-badge">Walk-in customer</div>
+        </div>
+
+        <div class="rblock">
+          <p class="rblock-title">Order Summary</p>
+          <div class="sum-rows">
+            <div class="sum-row"><span>Items</span><span>{{ gridItems.length }}</span></div>
+            <div class="sum-row"><span>Subtotal</span><span class="mono">Rs. {{ cartSubtotal | number:'1.0-0' }}</span></div>
+            <div class="sum-row sum-total"><span>Total</span><span class="mono">Rs. {{ cartSubtotal | number:'1.0-0' }}</span></div>
+          </div>
+        </div>
+
+        <div class="rblock">
+          <p class="rblock-title">Payment</p>
+          <label class="paid-lbl">Amount Received</label>
+          <div class="paid-field"><span>Rs.</span><input class="paid-input" type="number" [(ngModel)]="paidAmount" (input)="onPaidAmountChange()" placeholder="0"/></div>
+          <div class="change-row" *ngIf="paidAmount > cartSubtotal">Change: <strong>Rs. {{ paidAmount - cartSubtotal | number:'1.0-0' }}</strong></div>
+          <div class="change-row remaining" *ngIf="paidAmount < cartSubtotal">Remaining: <strong>Rs. {{ cartSubtotal - paidAmount | number:'1.0-0' }}</strong></div>
+          <div class="change-row exact-ok" *ngIf="paidAmount === cartSubtotal && cartSubtotal > 0">Exact amount!</div>
+        </div>
+
+        <div class="rblock r-actions">
+          <button class="btn-create" (click)="saveBill()" [disabled]="isSubmitting || gridItems.length === 0">{{ isSubmitting ? 'Saving...' : (isEditMode ? 'Update Bill' : 'Save Bill') }}</button>
+          <button class="btn-print" (click)="saveAndPrint()" [disabled]="isSubmitting || gridItems.length === 0" style="margin-top:8px">🖨️ Save & Print</button>
+          <button class="btn-cancel-edit" (click)="backToList()" style="margin-top:8px;width:100%">Cancel</button>
+        </div>
+      </div>
+    </div>
+  </ng-container>
+</div>
+
+<app-confirm-dialog
+  *ngIf="showDeleteDialog"
+  title="Delete Bill"
+  message="This will delete the bill and restore its product stock."
+  confirmText="Delete"
+  cancelText="Cancel"
+  type="danger"
+  (confirmed)="onDeleteConfirmed()"
+  (cancelled)="onDeleteCancelled()"/>

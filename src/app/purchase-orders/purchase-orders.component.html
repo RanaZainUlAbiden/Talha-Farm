@@ -1,0 +1,64 @@
+<div class="module-container">
+  <div class="module-header">
+    <div>
+      <h3>Purchase Orders</h3>
+      <p class="subtitle">{{ currentFarm?.farm_name }}</p>
+    </div>
+    <div class="header-actions">
+      <ng-container *ngIf="hasPendingRows">
+        <button class="btn-secondary" (click)="cancelAllRows()">Cancel</button>
+        <button class="btn-primary" (click)="saveAllRows()" [disabled]="isSavingAll">{{ isSavingAll ? 'Saving...' : 'Save All' }}</button>
+      </ng-container>
+      <button class="btn-add" (click)="addPendingRow()" *ngIf="products.length > 0">+</button>
+    </div>
+  </div>
+
+  <div class="empty-state" *ngIf="products.length === 0">
+    <p>No products found. Add products in Inventory first.</p>
+  </div>
+  <div class="empty-state" *ngIf="products.length > 0 && orders.length === 0 && pendingRows.length === 0">
+    <p>No purchase orders yet. Click + to add.</p>
+  </div>
+
+  <div class="table-card" *ngIf="orders.length > 0 || pendingRows.length > 0">
+    <table>
+      <thead>
+        <tr><th style="width:32px"></th><th>Product</th><th>Supplier</th><th>Date</th><th>Qty</th><th>Cost Price</th><th>Total</th><th>Payment</th><th>Notes</th><th>Actions</th></tr>
+      </thead>
+      <tbody>
+        <tr *ngFor="let row of pendingRows; let i = index" class="pending-row">
+          <td class="row-plus-cell"><button class="row-plus-btn" (click)="addRowAfter(i)">+</button></td>
+          <td><select class="inline-input" [(ngModel)]="row.product_id"><option *ngFor="let p of products" [value]="p.product_id">{{ p.product_name }}</option></select></td>
+          <td><select class="inline-input" [(ngModel)]="row.supplier_id"><option [value]="null">—</option><option *ngFor="let s of suppliers" [value]="s.supplier_id">{{ s.supplier_name }}</option></select></td>
+          <td><input class="inline-input" type="date" [(ngModel)]="row.date"/></td>
+          <td><input class="inline-input" type="number" [(ngModel)]="row.quantity" placeholder="0"/></td>
+          <td><input class="inline-input" type="number" [(ngModel)]="row.cost_price" placeholder="0"/></td>
+          <td class="amount">Rs. {{ (row.quantity || 0) * (row.cost_price || 0) | number:'1.0-0' }}</td>
+          <td><select class="inline-input" [(ngModel)]="row.payment_type"><option value="cash">Cash</option><option value="credit">Credit</option></select></td>
+          <td><input class="inline-input" type="text" [(ngModel)]="row.notes" placeholder="Notes"/></td>
+          <td><button class="btn-remove-row" (click)="removePendingRow(i)">✕</button></td>
+        </tr>
+        <tr *ngFor="let o of orders" [class.editing]="editingId === o.purchase_id">
+          <ng-container *ngIf="editingId !== o.purchase_id"><td></td>
+            <td>{{ getProductName(o.product_id) }}</td><td>{{ getSupplierName(o.supplier_id) }}</td><td>{{ o.date | dateOnly }}</td>
+            <td>{{ o.quantity | number }}</td><td>Rs. {{ o.cost_price | number:'1.0-2' }}</td><td class="amount">Rs. {{ o.total_amount | number:'1.0-0' }}</td>
+            <td><span class="payment-badge" [class.cash]="o.payment_type==='cash'">{{ o.payment_type }}</span></td><td>{{ o.notes || '—' }}</td>
+            <td class="actions"><button class="btn-edit" (click)="startEdit(o)">Edit</button><button class="btn-delete" (click)="confirmDelete(o.purchase_id)">Delete</button></td>
+          </ng-container>
+          <ng-container *ngIf="editingId === o.purchase_id"><td></td>
+            <td><select class="inline-input" [(ngModel)]="editForm.product_id"><option *ngFor="let p of products" [value]="p.product_id">{{ p.product_name }}</option></select></td>
+            <td><select class="inline-input" [(ngModel)]="editForm.supplier_id"><option [value]="null">—</option><option *ngFor="let s of suppliers" [value]="s.supplier_id">{{ s.supplier_name }}</option></select></td>
+            <td><input class="inline-input" type="date" [(ngModel)]="editForm.date"/></td>
+            <td><input class="inline-input" type="number" [(ngModel)]="editForm.quantity"/></td>
+            <td><input class="inline-input" type="number" [(ngModel)]="editForm.cost_price"/></td>
+            <td class="amount">Rs. {{ (editForm.quantity || 0) * (editForm.cost_price || 0) | number:'1.0-0' }}</td>
+            <td><select class="inline-input" [(ngModel)]="editForm.payment_type"><option value="cash">Cash</option><option value="credit">Credit</option></select></td>
+            <td><input class="inline-input" type="text" [(ngModel)]="editForm.notes"/></td>
+            <td class="actions"><button class="btn-save" (click)="saveEdit(o.purchase_id)">Save</button><button class="btn-cancel-edit" (click)="cancelEdit()">Cancel</button></td>
+          </ng-container>
+        </tr>
+      </tbody>
+    </table>
+  </div>
+</div>
+<app-confirm-dialog *ngIf="showDeleteDialog" title="Delete Order" message="Are you sure?" confirmText="Delete" cancelText="Cancel" type="danger" (confirmed)="onDeleteConfirmed()" (cancelled)="onDeleteCancelled()"/>

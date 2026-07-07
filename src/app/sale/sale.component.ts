@@ -126,7 +126,7 @@ export class SaleComponent implements OnInit, OnDestroy {
     const resolved = this.route.snapshot.data['data'];
     if (resolved) {
       this.currentFlock = resolved.flock;
-      this.logoUrl      = resolved.logoUrl || null;
+      this.logoUrl      = resolved.logoUrl || 'report-boiler.jpeg';
       this.sales = resolved.sales || [];
       this.brokers = resolved.brokers || [];
       this.groupSales();

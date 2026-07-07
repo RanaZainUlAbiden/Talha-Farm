@@ -130,7 +130,7 @@
           <!-- VIEW MODE -->
           <ng-container *ngIf="editingId !== expense.expense_id">
             <td></td>
-            <td>{{ expense.date }}</td>
+            <td>{{ expense.date | dateOnly }}</td>
             <td>
               <span class="ledger-badge" [class.other]="!expense.ledger_id">
                 {{ expense.ledger_name || 'Other' }}

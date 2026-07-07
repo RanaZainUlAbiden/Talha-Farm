@@ -55,7 +55,11 @@ export class LayerReportComponent implements OnInit {
       const farmName = this.currentFarm?.farm_name || 'Poultry Farm';
       const today = new Date().toLocaleDateString('en-PK');
       const footer = 'Software By: www.devinfantary.com  |  Contact: 0302 6938217';
-      const formatDate = (d: any) => d ? String(d).split('T')[0] : '—';
+      const formatDate = (d: any) => {
+        if (!d) return '—';
+        const p = String(d).split('T')[0].split(' ')[0].split('-');
+        return (p.length === 3 && p[0].length === 4) ? `${p[2]}-${p[1]}-${p[0]}` : String(d);
+      };
       const BLACK: [number,number,number] = [0,0,0];
       const GRAY: [number,number,number] = [120,120,120];
       const LGRAY: [number,number,number] = [200,200,200];
@@ -73,7 +77,7 @@ export class LayerReportComponent implements OnInit {
       // Cover
       let coverY = 20;
       try {
-        const imgData = await this.loadImageAsBase64('Report-logo.jpeg');
+        const imgData = await this.loadImageAsBase64('report-boiler.jpeg');
         const imgProps = doc.getImageProperties(imgData);
         const logoWidth = pageWidth - 28;
         const logoHeight = (imgProps.height * logoWidth) / imgProps.width;

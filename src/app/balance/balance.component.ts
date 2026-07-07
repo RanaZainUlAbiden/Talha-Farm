@@ -5,13 +5,14 @@ import { ActivatedRoute } from '@angular/router';
 import { DatabaseService } from '../shared/services/database.service';
 import { FlockService } from '../shared/services/flock.service';
 import { ConfirmDialogComponent } from '../shared/components/confirm-dialog/confirm-dialog.component';
+import { DateOnlyPipe } from '../shared/pipes/date-format.pipe';
 import { Subscription } from 'rxjs';
 import { skip } from 'rxjs/operators';
 
 @Component({
   selector: 'app-balance',
   standalone: true,
-  imports: [CommonModule, FormsModule, ConfirmDialogComponent],
+  imports: [CommonModule, FormsModule, ConfirmDialogComponent, DateOnlyPipe],
   templateUrl: './balance.component.html',
   styleUrl: './balance.component.scss'
 })

@@ -109,7 +109,7 @@
           <!-- VIEW MODE -->
           <ng-container *ngIf="editingId !== income.income_id">
             <td></td>
-            <td>{{ income.date }}</td>
+            <td>{{ income.date | dateOnly }}</td>
             <td>{{ income.description || '—' }}</td>
             <td>
               <span class="source-badge" [class.sale]="income.source === 'sale'">

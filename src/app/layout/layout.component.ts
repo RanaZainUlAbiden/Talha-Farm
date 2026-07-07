@@ -53,14 +53,13 @@ export class LayoutComponent implements OnInit, OnDestroy {
   ];
 
   distributionMenu = [
-    { label: 'Inventory',     icon: '📦', route: 'flock-management' },
-    { label: 'Purchase',      icon: '📥', route: 'expenses'         },
-    { label: 'Sales Orders',  icon: '📤', route: 'sale'             },
-    { label: 'Customers',     icon: '👥', route: 'ledger'           },
-    { label: 'Suppliers',     icon: '🏭', route: 'medicine'         },
-    { label: 'Stock Log',     icon: '📋', route: 'flock-health'     },
-    { label: 'Payments',      icon: '💳', route: 'income'           },
-    { label: 'Report',        icon: '📄', route: 'report'           }
+    { label: 'Inventory',     icon: '📦', route: 'inventory'            },
+    { label: 'Purchase',      icon: '📥', route: 'purchase-orders'      },
+    { label: 'Sales Orders',  icon: '📤', route: 'sales-orders'         },
+    { label: 'Customers',     icon: '👥', route: 'customer-management'  },
+    { label: 'Suppliers',     icon: '🏭', route: 'supplier-management'  },
+    { label: 'Income',        icon: '📈', route: 'income'               },
+    { label: 'Report',        icon: '📄', route: 'distribution-report'  }
   ];
 
   allMenu = [
@@ -95,6 +94,12 @@ export class LayoutComponent implements OnInit, OnDestroy {
     return false;
   }
 
+  get isDistributionMode(): boolean {
+    if (this.savedBusinessType === 'distribution') return true;
+    if (this.savedBusinessType === 'all' && this.activeBusinessTab === 'distribution') return true;
+    return false;
+  }
+
   get dropdownItems(): any[] {
     return this.isLayerMode ? this.batches : this.flocks;
   }
@@ -105,11 +110,7 @@ export class LayoutComponent implements OnInit, OnDestroy {
     const firstRoute = this.menuItems[0]?.route || 'flock-health';
     this.activeRoute = firstRoute;
     this.router.navigate(['/app', firstRoute]);
-    if (this.isLayerMode) {
-      this.loadBatches();
-    } else {
-      this.loadFlocks();
-    }
+    this.loadActiveBusinessData();
     this.cdr.detectChanges();
   }
 
@@ -151,11 +152,7 @@ export class LayoutComponent implements OnInit, OnDestroy {
       })
     );
 
-    if (this.isLayerMode) {
-      this.loadBatches();
-    } else {
-      this.loadFlocks();
-    }
+    this.loadActiveBusinessData();
 
     const currentUrl = this.router.url.split('/').pop();
     if (currentUrl) this.activeRoute = currentUrl;
@@ -163,6 +160,23 @@ export class LayoutComponent implements OnInit, OnDestroy {
 
   ngOnDestroy() {
     this.subs.unsubscribe();
+  }
+
+  loadActiveBusinessData() {
+    this.showFlockDropdown = false;
+
+    if (this.isLayerMode) {
+      this.loadBatches();
+      return;
+    }
+
+    if (this.isDistributionMode) {
+      this.currentFlock = null;
+      this.cdr.detectChanges();
+      return;
+    }
+
+    this.loadFlocks();
   }
 
   async loadFlocks() {

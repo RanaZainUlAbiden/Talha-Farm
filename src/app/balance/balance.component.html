@@ -109,7 +109,7 @@
 
           <!-- VIEW MODE -->
           <ng-container *ngIf="editingId !== entry.balance_id">
-            <td>{{ entry.date }}</td>
+            <td>{{ entry.date | dateOnly }}</td>
             <td>{{ entry.description || '—' }}</td>
             <td>
               <span class="type-badge"

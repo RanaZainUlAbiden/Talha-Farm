@@ -140,6 +140,30 @@ export const routes: Routes = [
   loadComponent: () =>
     import('./layer-report/layer-report.component')
       .then(m => m.LayerReportComponent)
+},
+{
+  path: 'inventory',
+  loadComponent: () => import('./inventory/inventory.component').then(m => m.InventoryComponent)
+},
+{
+  path: 'purchase-orders',
+  loadComponent: () => import('./purchase-orders/purchase-orders.component').then(m => m.PurchaseOrdersComponent)
+},
+{
+  path: 'sales-orders',
+  loadComponent: () => import('./sales-orders/sales-orders.component').then(m => m.SalesOrdersComponent)
+},
+{
+  path: 'customer-management',
+  loadComponent: () => import('./customer-management/customer-management.component').then(m => m.CustomerManagementComponent)
+},
+{
+  path: 'supplier-management',
+  loadComponent: () => import('./supplier-management/supplier-management.component').then(m => m.SupplierManagementComponent)
+},
+{
+  path: 'distribution-report',
+  loadComponent: () => import('./distribution-report/distribution-report.component').then(m => m.DistributionReportComponent)
 }
 
     ]
