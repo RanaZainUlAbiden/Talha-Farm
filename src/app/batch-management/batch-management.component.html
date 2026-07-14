@@ -31,7 +31,7 @@
         <tr *ngIf="showNewRow" class="new-row">
           <td><input class="inline-input" type="text" [(ngModel)]="newRow.batch_name" placeholder="e.g. Layer Batch 1"/></td>
           <td><input class="inline-input" type="date" [(ngModel)]="newRow.start_date"/></td>
-          <td><input class="inline-input" type="number" [(ngModel)]="newRow.initial_birds" placeholder="e.g. 5000"/></td>
+          <td><input class="inline-input" type="number" min="0" [(ngModel)]="newRow.initial_birds" placeholder="e.g. 5000"/></td>
           <td><input class="inline-input" type="text" [(ngModel)]="newRow.breed" placeholder="e.g. Hy-Line Brown"/></td>
           <td>
             <select class="inline-input" [(ngModel)]="newRow.status">
@@ -45,7 +45,7 @@
           </td>
         </tr>
 
-        <tr *ngFor="let batch of batches" [class.editing]="editingId === batch.batch_id" [class.closed-row]="batch.status === 'closed'">
+        <tr *ngFor="let batch of paginatedBatches" [class.editing]="editingId === batch.batch_id" [class.closed-row]="batch.status === 'closed'">
           <ng-container *ngIf="editingId !== batch.batch_id">
             <td class="batch-name">{{ batch.batch_name }}</td>
             <td>{{ batch.start_date | dateOnly }}</td>
@@ -65,7 +65,7 @@
           <ng-container *ngIf="editingId === batch.batch_id">
             <td><input class="inline-input" type="text" [(ngModel)]="editForm.batch_name"/></td>
             <td><input class="inline-input" type="date" [(ngModel)]="editForm.start_date"/></td>
-            <td><input class="inline-input" type="number" [(ngModel)]="editForm.initial_birds"/></td>
+            <td><input class="inline-input" type="number" min="0" [(ngModel)]="editForm.initial_birds"/></td>
             <td><input class="inline-input" type="text" [(ngModel)]="editForm.breed"/></td>
             <td>
               <select class="inline-input" [(ngModel)]="editForm.status">
@@ -81,6 +81,7 @@
         </tr>
       </tbody>
     </table>
+    <app-pagination [currentPage]="currentPage" [totalItems]="batches.length" [pageSize]="pageSize" (pageChange)="currentPage = $event"></app-pagination>
   </div>
 </div>
 

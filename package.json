@@ -33,19 +33,19 @@
   },
   "build": {
     "appId": "com.devinfantary.poultry-farm",
-    "productName": "Talha Protein Farm",
+    "productName": "Talha Farm",
     "win": {
       "target": "nsis",
-      "icon": "public/logo.ico"
+      "icon": "public/favicon.ico"
     },
     "nsis": {
       "oneClick": false,
       "allowToChangeInstallationDirectory": true,
-      "installerIcon": "public/logo.ico",
-      "installerHeaderIcon": "public/logo.ico",
+      "installerIcon": "public/favicon.ico",
+      "installerHeaderIcon": "public/favicon.ico",
       "createDesktopShortcut": true,
       "createStartMenuShortcut": true,
-      "shortcutName": "Talha Protein Farm"
+      "shortcutName": "Talha Farm"
     },
     "files": [
       "dist/**/*",

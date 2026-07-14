@@ -12,7 +12,7 @@
       <div class="error-message" *ngIf="errorMessage">{{ errorMessage }}</div>
       <div class="empty-state" *ngIf="filteredBills.length === 0"><p>No bills yet. Click "New Bill" to create one.</p></div>
       <div class="bill-list" *ngIf="filteredBills.length > 0">
-        <div class="bill-item" *ngFor="let bill of filteredBills" (click)="selectBill(bill)">
+        <div class="bill-item" *ngFor="let bill of paginatedBills" (click)="selectBill(bill)">
           <div class="bill-left"><span class="bill-num">{{ bill.bill_number }}</span><span class="bill-cust">{{ bill.customer_name || 'Walk-in' }}</span></div>
           <div class="bill-right">
             <span class="bill-date">{{ bill.bill_date | dateOnly }}</span>
@@ -22,6 +22,7 @@
           </div>
         </div>
       </div>
+      <app-pagination *ngIf="filteredBills.length > 0" [currentPage]="currentPage" [totalItems]="filteredBills.length" [pageSize]="pageSize" (pageChange)="currentPage = $event"></app-pagination>
     </div>
   </ng-container>
 
@@ -33,6 +34,9 @@
         <div class="pos-left-header">
           <button class="back-btn" (click)="backToList()">← Back</button>
           <h3>{{ isEditMode ? 'Edit Bill' : 'New Bill' }}</h3>
+        </div>
+        <div class="error-message" *ngIf="products.length === 0" style="margin-bottom:8px;">
+          No products in inventory yet. Add products in the Inventory page before creating a bill.
         </div>
         <div class="psearch-wrap"><div class="psf">
           <span>🔍</span><input class="psf-input" type="text" placeholder="Search & add product..." [(ngModel)]="productSearchTerm" (input)="onProductSearch()" autocomplete="off"/>

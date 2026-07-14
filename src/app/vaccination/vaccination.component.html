@@ -4,37 +4,47 @@
       <h3>Vaccination Schedule</h3>
       <p class="subtitle">{{ currentFarm?.farm_name }}</p>
     </div>
-    <button class="btn-primary" (click)="addNewRow()" *ngIf="!showNewRow">+ Add Vaccination</button>
+    <div class="header-actions">
+      <ng-container *ngIf="hasPendingRows">
+        <button class="btn-secondary" (click)="cancelAllRows()">Cancel</button>
+        <button class="btn-primary" (click)="saveAllRows()" [disabled]="isSavingAll">{{ isSavingAll ? 'Saving...' : 'Save All' }}</button>
+      </ng-container>
+      <button class="btn-add" (click)="addPendingRow()" *ngIf="batches.length > 0" title="Add row (Ctrl+A)">+</button>
+    </div>
+  </div>
+
+  <div class="shortcuts-hint" *ngIf="hasPendingRows">
+    <span>Ctrl+A — new row</span>
+    <span>Ctrl+S — save all</span>
   </div>
 
   <div class="empty-state" *ngIf="batches.length === 0">
     <p>No active batches found. Create a batch first in Batch Management.</p>
   </div>
 
-  <div class="empty-state" *ngIf="batches.length > 0 && vaccinations.length === 0 && !showNewRow">
+  <div class="empty-state" *ngIf="batches.length > 0 && vaccinations.length === 0 && pendingRows.length === 0">
     <p>No vaccinations scheduled yet.</p>
   </div>
 
-  <div class="table-card" *ngIf="vaccinations.length > 0 || showNewRow">
+  <div class="table-card" *ngIf="vaccinations.length > 0 || pendingRows.length > 0">
     <table>
       <thead>
-        <tr><th>Batch</th><th>Date</th><th>Vaccine Name</th><th>Dose</th><th>Notes</th><th>Done</th><th>Actions</th></tr>
+        <tr><th style="width:32px"></th><th>Batch</th><th>Date</th><th>Vaccine Name</th><th>Dose</th><th>Notes</th><th>Done</th><th>Actions</th></tr>
       </thead>
       <tbody>
-        <tr *ngIf="showNewRow" class="new-row">
-          <td><select class="inline-input" [(ngModel)]="newRow.batch_id"><option *ngFor="let b of batches" [value]="b.batch_id">{{ b.batch_name }}</option></select></td>
-          <td><input class="inline-input" type="date" [(ngModel)]="newRow.date"/></td>
-          <td><input class="inline-input" type="text" [(ngModel)]="newRow.vaccine_name" placeholder="Vaccine name"/></td>
-          <td><input class="inline-input" type="text" [(ngModel)]="newRow.dose" placeholder="e.g. 0.5ml"/></td>
-          <td><input class="inline-input" type="text" [(ngModel)]="newRow.notes" placeholder="Notes"/></td>
-          <td><input type="checkbox" [(ngModel)]="newRow.done"/></td>
-          <td class="actions">
-            <button class="btn-save" [disabled]="isSaving" (click)="saveNewRow()">Save</button>
-            <button class="btn-cancel-edit" (click)="cancelNewRow()">Cancel</button>
-          </td>
+        <tr *ngFor="let row of pendingRows; let i = index" class="pending-row">
+          <td class="row-plus-cell"><button class="row-plus-btn" (click)="addRowAfter(i)">+</button></td>
+          <td><select class="inline-input" [(ngModel)]="row.batch_id"><option *ngFor="let b of batches" [value]="b.batch_id">{{ b.batch_name }}</option></select></td>
+          <td><input class="inline-input" type="date" [(ngModel)]="row.date"/></td>
+          <td><input class="inline-input" type="text" [(ngModel)]="row.vaccine_name" placeholder="Vaccine name"/></td>
+          <td><input class="inline-input" type="text" [(ngModel)]="row.dose" placeholder="e.g. 0.5ml"/></td>
+          <td><input class="inline-input" type="text" [(ngModel)]="row.notes" placeholder="Notes"/></td>
+          <td><input type="checkbox" [(ngModel)]="row.done"/></td>
+          <td class="actions"><button class="btn-remove-row" (click)="removePendingRow(i)">✕</button></td>
         </tr>
         <tr *ngFor="let v of vaccinations" [class.editing]="editingId === v.vaccination_id">
           <ng-container *ngIf="editingId !== v.vaccination_id">
+            <td></td>
             <td>{{ getBatchName(v.batch_id) }}</td>
             <td>{{ v.date | dateOnly }}</td>
             <td>{{ v.vaccine_name }}</td>
@@ -47,6 +57,7 @@
             </td>
           </ng-container>
           <ng-container *ngIf="editingId === v.vaccination_id">
+            <td></td>
             <td><select class="inline-input" [(ngModel)]="editForm.batch_id"><option *ngFor="let b of batches" [value]="b.batch_id">{{ b.batch_name }}</option></select></td>
             <td><input class="inline-input" type="date" [(ngModel)]="editForm.date"/></td>
             <td><input class="inline-input" type="text" [(ngModel)]="editForm.vaccine_name"/></td>

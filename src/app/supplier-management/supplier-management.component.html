@@ -11,7 +11,7 @@
       <tbody>
         <tr *ngIf="showNewRow" class="new-row">
           <td><input class="inline-input" type="text" [(ngModel)]="newRow.supplier_name" placeholder="Supplier name"/></td>
-          <td><input class="inline-input" type="text" [(ngModel)]="newRow.phone" placeholder="Phone"/></td>
+          <td><input class="inline-input" type="tel" inputmode="tel" [(ngModel)]="newRow.phone" placeholder="e.g. 03001234567"/></td>
           <td><input class="inline-input" type="text" [(ngModel)]="newRow.products_supplied" placeholder="e.g. Feed, Medicine"/></td>
           <td class="actions"><button class="btn-save" (click)="saveNewRow()">Save</button><button class="btn-cancel-edit" (click)="cancelNewRow()">Cancel</button></td>
         </tr>
@@ -22,7 +22,7 @@
           </ng-container>
           <ng-container *ngIf="editingId === s.supplier_id">
             <td><input class="inline-input" type="text" [(ngModel)]="editForm.supplier_name"/></td>
-            <td><input class="inline-input" type="text" [(ngModel)]="editForm.phone"/></td>
+            <td><input class="inline-input" type="tel" inputmode="tel" [(ngModel)]="editForm.phone"/></td>
             <td><input class="inline-input" type="text" [(ngModel)]="editForm.products_supplied"/></td>
             <td class="actions"><button class="btn-save" (click)="saveEdit(s.supplier_id)">Save</button><button class="btn-cancel-edit" (click)="cancelEdit()">Cancel</button></td>
           </ng-container>

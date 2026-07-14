@@ -6,11 +6,12 @@ import { FlockService } from '../shared/services/flock.service';
 import { AuthService } from '../shared/services/auth.service';
 import { ConfirmDialogComponent } from '../shared/components/confirm-dialog/confirm-dialog.component';
 import { DateOnlyPipe } from '../shared/pipes/date-format.pipe';
+import { PaginationComponent } from '../shared/components/pagination/pagination.component';
 
 @Component({
   selector: 'app-flock-management',
   standalone: true,
-  imports: [CommonModule, FormsModule, ConfirmDialogComponent, DateOnlyPipe],
+  imports: [CommonModule, FormsModule, ConfirmDialogComponent, DateOnlyPipe, PaginationComponent],
   templateUrl: './flock-management.component.html',
   styleUrl: './flock-management.component.scss'
 })
@@ -24,6 +25,27 @@ export class FlockManagementComponent implements OnInit {
   deletingId: number | null = null;
   isSaving = false;
   errorMessage = '';
+
+  currentPage = 1;
+  pageSize = 10;
+
+  searchTerm: string = '';
+
+  get filteredFlocks(): any[] {
+    const term = this.searchTerm.toLowerCase().trim();
+    if (!term) return this.flocks;
+    return this.flocks.filter(f => f.flock_name?.toLowerCase().includes(term));
+  }
+
+  onSearchChange() {
+    this.currentPage = 1;
+    this.cdr.detectChanges();
+  }
+
+  get paginatedFlocks() {
+    const start = (this.currentPage - 1) * this.pageSize;
+    return this.filteredFlocks.slice(start, start + this.pageSize);
+  }
 
   newRow = {
     flock_name: '',

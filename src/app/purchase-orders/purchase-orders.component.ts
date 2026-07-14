@@ -5,11 +5,12 @@ import { DatabaseService } from '../shared/services/database.service';
 import { AuthService } from '../shared/services/auth.service';
 import { ConfirmDialogComponent } from '../shared/components/confirm-dialog/confirm-dialog.component';
 import { DateOnlyPipe } from '../shared/pipes/date-format.pipe';
+import { PaginationComponent } from '../shared/components/pagination/pagination.component';
 
 @Component({
   selector: 'app-purchase-orders',
   standalone: true,
-  imports: [CommonModule, FormsModule, ConfirmDialogComponent, DateOnlyPipe],
+  imports: [CommonModule, FormsModule, ConfirmDialogComponent, DateOnlyPipe, PaginationComponent],
   templateUrl: './purchase-orders.component.html',
   styleUrl: './purchase-orders.component.scss'
 })
@@ -25,6 +26,15 @@ export class PurchaseOrdersComponent implements OnInit {
   deletingId: number | null = null;
   isSaving = false;
   isSavingAll = false;
+
+  currentPage = 1;
+  pageSize = 20;
+
+  get paginatedOrders() {
+    const start = (this.currentPage - 1) * this.pageSize;
+    return this.orders.slice(start, start + this.pageSize);
+  }
+
   get hasPendingRows() { return this.pendingRows.length > 0; }
 
   constructor(private db: DatabaseService, private authService: AuthService, private cdr: ChangeDetectorRef) {}
@@ -54,9 +64,12 @@ export class PurchaseOrdersComponent implements OnInit {
     this.isSavingAll = true;
     for (const row of this.pendingRows) {
       if (!row.product_id || !row.quantity || !row.cost_price) continue;
+      if (Number(row.quantity) < 0 || Number(row.cost_price) < 0) continue;
       await this.db.run('INSERT INTO purchase_orders (farm_id, supplier_id, product_id, date, quantity, cost_price, total_amount, payment_type, notes) VALUES (?,?,?,?,?,?,?,?,?)',
         [this.currentFarm.farm_id, row.supplier_id, row.product_id, row.date, row.quantity, row.cost_price, row.quantity * row.cost_price, row.payment_type, row.notes]);
       await this.updateStock(row.product_id, row.quantity);
+      // Keep the product's cost price in sync with the latest purchase cost.
+      await this.syncCost(row.product_id, row.cost_price);
     }
     this.pendingRows = []; this.isSavingAll = false; await this.loadData();
   }
@@ -65,6 +78,10 @@ export class PurchaseOrdersComponent implements OnInit {
 
   async updateStock(productId: number, quantity: number) {
     await this.db.run('UPDATE products SET current_stock = current_stock + ? WHERE product_id = ?', [quantity, productId]);
+  }
+
+  async syncCost(productId: number, costPrice: number) {
+    await this.db.run('UPDATE products SET cost_price = ? WHERE product_id = ?', [costPrice, productId]);
   }
 
   startEdit(o: any) { this.editingId = o.purchase_id; this.editForm = { product_id: o.product_id, supplier_id: o.supplier_id, date: o.date, quantity: o.quantity, cost_price: o.cost_price, payment_type: o.payment_type, notes: o.notes, old_quantity: o.quantity }; }
@@ -82,6 +99,8 @@ export class PurchaseOrdersComponent implements OnInit {
         await this.updateStock(this.editForm.product_id, Number(this.editForm.quantity));
       }
     }
+    // Keep inventory cost in sync with the edited purchase cost.
+    await this.syncCost(this.editForm.product_id, this.editForm.cost_price);
     this.editingId = null; await this.loadData();
   }
 

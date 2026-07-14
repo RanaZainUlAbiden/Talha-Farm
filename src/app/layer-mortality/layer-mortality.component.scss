@@ -75,3 +75,35 @@ tr.editing td { background: #f0faf4 !important; }
 .btn-save { background: #1a5c38; color: white; border: none; padding: 6px 12px; border-radius: 6px; font-size: 12px; font-weight: 500; cursor: pointer; &:hover { background: #144d2e; } }
 .btn-cancel-edit { background: #f5f5f5; color: #666; border: 1px solid #e0e0e0; padding: 6px 12px; border-radius: 6px; font-size: 12px; cursor: pointer; &:hover { background: #ebebeb; } }
 .btn-remove-row { background: none; border: none; color: #ccc; font-size: 16px; cursor: pointer; padding: 4px 8px; border-radius: 4px; &:hover { background: #fce4ec; color: #e53935; } }
+
+
+// ── Mortality Summary Card ────────────────────────────────
+.mortality-summary {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 16px;
+  margin-bottom: 24px;
+}
+
+.summary-card {
+  background: white;
+  border-radius: 12px;
+  padding: 20px 16px;
+  border: 1px solid #e0e0e0;
+  text-align: center;
+
+  .card-label {
+    font-size: 12px;
+    color: #888;
+    margin-bottom: 8px;
+    font-weight: 500;
+  }
+
+  .card-value {
+    font-size: 24px;
+    font-weight: 700;
+  }
+}
+
+.card-value.mortality { color: #e53935; }
+.card-value.alive { color: #1a5c38; }

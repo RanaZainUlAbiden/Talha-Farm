@@ -46,7 +46,7 @@
       <thead>
         <tr>
           <th style="width:32px"></th>
-          <th>Week</th>
+          <th>Day</th>
           <th>Total Birds</th>
           <th>Mortality</th>
           <th>Remaining</th>
@@ -68,7 +68,7 @@
           <td>
             <input class="inline-input" type="number"
               [(ngModel)]="row.week_number"
-              placeholder="Week #" />
+              placeholder="Day #" />
           </td>
           <td>
             <input class="inline-input" type="number"
@@ -119,7 +119,7 @@
           <!-- VIEW MODE -->
           <ng-container *ngIf="editingId !== record.health_id">
             <td></td>
-            <td>Week {{ record.week_number }}</td>
+            <td>Day {{ record.week_number }}</td>
             <td>{{ record.total_birds | number }}</td>
             <td class="mortality">{{ record.mortality | number }}</td>
             <td>{{ record.total_birds - record.mortality | number }}</td>

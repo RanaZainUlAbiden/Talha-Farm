@@ -26,12 +26,9 @@ export class DistributionReportComponent implements OnInit {
   ngOnInit() { this.currentFarm = this.authService.getCurrentFarm(); this.loadData(); }
 
   async loadData() {
-    const pr = await this.db.get('SELECT * FROM products WHERE farm_id=?', [this.currentFarm.farm_id]);
-    this.products = pr.success ? pr.data : [];
-    const pu = await this.db.get('SELECT po.*, p.product_name, s.supplier_name FROM purchase_orders po LEFT JOIN products p ON po.product_id=p.product_id LEFT JOIN suppliers s ON po.supplier_id=s.supplier_id WHERE po.farm_id=? ORDER BY po.date DESC', [this.currentFarm.farm_id]);
-    this.purchases = pu.success ? pu.data : [];
-    const sa = await this.db.get('SELECT * FROM bills WHERE farm_id=? ORDER BY bill_date DESC, bill_id DESC', [this.currentFarm.farm_id]);
-    this.sales = sa.success ? sa.data : [];
+    const pr = await this.db.get('SELECT * FROM products WHERE farm_id=?', [this.currentFarm.farm_id]); this.products = pr.success ? pr.data : [];
+    const pu = await this.db.get('SELECT po.*, p.product_name, s.supplier_name FROM purchase_orders po LEFT JOIN products p ON po.product_id=p.product_id LEFT JOIN suppliers s ON po.supplier_id=s.supplier_id WHERE po.farm_id=? ORDER BY po.date DESC', [this.currentFarm.farm_id]); this.purchases = pu.success ? pu.data : [];
+    const sa = await this.db.get('SELECT * FROM bills WHERE farm_id=? ORDER BY bill_date DESC, bill_id DESC', [this.currentFarm.farm_id]); this.sales = sa.success ? sa.data : [];
     this.cdr.detectChanges();
   }
 
@@ -39,23 +36,32 @@ export class DistributionReportComponent implements OnInit {
     this.isGenerating = true;
     try {
       const doc = new jsPDF(); const pw = doc.internal.pageSize.getWidth(); const ph = doc.internal.pageSize.getHeight();
-      const farmName = this.currentFarm?.farm_name || 'Poultry Farm';
-      const today = new Date().toLocaleDateString('en-PK');
+      const farmName = this.currentFarm?.farm_name || 'Poultry Farm'; const today = new Date().toLocaleDateString('en-PK');
       const footer = 'Software By: www.devinfantary.com  |  Contact: 0302 6938217';
-      const formatDate = (d: any) => {
-        if (!d) return '—';
-        const p = String(d).split('T')[0].split(' ')[0].split('-');
-        return (p.length === 3 && p[0].length === 4) ? `${p[2]}-${p[1]}-${p[0]}` : String(d);
-      };
+      const formatDate = (d: any) => { if (!d) return '—'; const p = String(d).split('T')[0].split(' ')[0].split('-'); return (p.length === 3 && p[0].length === 4) ? `${p[2]}-${p[1]}-${p[0]}` : String(d); };
       const B: [number,number,number] = [0,0,0]; const G: [number,number,number] = [120,120,120]; const LG: [number,number,number] = [200,200,200];
 
       // Cover
       let y = 20;
-      try { const id = await this.loadImageAsBase64('report-boiler.jpeg'); const ip = doc.getImageProperties(id); const lw = pw - 28; const lh = (ip.height * lw) / ip.width; doc.addImage(id, 'JPEG', (pw - lw) / 2, y, lw, lh); y += lh + 12; } catch {}
-      doc.setFont('helvetica', 'bold'); doc.setFontSize(22); doc.setTextColor(...B); doc.text('DISTRIBUTION REPORT', pw / 2, y, { align: 'center' }); y += 9;
-      doc.setFont('helvetica', 'normal'); doc.setFontSize(14); doc.setTextColor(...G); doc.text(farmName, pw / 2, y, { align: 'center' }); y += 7;
-      doc.setFontSize(11); doc.text('Generated: ' + today, pw / 2, y, { align: 'center' }); y += 8;
-      doc.setDrawColor(...B); doc.line(14, y, pw - 14, y); y += 8;
+
+      // Logo — left side, text on right
+      try {
+        const id = await this.loadImageAsBase64('report-boiler.jpeg');
+        const ip = doc.getImageProperties(id);
+        const lh = 35;
+        const lw = (ip.width * lh) / ip.height;
+        const tx = 14 + lw + 10;
+        doc.addImage(id, 'JPEG', 14, y, lw, lh);
+        doc.setFont('helvetica', 'bold'); doc.setFontSize(20); doc.setTextColor(...B);
+        doc.text('DISTRIBUTION REPORT', tx, y + 8);
+        doc.setFont('helvetica', 'normal'); doc.setFontSize(12); doc.setTextColor(...G);
+        doc.text(farmName, tx, y + 16);
+        doc.setFontSize(10);
+        doc.text('Generated: ' + today, tx, y + 23);
+        y += lh + 8;
+      } catch {}
+
+      doc.setDrawColor(...B); doc.setLineWidth(0.5); doc.line(14, y, pw - 14, y); y += 8;
       doc.setFont('helvetica', 'bold'); doc.setFontSize(11); doc.setTextColor(...B); doc.text('SUMMARY', 14, y); y += 6;
       const sum: [string, string][] = [['Total Products', String(this.products.length)], ['Inventory Value', 'Rs. ' + this.totalInventoryValue.toLocaleString()], ['Total Purchases', 'Rs. ' + this.totalPurchases.toLocaleString()], ['Total Sales', 'Rs. ' + this.totalSales.toLocaleString()]];
       doc.setFont('helvetica', 'normal'); doc.setFontSize(10);
@@ -89,10 +95,6 @@ export class DistributionReportComponent implements OnInit {
   }
 
   private loadImageAsBase64(url: string): Promise<string> {
-    return new Promise((resolve, reject) => {
-      const img = new Image(); img.crossOrigin = 'anonymous';
-      img.onload = () => { const c = document.createElement('canvas'); c.width = img.width; c.height = img.height; c.getContext('2d')!.drawImage(img, 0, 0); resolve(c.toDataURL('image/jpeg')); };
-      img.onerror = () => reject(new Error('Logo load failed')); img.src = url;
-    });
+    return new Promise((resolve, reject) => { const img = new Image(); img.crossOrigin = 'anonymous'; img.onload = () => { const c = document.createElement('canvas'); c.width = img.width; c.height = img.height; c.getContext('2d')!.drawImage(img, 0, 0); resolve(c.toDataURL('image/jpeg')); }; img.onerror = () => reject(new Error('Logo load failed')); img.src = url; });
   }
 }

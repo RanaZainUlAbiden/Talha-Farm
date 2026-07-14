@@ -13,9 +13,21 @@
     </div>
   </div>
 
+  <div class="filter-bar" *ngIf="batches.length > 0" style="margin-bottom: 16px; display: flex; align-items: center; gap: 8px;">
+    <label style="font-size: 13px; font-weight: 500;">Filter by Batch:</label>
+    <select class="inline-input" style="width: 200px;" [(ngModel)]="selectedBatchFilter" (change)="currentPage = 1">
+      <option value="all">All Batches</option>
+      <option *ngFor="let b of batches" [value]="b.batch_id">{{ b.batch_name }}</option>
+    </select>
+  </div>
+
   <div class="shortcuts-hint" *ngIf="hasPendingRows">
     <span>Ctrl+A — new row</span>
     <span>Ctrl+S — save all</span>
+  </div>
+
+  <div class="error-banner" *ngIf="errorMessage" style="color:#c0392b;padding:8px 12px;margin:8px 0;background:#fdecea;border-radius:6px;">
+    {{ errorMessage }}
   </div>
 
   <div class="empty-state" *ngIf="batches.length === 0">
@@ -51,16 +63,16 @@
             </select>
           </td>
           <td><input class="inline-input" type="date" [(ngModel)]="row.date"/></td>
-          <td><input class="inline-input" type="number" [(ngModel)]="row.total_eggs" placeholder="0"/></td>
-          <td><input class="inline-input" type="number" [(ngModel)]="row.broken_eggs" placeholder="0"/></td>
-          <td><input class="inline-input" type="number" [(ngModel)]="row.small_grade" placeholder="0"/></td>
-          <td><input class="inline-input" type="number" [(ngModel)]="row.medium_grade" placeholder="0"/></td>
-          <td><input class="inline-input" type="number" [(ngModel)]="row.large_grade" placeholder="0"/></td>
-          <td><input class="inline-input" type="number" [(ngModel)]="row.xl_grade" placeholder="0"/></td>
+          <td><input class="inline-input" type="number" min="0" [(ngModel)]="row.total_eggs" placeholder="0"/></td>
+          <td><input class="inline-input" type="number" min="0" [(ngModel)]="row.broken_eggs" placeholder="0"/></td>
+          <td><input class="inline-input" type="number" min="0" [(ngModel)]="row.small_grade" placeholder="0"/></td>
+          <td><input class="inline-input" type="number" min="0" [(ngModel)]="row.medium_grade" placeholder="0"/></td>
+          <td><input class="inline-input" type="number" min="0" [(ngModel)]="row.large_grade" placeholder="0"/></td>
+          <td><input class="inline-input" type="number" min="0" [(ngModel)]="row.xl_grade" placeholder="0"/></td>
           <td class="actions"><button class="btn-remove-row" (click)="removePendingRow(i)" title="Remove row">✕</button></td>
         </tr>
 
-        <tr *ngFor="let c of collections" [class.editing]="editingId === c.collection_id">
+        <tr *ngFor="let c of paginatedCollections" [class.editing]="editingId === c.collection_id">
           <ng-container *ngIf="editingId !== c.collection_id">
             <td></td>
             <td>{{ getBatchName(c.batch_id) }}</td>
@@ -84,12 +96,12 @@
               </select>
             </td>
             <td><input class="inline-input" type="date" [(ngModel)]="editForm.date"/></td>
-            <td><input class="inline-input" type="number" [(ngModel)]="editForm.total_eggs"/></td>
-            <td><input class="inline-input" type="number" [(ngModel)]="editForm.broken_eggs"/></td>
-            <td><input class="inline-input" type="number" [(ngModel)]="editForm.small_grade"/></td>
-            <td><input class="inline-input" type="number" [(ngModel)]="editForm.medium_grade"/></td>
-            <td><input class="inline-input" type="number" [(ngModel)]="editForm.large_grade"/></td>
-            <td><input class="inline-input" type="number" [(ngModel)]="editForm.xl_grade"/></td>
+            <td><input class="inline-input" type="number" min="0" [(ngModel)]="editForm.total_eggs"/></td>
+            <td><input class="inline-input" type="number" min="0" [(ngModel)]="editForm.broken_eggs"/></td>
+            <td><input class="inline-input" type="number" min="0" [(ngModel)]="editForm.small_grade"/></td>
+            <td><input class="inline-input" type="number" min="0" [(ngModel)]="editForm.medium_grade"/></td>
+            <td><input class="inline-input" type="number" min="0" [(ngModel)]="editForm.large_grade"/></td>
+            <td><input class="inline-input" type="number" min="0" [(ngModel)]="editForm.xl_grade"/></td>
             <td class="actions">
               <button class="btn-save" [disabled]="isSaving" (click)="saveEdit(c.collection_id)">{{ isSaving ? 'Saving...' : 'Save' }}</button>
               <button class="btn-cancel-edit" [disabled]="isSaving" (click)="cancelEdit()">Cancel</button>
@@ -98,6 +110,7 @@
         </tr>
       </tbody>
     </table>
+    <app-pagination [currentPage]="currentPage" [totalItems]="filteredCollections.length" [pageSize]="pageSize" (pageChange)="currentPage = $event"></app-pagination>
   </div>
 </div>
 

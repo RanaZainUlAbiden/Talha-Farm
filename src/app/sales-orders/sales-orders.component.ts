@@ -7,11 +7,12 @@ import { DateOnlyPipe } from '../shared/pipes/date-format.pipe';
 import { ConfirmDialogComponent } from '../shared/components/confirm-dialog/confirm-dialog.component';
 import { jsPDF } from 'jspdf';
 import autoTable from 'jspdf-autotable';
+import { PaginationComponent } from '../shared/components/pagination/pagination.component';
 
 @Component({
   selector: 'app-sales-orders',
   standalone: true,
-  imports: [CommonModule, FormsModule, DateOnlyPipe, ConfirmDialogComponent],
+  imports: [CommonModule, FormsModule, DateOnlyPipe, ConfirmDialogComponent, PaginationComponent],
   templateUrl: './sales-orders.component.html',
   styleUrl: './sales-orders.component.scss'
 })
@@ -30,6 +31,14 @@ export class SalesOrdersComponent implements OnInit {
   showDeleteDialog: boolean = false;
   deletingBillId: number | null = null;
   errorMessage: string = '';
+
+  currentPage = 1;
+  pageSize = 20;
+
+  get paginatedBills() {
+    const start = (this.currentPage - 1) * this.pageSize;
+    return this.filteredBills.slice(start, start + this.pageSize);
+  }
 
   // Cart
   gridItems: any[] = [];
@@ -71,6 +80,7 @@ export class SalesOrdersComponent implements OnInit {
   onBillSearch() {
     const term = this.billSearchTerm.toLowerCase().trim();
     this.filteredBills = term ? this.allBills.filter(b => b.bill_number.toLowerCase().includes(term) || (b.customer_name || '').toLowerCase().includes(term)) : [...this.allBills];
+    this.currentPage = 1;
   }
 
   onCreateNewBill() {
@@ -206,19 +216,21 @@ export class SalesOrdersComponent implements OnInit {
     }
   }
 
-  // Save Bill
-  async saveBill() {
-    if (this.gridItems.length === 0 || this.isSubmitting) return;
-    if (!(await this.validateStockForBill())) return;
+  // Save Bill — returns the saved bill_id (or null if nothing was saved).
+  async saveBill(): Promise<number | null> {
+    if (this.gridItems.length === 0 || this.isSubmitting) return null;
+    if (!(await this.validateStockForBill())) return null;
     this.isSubmitting = true;
 
     const customerName = this.customerType === 'regular' ? (this.customers.find(c => c.customer_id === this.selectedCustomerId)?.customer_name || 'Walk-in') : 'Walk-in';
     const billNumber = this.isEditMode ? '' : await this.getNextBillNumber();
     const totalAmount = this.cartSubtotal;
+    let savedBillId: number | null = null;
 
     try {
       if (this.isEditMode && this.editingBillId) {
         // Update existing bill
+        savedBillId = this.editingBillId;
         await this.restoreBillStock(this.editingBillId);
         await this.db.run('UPDATE bills SET customer_id=?, customer_name=?, subtotal=?, total_amount=?, amount_paid=?, payment_type=? WHERE bill_id=?',
           [this.selectedCustomerId, customerName, totalAmount, totalAmount, this.paidAmount, 'cash', this.editingBillId]);
@@ -230,11 +242,12 @@ export class SalesOrdersComponent implements OnInit {
         await this.subtractGridStock();
       } else {
         // Create new bill
-        const result = await this.db.run('INSERT INTO bills (farm_id, bill_number, customer_id, customer_name, bill_date, subtotal, total_amount, amount_paid, payment_type) VALUES (?,?,?,?,?,?,?,?,?)',
+        await this.db.run('INSERT INTO bills (farm_id, bill_number, customer_id, customer_name, bill_date, subtotal, total_amount, amount_paid, payment_type) VALUES (?,?,?,?,?,?,?,?,?)',
           [this.currentFarm.farm_id, billNumber, this.selectedCustomerId, customerName, new Date().toISOString().split('T')[0], totalAmount, totalAmount, this.paidAmount, 'cash']);
         // Get last inserted bill_id
         const lastBill = await this.db.get('SELECT MAX(bill_id) as bid FROM bills WHERE farm_id=?', [this.currentFarm.farm_id]);
         const billId = lastBill.success && lastBill.data[0] ? lastBill.data[0].bid : null;
+        savedBillId = billId;
         if (billId) {
           for (const item of this.gridItems) {
             await this.db.run('INSERT INTO bill_items (bill_id, product_id, product_name, quantity, unit_price, total_price) VALUES (?,?,?,?,?,?)',
@@ -250,6 +263,7 @@ export class SalesOrdersComponent implements OnInit {
       this.isSubmitting = false;
       this.cdr.detectChanges();
     }
+    return savedBillId;
   }
 
   confirmDeleteBill(event: Event, billId: number) {
@@ -273,13 +287,13 @@ export class SalesOrdersComponent implements OnInit {
     this.deletingBillId = null;
   }
 
-  // Save & Print
+  // Save & Print — prints exactly the bill that was just saved.
   async saveAndPrint() {
-    await this.saveBill();
-    if (this.allBills.length > 0) {
-      const lastBill = this.allBills[0];
-      this.printBill(lastBill);
-    }
+    const billId = await this.saveBill();
+    if (billId == null) return;
+    const r = await this.db.get('SELECT * FROM bills WHERE bill_id=?', [billId]);
+    const bill = r.success && r.data[0] ? r.data[0] : null;
+    if (bill) this.printBill(bill);
   }
 
   // Print Bill PDF

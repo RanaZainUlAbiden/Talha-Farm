@@ -32,10 +32,10 @@ export class CustomerManagementComponent implements OnInit {
     await this.db.run('INSERT INTO customers (farm_id, customer_name, phone, address) VALUES (?,?,?,?)', [this.currentFarm.farm_id, this.newRow.customer_name, this.newRow.phone, this.newRow.address]);
     this.isSaving = false; await this.loadCustomers();
   }
-  startEdit(c: any) { this.editingId = c.customer_id; this.editForm = { customer_name: c.customer_name, phone: c.phone, address: c.address }; }
+  startEdit(c: any) { this.editingId = c.customer_id; this.editForm = { customer_name: c.customer_name, phone: c.phone, address: c.address, outstanding_balance: c.outstanding_balance }; }
   cancelEdit() { this.editingId = null; }
   async saveEdit(id: number) {
-    await this.db.run('UPDATE customers SET customer_name=?, phone=?, address=? WHERE customer_id=?', [this.editForm.customer_name, this.editForm.phone, this.editForm.address, id]);
+    await this.db.run('UPDATE customers SET customer_name=?, phone=?, address=?, outstanding_balance=? WHERE customer_id=?', [this.editForm.customer_name, this.editForm.phone, this.editForm.address, this.editForm.outstanding_balance || 0, id]);
     this.editingId = null; await this.loadCustomers();
   }
   confirmDelete(id: number) { this.deletingId = id; this.showDeleteDialog = true; }

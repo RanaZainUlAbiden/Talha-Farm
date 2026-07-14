@@ -13,9 +13,43 @@
     </div>
   </div>
 
+  <!-- Egg Stock Summary Card -->
+  <div class="egg-stock-summary" *ngIf="batches.length > 0">
+    <div class="summary-card">
+      <div class="card-label">🥚 Collected</div>
+      <div class="card-value">{{ summaryCollected | number }}</div>
+    </div>
+    <div class="summary-card">
+      <div class="card-label">🛒 Sold</div>
+      <div class="card-value sold">{{ summarySold | number }}</div>
+    </div>
+    <div class="summary-card">
+      <div class="card-label">📦 In Stock</div>
+      <div class="card-value stock">{{ summaryInStock | number }}</div>
+    </div>
+    <div class="summary-card">
+      <div class="card-label">Showing</div>
+      <div class="card-value batch-label">{{ summaryBatchLabel }}</div>
+    </div>
+  </div>
+
+  <div class="filter-bar" *ngIf="batches.length > 0">
+    <div class="filter-group">
+      <label>Filter by Batch:</label>
+      <select [(ngModel)]="selectedBatchFilter" (change)="currentPage = 1">
+        <option value="all">All Batches</option>
+        <option *ngFor="let b of batches" [value]="b.batch_id">{{ b.batch_name }}</option>
+      </select>
+    </div>
+  </div>
+
   <div class="shortcuts-hint" *ngIf="hasPendingRows">
     <span>Ctrl+A — new row</span>
     <span>Ctrl+S — save all</span>
+  </div>
+
+  <div class="error-banner" *ngIf="errorMessage" style="color:#c0392b;padding:8px 12px;margin:8px 0;background:#fdecea;border-radius:6px;">
+    {{ errorMessage }}
   </div>
 
   <div class="empty-state" *ngIf="batches.length === 0">
@@ -57,9 +91,12 @@
               <option value="mixed">Mixed</option>
             </select>
           </td>
-          <td><input class="inline-input" type="number" [(ngModel)]="row.quantity" placeholder="Qty"/></td>
-          <td><input class="inline-input" type="number" [(ngModel)]="row.rate_per_egg" placeholder="Rate"/></td>
-          <td class="amount">Rs. {{ (row.quantity || 0) * (row.rate_per_egg || 0) | number:'1.0-0' }}</td>
+          <td>
+            <input class="inline-input" type="number" min="0" [max]="getAvailableEggs(row.batch_id)" [(ngModel)]="row.quantity" placeholder="Qty"/>
+            <div class="stock-hint" style="font-size:11px;color:#888;">Avail: {{ getAvailableEggs(row.batch_id) | number }}</div>
+          </td>
+          <td><input class="inline-input" type="number" min="0" [(ngModel)]="row.rate_per_egg" placeholder="Rate"/></td>
+          <td class="amount"><input class="inline-input amount-input" type="number" [(ngModel)]="row.amount" placeholder="Auto"/></td>
           <td>
             <select class="inline-input" [(ngModel)]="row.payment_type">
               <option value="cash">Cash</option>
@@ -69,7 +106,7 @@
           <td class="actions"><button class="btn-remove-row" (click)="removePendingRow(i)">✕</button></td>
         </tr>
 
-        <tr *ngFor="let s of sales" [class.editing]="editingId === s.egg_sale_id">
+        <tr *ngFor="let s of paginatedSales" [class.editing]="editingId === s.egg_sale_id">
           <ng-container *ngIf="editingId !== s.egg_sale_id">
             <td></td>
             <td>{{ getBatchName(s.batch_id) }}</td>
@@ -99,9 +136,9 @@
                 <option value="mixed">Mixed</option>
               </select>
             </td>
-            <td><input class="inline-input" type="number" [(ngModel)]="editForm.quantity"/></td>
-            <td><input class="inline-input" type="number" [(ngModel)]="editForm.rate_per_egg"/></td>
-            <td class="amount">Rs. {{ (editForm.quantity || 0) * (editForm.rate_per_egg || 0) | number:'1.0-0' }}</td>
+            <td><input class="inline-input" type="number" min="0" [(ngModel)]="editForm.quantity"/></td>
+            <td><input class="inline-input" type="number" min="0" [(ngModel)]="editForm.rate_per_egg"/></td>
+            <td class="amount"><input class="inline-input amount-input" type="number" [(ngModel)]="editForm.amount" placeholder="Auto"/></td>
             <td>
               <select class="inline-input" [(ngModel)]="editForm.payment_type">
                 <option value="cash">Cash</option>
@@ -116,6 +153,7 @@
         </tr>
       </tbody>
     </table>
+    <app-pagination [currentPage]="currentPage" [totalItems]="filteredSales.length" [pageSize]="pageSize" (pageChange)="currentPage = $event"></app-pagination>
   </div>
 </div>
 

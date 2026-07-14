@@ -218,63 +218,40 @@ export class ReportComponent implements OnInit, OnDestroy {
       let coverY = 20;
 
       // Logo
-      // Logo — centered, auto-sized to fit width
-if (this.logoUrl) {
-  try {
-    const imgData = await this.loadImageAsBase64(this.logoUrl);
-    
-    // Get image properties
-    const imgProps = doc.getImageProperties(imgData);
-    const maxWidth = pageWidth - 28;  // 14mm margin each side
-    const maxHeight = 35;             // Max height in mm
-    
-    let logoWidth = imgProps.width;
-    let logoHeight = imgProps.height;
-    
-    // Scale to fit width if wider than maxWidth
-    if (logoWidth > maxWidth) {
-      const ratio = maxWidth / logoWidth;
-      logoWidth = maxWidth;
-      logoHeight = logoHeight * ratio;
-    }
-    
-    // Scale down if too tall
-    if (logoHeight > maxHeight) {
-      const ratio = maxHeight / logoHeight;
-      logoHeight = maxHeight;
-      logoWidth = logoWidth * ratio;
-    }
-    
-    // Center the logo
-    const x = (pageWidth - logoWidth) / 2;
-    
-    doc.addImage(imgData, 'JPEG', x, coverY, logoWidth, logoHeight);
-    coverY += logoHeight + 12;
-  } catch { /* skip logo on error */ }
-}
+  // Logo — left side, text on right
+try {
+  const imgData = await this.loadImageAsBase64(this.logoUrl || 'report-boiler.jpeg');
+  const imgProps = doc.getImageProperties(imgData);
+  const logoHeight = 35;
+  const logoWidth = (imgProps.width * logoHeight) / imgProps.height;
+  const textX = 14 + logoWidth + 10;
 
-      doc.setFont('helvetica', 'bold');
-      doc.setFontSize(22);
-      doc.setTextColor(...BLACK);
-      doc.text('FARM REPORT', pageWidth / 2, coverY, { align: 'center' });
-      coverY += 9;
+  doc.addImage(imgData, 'JPEG', 14, coverY, logoWidth, logoHeight);
 
-      doc.setFont('helvetica', 'normal');
-      doc.setFontSize(14);
-      doc.setTextColor(...GRAY);
-      doc.text(farmName, pageWidth / 2, coverY, { align: 'center' });
-      coverY += 7;
+  doc.setFont('helvetica', 'bold');
+  doc.setFontSize(20);
+  doc.setTextColor(...BLACK);
+  doc.text('FARM REPORT', textX, coverY + 8);
 
-      doc.setFontSize(11);
-      doc.text(`Flock: ${flockName}`, pageWidth / 2, coverY, { align: 'center' });
-      coverY += 6;
-      doc.text(`Generated: ${today}`, pageWidth / 2, coverY, { align: 'center' });
-      coverY += 8;
+  doc.setFont('helvetica', 'normal');
+  doc.setFontSize(12);
+  doc.setTextColor(...GRAY);
+  doc.text(farmName, textX, coverY + 16);
 
-      doc.setDrawColor(...BLACK);
-      doc.setLineWidth(0.5);
-      doc.line(14, coverY, pageWidth - 14, coverY);
-      coverY += 8;
+  doc.setFontSize(10);
+  doc.text('Flock: ' + flockName, textX, coverY + 23);
+  doc.text('Generated: ' + today, textX, coverY + 30);
+
+  coverY += logoHeight + 8;
+} catch {}
+
+// Line below logo section
+doc.setDrawColor(...BLACK);
+doc.setLineWidth(0.5);
+doc.line(14, coverY, pageWidth - 14, coverY);
+coverY += 8;
+
+     
 
       // Summary block
       doc.setFont('helvetica', 'bold');
@@ -290,7 +267,7 @@ if (this.logoUrl) {
                              `Rs. ${Math.abs(this.profitLoss).toLocaleString()}`],
         ['Total Weight Sold',`${this.totalSaleWeight.toFixed(0)} kg`],
         ['Total Sale Amount',`Rs. ${this.totalSaleAmount.toLocaleString()}`],
-        ['Health Records',   `${this.health.length} week${this.health.length === 1 ? '' : 's'}`]
+        ['Health Records',   `${this.health.length} day${this.health.length === 1 ? '' : 's'}`]
       ];
 
       doc.setFont('helvetica', 'normal');
@@ -454,9 +431,9 @@ if (this.logoUrl) {
         addPage('Flock Health');
         bwTable(
           y,
-          [['Week', 'Total Birds', 'Mortality', 'Remaining', 'Feed (kg)', 'Avg Wt', 'FCR']],
+          [['Day', 'Total Birds', 'Mortality', 'Remaining', 'Feed (kg)', 'Avg Wt', 'FCR']],
           this.health.map(h => [
-            `Week ${h.week_number}`,
+            `Day ${h.week_number}`,
             (h.total_birds || 0).toLocaleString(),
             (h.mortality   || 0).toLocaleString(),
             ((h.total_birds - h.mortality) || 0).toLocaleString(),

@@ -6,11 +6,12 @@ import { AuthService } from '../shared/services/auth.service';
 import { ConfirmDialogComponent } from '../shared/components/confirm-dialog/confirm-dialog.component';
 import { DateOnlyPipe } from '../shared/pipes/date-format.pipe';
 import { PendingStateService } from '../shared/services/pending-state.service';
+import { PaginationComponent } from '../shared/components/pagination/pagination.component';
 
 @Component({
   selector: 'app-egg-collection',
   standalone: true,
-  imports: [CommonModule, FormsModule, ConfirmDialogComponent, DateOnlyPipe],
+  imports: [CommonModule, FormsModule, ConfirmDialogComponent, DateOnlyPipe, PaginationComponent],
   templateUrl: './egg-collection.component.html',
   styleUrl: './egg-collection.component.scss'
 })
@@ -26,6 +27,21 @@ export class EggCollectionComponent implements OnInit {
   isSaving = false;
   isSavingAll = false;
   errorMessage = '';
+
+  currentPage = 1;
+  pageSize = 30;
+
+  selectedBatchFilter: string = 'all';
+
+  get filteredCollections() {
+    if (this.selectedBatchFilter === 'all') return this.collections;
+    return this.collections.filter(c => String(c.batch_id) === String(this.selectedBatchFilter));
+  }
+
+  get paginatedCollections() {
+    const start = (this.currentPage - 1) * this.pageSize;
+    return this.filteredCollections.slice(start, start + this.pageSize);
+  }
 
   get hasPendingRows(): boolean { return this.pendingRows.length > 0; }
 
@@ -96,8 +112,34 @@ export class EggCollectionComponent implements OnInit {
   addRowAfter(index: number) { this.pendingRows.splice(index + 1, 0, this.makeNewRow()); }
   removePendingRow(index: number) { this.pendingRows.splice(index, 1); }
 
+  // Returns an error message if the row is invalid, otherwise null.
+  validateEggRow(row: any): string | null {
+    if (!row.batch_id || !row.date || row.total_eggs === null || row.total_eggs === undefined || row.total_eggs === '') {
+      return 'Select a batch, date and enter total eggs.';
+    }
+    const total = Number(row.total_eggs);
+    const broken = Number(row.broken_eggs) || 0;
+    const small = Number(row.small_grade) || 0;
+    const medium = Number(row.medium_grade) || 0;
+    const large = Number(row.large_grade) || 0;
+    const xl = Number(row.xl_grade) || 0;
+
+    if ([total, broken, small, medium, large, xl].some(v => v < 0)) {
+      return 'Quantities cannot be negative.';
+    }
+    if (broken + small + medium + large + xl > total) {
+      return 'Broken + graded eggs cannot exceed total eggs.';
+    }
+    return null;
+  }
+
   async saveAllRows() {
     if (this.pendingRows.length === 0 || this.isSavingAll) return;
+    this.errorMessage = '';
+    for (const row of this.pendingRows) {
+      const error = this.validateEggRow(row);
+      if (error) { this.errorMessage = error; this.cdr.detectChanges(); return; }
+    }
     this.isSavingAll = true;
     try {
       const invalidRows: any[] = [];
@@ -129,8 +171,11 @@ export class EggCollectionComponent implements OnInit {
 
   async saveEdit(id: number) {
     if (this.isSaving) return;
+    const error = this.validateEggRow(this.editForm);
+    if (error) { this.errorMessage = error; this.cdr.detectChanges(); return; }
     this.isSaving = true;
     this.editingId = null;
+    this.errorMessage = '';
     try {
       await this.db.run(
         `UPDATE egg_collection SET batch_id = ?, date = ?, total_eggs = ?, broken_eggs = ?, small_grade = ?, medium_grade = ?, large_grade = ?, xl_grade = ? WHERE collection_id = ?`,

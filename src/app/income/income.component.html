@@ -31,7 +31,7 @@
 
   <!-- Empty states -->
   <div class="empty-state" *ngIf="!currentFlock">
-    <p>Please select a flock first.</p>
+    <p>{{ moduleType === 'layer' ? 'Please select a batch first.' : 'Please select a flock first.' }}</p>
   </div>
   <div class="empty-state"
     *ngIf="currentFlock && incomeList.length === 0 && pendingRows.length === 0">
@@ -90,7 +90,7 @@
             <span class="source-badge">Manual</span>
           </td>
           <td>
-            <input class="inline-input" type="number"
+            <input class="inline-input" type="number" min="0"
               [(ngModel)]="row.amount"
               placeholder="Amount" />
           </td>
@@ -102,7 +102,7 @@
         </tr>
 
         <!-- EXISTING ENTRIES -->
-        <tr *ngFor="let income of incomeList"
+        <tr *ngFor="let income of paginatedIncome"
           [class.editing]="editingId === income.income_id"
           [class.sale-row]="income.source === 'sale'">
 
@@ -112,13 +112,13 @@
             <td>{{ income.date | dateOnly }}</td>
             <td>{{ income.description || '—' }}</td>
             <td>
-              <span class="source-badge" [class.sale]="income.source === 'sale'">
-                {{ income.source === 'sale' ? 'Sale' : 'Manual' }}
+              <span class="source-badge" [class.sale]="income.source === 'sale' || income.source === 'egg_sale'">
+                {{ income.source === 'sale' ? 'Sale' : (income.source === 'egg_sale' ? 'Egg Sale' : 'Manual') }}
               </span>
             </td>
             <td class="amount">Rs. {{ income.amount | number:'1.0-0' }}</td>
             <td class="actions">
-              <ng-container *ngIf="income.source !== 'sale'">
+              <ng-container *ngIf="income.source !== 'sale' && income.source !== 'egg_sale'">
                 <button
                   class="btn-edit"
                   [disabled]="isSaving"
@@ -132,8 +132,8 @@
                   Delete
                 </button>
               </ng-container>
-              <span *ngIf="income.source === 'sale'" class="auto-label">
-                Auto from Sale
+              <span *ngIf="income.source === 'sale' || income.source === 'egg_sale'" class="auto-label">
+                Auto from {{ income.source === 'sale' ? 'Sale' : 'Egg Sale' }}
               </span>
             </td>
           </ng-container>
@@ -153,7 +153,7 @@
               <span class="source-badge">Manual</span>
             </td>
             <td>
-              <input class="inline-input" type="number"
+              <input class="inline-input" type="number" min="0"
                 [(ngModel)]="editForm.amount" />
             </td>
             <td class="actions">
@@ -183,6 +183,7 @@
         </tr>
       </tfoot>
     </table>
+    <app-pagination [currentPage]="currentPage" [totalItems]="incomeList.length" [pageSize]="pageSize" (pageChange)="currentPage = $event"></app-pagination>
   </div>
 
 </div>

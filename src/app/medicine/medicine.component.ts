@@ -9,11 +9,12 @@ import { DateOnlyPipe } from '../shared/pipes/date-format.pipe';
 import { Subscription } from 'rxjs';
 import { skip } from 'rxjs/operators';
 import { PendingStateService } from '../shared/services/pending-state.service';
+import { PaginationComponent } from '../shared/components/pagination/pagination.component';
 
 @Component({
   selector: 'app-medicine',
   standalone: true,
-  imports: [CommonModule, FormsModule, ConfirmDialogComponent, DateOnlyPipe],
+  imports: [CommonModule, FormsModule, ConfirmDialogComponent, DateOnlyPipe, PaginationComponent],
   templateUrl: './medicine.component.html',
   styleUrl: './medicine.component.scss'
 })
@@ -39,6 +40,25 @@ export class MedicineComponent implements OnInit, OnDestroy {
   validationMessage = '';
 
   traderForm = { trader_name: '' };
+
+  currentPage = 1;
+  pageSize = 20;
+
+  selectedDateFilter: string = '';
+  filteredByDate: boolean = false;
+
+  get filteredEntries() {
+    if (!this.filteredByDate || !this.selectedDateFilter) return this.entries;
+    return this.entries.filter(e => String(e.date).split('T')[0] === this.selectedDateFilter);
+  }
+
+  get paginatedEntries() {
+    const start = (this.currentPage - 1) * this.pageSize;
+    return this.filteredEntries.slice(start, start + this.pageSize);
+  }
+
+  applyDateFilter() { if (this.selectedDateFilter) { this.filteredByDate = true; this.currentPage = 1; } }
+  clearDateFilter() { this.selectedDateFilter = ''; this.filteredByDate = false; this.currentPage = 1; }
 
   // ── Computed ─────────────────────────────────────────────────
   get hasPendingRows(): boolean {

@@ -14,11 +14,27 @@
     </button>
   </div>
 
-  <!-- Empty state -->
+  <!-- Empty state (no flocks at all) -->
   <div class="empty-state" *ngIf="flocks.length === 0 && !showNewRow">
     <p>No flocks yet. Click "Add Flock" to create your first flock.</p>
   </div>
 
+  <!-- Search bar -->
+  <div class="search-bar" *ngIf="flocks.length > 0">
+    <span class="search-icon">🔍</span>
+    <input
+      type="text"
+      [(ngModel)]="searchTerm"
+      (ngModelChange)="onSearchChange()"
+      placeholder="Search flocks..."
+      autocomplete="off" />
+  </div>
+
+  <!--
+    Table is always kept in the DOM while flocks exist.
+    The "no results" feedback is an inline tbody row so Angular
+    never destroys/recreates the table — search stays instant.
+  -->
   <div class="table-card" *ngIf="flocks.length > 0 || showNewRow">
     <table>
       <thead>
@@ -70,7 +86,7 @@
         </tr>
 
         <!-- EXISTING FLOCKS -->
-        <tr *ngFor="let flock of flocks"
+        <tr *ngFor="let flock of paginatedFlocks"
           [class.editing]="editingId === flock.flock_id"
           [class.closed-row]="flock.status === 'closed'">
 
@@ -139,8 +155,22 @@
           </ng-container>
 
         </tr>
+
+        <!-- Inline "no results" row — avoids destroying the table -->
+        <tr *ngIf="searchTerm.trim() && filteredFlocks.length === 0 && !showNewRow">
+          <td colspan="5" class="no-results-cell">
+            No flocks match "{{ searchTerm }}".
+          </td>
+        </tr>
+
       </tbody>
     </table>
+    <app-pagination
+      [currentPage]="currentPage"
+      [totalItems]="filteredFlocks.length"
+      [pageSize]="pageSize"
+      (pageChange)="currentPage = $event">
+    </app-pagination>
   </div>
 
 </div>

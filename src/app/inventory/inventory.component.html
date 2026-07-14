@@ -33,7 +33,7 @@
             <button class="btn-cancel-edit" (click)="cancelNewRow()">Cancel</button>
           </td>
         </tr>
-        <tr *ngFor="let p of products" [class.editing]="editingId === p.product_id" [class.low-stock]="p.current_stock <= p.min_stock_alert && p.min_stock_alert > 0">
+        <tr *ngFor="let p of paginatedProducts" [class.editing]="editingId === p.product_id" [class.low-stock]="p.current_stock <= p.min_stock_alert && p.min_stock_alert > 0">
           <ng-container *ngIf="editingId !== p.product_id">
             <td class="product-name">{{ p.product_name }}</td>
             <td><span class="category-badge">{{ p.category }}</span></td>
@@ -63,6 +63,7 @@
         </tr>
       </tbody>
     </table>
+    <app-pagination [currentPage]="currentPage" [totalItems]="products.length" [pageSize]="pageSize" (pageChange)="currentPage = $event"></app-pagination>
   </div>
 </div>
 

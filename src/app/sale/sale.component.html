@@ -59,10 +59,16 @@
         <option *ngFor="let broker of brokers" [value]="broker.broker_name">{{ broker.broker_name }}</option>
       </select>
     </div>
+    <div class="filter-group">
+      <label>Filter by Date</label>
+      <input type="date" [(ngModel)]="selectedDateFilter"/>
+      <button class="btn-apply" (click)="applyDateFilter()">Apply</button>
+      <button class="btn-clear" *ngIf="filteredByDate" (click)="clearDateFilter()">Clear</button>
+    </div>
     <div class="summary-pills">
       <span class="pill">Weight: {{ grandTotalWeight | number:'1.0-0' }} kg</span>
       <span class="pill">Total: Rs. {{ grandTotalAmount | number:'1.0-0' }}</span>
-      <span class="pill">Vehicles: {{ sales.length }}</span>
+      <span class="pill">Vehicles: {{ filteredTotalVehicles }}</span>
     </div>
   </div>
 
@@ -106,7 +112,7 @@
   </div>
 
   <!-- Grouped Sales by Date -->
-  <div *ngFor="let group of filteredGroupedSales" class="date-group">
+  <div *ngFor="let group of paginatedGroupedSales" class="date-group">
     <div class="date-header">
       <span class="date-label">{{ group.date | dateOnly }}</span>
       <div class="date-summary">
@@ -174,6 +180,7 @@
       </table>
     </div>
   </div>
+  <app-pagination [currentPage]="currentPage" [totalItems]="filteredGroupedSales.length" [pageSize]="pageSize" (pageChange)="currentPage = $event"></app-pagination>
 </div>
 
 <app-confirm-dialog *ngIf="showDeleteDialog" title="Delete Sale" message="Are you sure you want to delete this sale entry?" confirmText="Delete" cancelText="Cancel" type="danger" (confirmed)="onDeleteConfirmed()" (cancelled)="onDeleteCancelled()"/>

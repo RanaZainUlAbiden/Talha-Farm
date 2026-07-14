@@ -29,6 +29,13 @@
     <span>Ctrl+S — save all</span>
   </div>
 
+  <div class="filter-bar" *ngIf="currentFlock" style="display:flex;align-items:center;gap:8px;margin-bottom:12px;">
+    <label style="font-size:13px;font-weight:500;">Filter by Date:</label>
+    <input type="date" class="inline-input" style="width:160px;" [(ngModel)]="selectedDateFilter"/>
+    <button class="btn-apply" (click)="applyDateFilter()" style="padding:4px 12px;">Apply</button>
+    <button class="btn-clear" *ngIf="filteredByDate" (click)="clearDateFilter()" style="padding:4px 12px;">Clear</button>
+  </div>
+
   <!-- No ledgers warning -->
   <div class="warning-card" *ngIf="currentFlock && ledgers.length === 0">
     <span>⚠️</span>
@@ -124,7 +131,7 @@
         </tr>
 
         <!-- EXISTING ENTRIES -->
-        <tr *ngFor="let expense of expenses"
+        <tr *ngFor="let expense of paginatedExpenses"
           [class.editing]="editingId === expense.expense_id">
 
           <!-- VIEW MODE -->
@@ -230,6 +237,7 @@
         </tr>
       </tfoot>
     </table>
+    <app-pagination [currentPage]="currentPage" [totalItems]="filteredExpenses.length" [pageSize]="pageSize" (pageChange)="currentPage = $event"></app-pagination>
   </div>
 
 </div>

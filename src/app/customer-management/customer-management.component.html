@@ -26,7 +26,7 @@
             <td><input class="inline-input" type="text" [(ngModel)]="editForm.customer_name"/></td>
             <td><input class="inline-input" type="text" [(ngModel)]="editForm.phone"/></td>
             <td><input class="inline-input" type="text" [(ngModel)]="editForm.address"/></td>
-            <td>Rs. {{ c.outstanding_balance | number:'1.0-0' }}</td>
+            <td><input class="inline-input" type="number" [(ngModel)]="editForm.outstanding_balance" placeholder="0"/></td>
             <td class="actions"><button class="btn-save" (click)="saveEdit(c.customer_id)">Save</button><button class="btn-cancel-edit" (click)="cancelEdit()">Cancel</button></td>
           </ng-container>
         </tr>

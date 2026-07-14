@@ -146,22 +146,8 @@
       </button>
     </div>
 
-    <!-- Farm List Dropdown (optional - for easy switching) -->
-    <div class="farm-list-section" *ngIf="!showSetup && !showRegister && farms.length > 0">
-      <label class="farm-list-label">Registered Farms:</label>
-      <div class="farm-chips">
-        <span class="farm-chip" 
-          *ngFor="let farm of farms.slice(0, 3)"
-          (click)="quickFillFarm(farm.farm_name)">
-          {{ farm.farm_name }}
-        </span>
-        <span class="farm-chip more" 
-          *ngIf="farms.length > 3"
-          (click)="showAllFarms()">
-          +{{ farms.length - 3 }} more
-        </span>
-      </div>
-    </div>
+    <!-- Registered-farm chips intentionally hidden: farm names should not be
+         publicly listed on the login screen. Login is by typed name + password. -->
 
   </div>
 

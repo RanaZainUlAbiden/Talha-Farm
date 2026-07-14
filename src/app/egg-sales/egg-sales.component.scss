@@ -31,3 +31,91 @@ tr.editing td { background: #f0faf4 !important; }
 .btn-save { background: #1a5c38; color: white; border: none; padding: 6px 12px; border-radius: 6px; font-size: 12px; font-weight: 500; cursor: pointer; &:hover { background: #144d2e; } }
 .btn-cancel-edit { background: #f5f5f5; color: #666; border: 1px solid #e0e0e0; padding: 6px 12px; border-radius: 6px; font-size: 12px; cursor: pointer; &:hover { background: #ebebeb; } }
 .btn-remove-row { background: none; border: none; color: #ccc; font-size: 16px; cursor: pointer; padding: 4px 8px; border-radius: 4px; &:hover { background: #fce4ec; color: #e53935; } }
+
+.filter-bar {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  flex-wrap: wrap;
+  background: white;
+  border-radius: 10px;
+  padding: 14px 18px;
+  margin-bottom: 20px;
+  border: 1px solid #e0e0e0;
+}
+
+.filter-group {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  label {
+    font-size: 13px;
+    font-weight: 500;
+    color: #666;
+    white-space: nowrap;
+  }
+  select {
+    padding: 8px 12px;
+    border: 1.5px solid #e0e0e0;
+    border-radius: 8px;
+    font-size: 13px;
+    outline: none;
+    background: white;
+    &:focus { border-color: #1a5c38; }
+  }
+}
+
+.btn-apply {
+  background: #1a5c38;
+  color: white;
+  border: none;
+  padding: 8px 16px;
+  border-radius: 6px;
+  font-size: 13px;
+  cursor: pointer;
+  &:hover { background: #144d2e; }
+}
+
+.btn-clear {
+  background: #f5f5f5;
+  color: #666;
+  border: 1px solid #e0e0e0;
+  padding: 8px 12px;
+  border-radius: 6px;
+  font-size: 13px;
+  cursor: pointer;
+  &:hover { background: #ebebeb; }
+}
+
+// ── Egg Stock Summary Card ────────────────────────────────
+.egg-stock-summary {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 16px;
+  margin-bottom: 20px;
+}
+
+.summary-card {
+  background: white;
+  border-radius: 12px;
+  padding: 20px 16px;
+  border: 1px solid #e0e0e0;
+  text-align: center;
+
+  .card-label {
+    font-size: 12px;
+    color: #888;
+    margin-bottom: 8px;
+    font-weight: 500;
+  }
+
+  .card-value {
+    font-size: 24px;
+    font-weight: 700;
+    color: #1a1a1a;
+  }
+}
+
+.card-value.sold  { color: #e53935; }
+.card-value.stock { color: #1a5c38; }
+.card-value.batch-label { font-size: 16px; color: #555; }

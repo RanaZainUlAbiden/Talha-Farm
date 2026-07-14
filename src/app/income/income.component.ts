@@ -9,11 +9,12 @@ import { DateOnlyPipe } from '../shared/pipes/date-format.pipe';
 import { Subscription } from 'rxjs';
 import { skip } from 'rxjs/operators';
 import { PendingStateService } from '../shared/services/pending-state.service';
+import { PaginationComponent } from '../shared/components/pagination/pagination.component';
 
 @Component({
   selector: 'app-income',
   standalone: true,
-  imports: [CommonModule, FormsModule, ConfirmDialogComponent, DateOnlyPipe],
+  imports: [CommonModule, FormsModule, ConfirmDialogComponent, DateOnlyPipe, PaginationComponent],
   templateUrl: './income.component.html',
   styleUrl: './income.component.scss'
 })
@@ -38,13 +39,26 @@ export class IncomeComponent implements OnInit, OnDestroy {
     return this.pendingRows.length > 0;
   }
 
+  // Layer batches are surfaced as a flock carrying a batch_id.
+  get moduleType(): string {
+    return this.currentFlock?.batch_id ? 'layer' : 'broiler';
+  }
+
+  currentPage = 1;
+  pageSize = 20;
+
+  get paginatedIncome() {
+    const start = (this.currentPage - 1) * this.pageSize;
+    return this.incomeList.slice(start, start + this.pageSize);
+  }
+
   get totalIncome(): number {
     return this.incomeList.reduce((sum, i) => sum + (i.amount || 0), 0);
   }
 
   get saleIncome(): number {
     return this.incomeList
-      .filter(i => i.source === 'sale')
+      .filter(i => i.source === 'sale' || i.source === 'egg_sale')
       .reduce((sum, i) => sum + (i.amount || 0), 0);
   }
 
@@ -114,9 +128,9 @@ export class IncomeComponent implements OnInit, OnDestroy {
     if (!this.currentFlock) return;
     const result = await this.db.get(
       `SELECT * FROM income
-       WHERE flock_id = ?
+       WHERE flock_id = ? AND module_type = ?
        ORDER BY date DESC, income_id ASC`,
-      [this.currentFlock.flock_id]
+      [this.currentFlock.flock_id, this.moduleType]
     );
     if (result.success) {
       this.incomeList = result.data;
@@ -157,19 +171,20 @@ export class IncomeComponent implements OnInit, OnDestroy {
       let insertedCount = 0;
 
       for (const row of this.pendingRows) {
-        if (!row.date || !row.amount) {
+        if (!row.date || !row.amount || Number(row.amount) < 0) {
           invalidRows.push(row);
           continue;
         }
 
         await this.db.run(
-          `INSERT INTO income (flock_id, date, description, amount, source)
-           VALUES (?, ?, ?, ?, 'manual')`,
+          `INSERT INTO income (flock_id, date, description, amount, source, module_type)
+           VALUES (?, ?, ?, ?, 'manual', ?)`,
           [
             this.currentFlock.flock_id,
             row.date,
             row.description,
-            row.amount
+            row.amount,
+            this.moduleType
           ]
         );
         insertedCount++;
@@ -198,7 +213,7 @@ export class IncomeComponent implements OnInit, OnDestroy {
   // ── Edit ───────────────────────────────────────────────────
   startEdit(income: any) {
     if (this.isSaving) return;
-    if (income.source === 'sale') return;    // sale rows are read-only
+    if (income.source === 'sale' || income.source === 'egg_sale') return; // auto rows are read-only
     this.pendingRows = [];
     this.editingId = income.income_id;
     this.editForm = {
@@ -216,6 +231,11 @@ export class IncomeComponent implements OnInit, OnDestroy {
 
   async saveEdit(incomeId: number) {
     if (this.isSaving) return;
+    if (!this.editForm.amount || Number(this.editForm.amount) < 0) {
+      this.validationMessage = 'Amount is required and cannot be negative.';
+      this.showValidationDialog = true;
+      return;
+    }
 
     this.isSaving = true;
     this.editingId = null;

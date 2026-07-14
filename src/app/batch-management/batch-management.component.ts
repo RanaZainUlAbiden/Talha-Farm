@@ -3,13 +3,15 @@ import { CommonModule } from '@angular/common';
 import { FormsModule } from '@angular/forms';
 import { DatabaseService } from '../shared/services/database.service';
 import { AuthService } from '../shared/services/auth.service';
+import { FlockService } from '../shared/services/flock.service';
 import { ConfirmDialogComponent } from '../shared/components/confirm-dialog/confirm-dialog.component';
 import { DateOnlyPipe } from '../shared/pipes/date-format.pipe';
+import { PaginationComponent } from '../shared/components/pagination/pagination.component';
 
 @Component({
   selector: 'app-batch-management',
   standalone: true,
-  imports: [CommonModule, FormsModule, ConfirmDialogComponent, DateOnlyPipe],
+  imports: [CommonModule, FormsModule, ConfirmDialogComponent, DateOnlyPipe, PaginationComponent],
   templateUrl: './batch-management.component.html',
   styleUrl: './batch-management.component.scss'
 })
@@ -24,11 +26,20 @@ export class BatchManagementComponent implements OnInit {
   isSaving = false;
   errorMessage = '';
 
+  currentPage = 1;
+  pageSize = 10;
+
+  get paginatedBatches() {
+    const start = (this.currentPage - 1) * this.pageSize;
+    return this.batches.slice(start, start + this.pageSize);
+  }
+
   newRow = { batch_name: '', start_date: new Date().toISOString().split('T')[0], initial_birds: null, breed: '', status: 'active' };
 
   constructor(
     private db: DatabaseService,
     private authService: AuthService,
+    private flockService: FlockService,
     private cdr: ChangeDetectorRef
   ) {}
 
@@ -57,6 +68,11 @@ export class BatchManagementComponent implements OnInit {
 
   async saveNewRow() {
     if (this.isSaving || !this.newRow.batch_name.trim()) return;
+    if (Number(this.newRow.initial_birds) < 0) {
+      this.errorMessage = 'Number of birds cannot be negative.';
+      this.cdr.detectChanges();
+      return;
+    }
     this.isSaving = true;
     this.showNewRow = false;
     this.errorMessage = '';
@@ -66,6 +82,7 @@ export class BatchManagementComponent implements OnInit {
         [this.currentFarm.farm_id, this.newRow.batch_name.trim(), this.newRow.start_date, this.newRow.initial_birds || 0, this.newRow.breed || '', this.newRow.status]
       );
       await this.loadBatches();
+      this.flockService.notifyBatchesChanged();
     } catch {
       this.errorMessage = 'Could not create batch.';
       this.showNewRow = true;
@@ -95,6 +112,11 @@ export class BatchManagementComponent implements OnInit {
 
   async saveEdit(batchId: number) {
     if (this.isSaving || !this.editForm.batch_name?.trim()) return;
+    if (Number(this.editForm.initial_birds) < 0) {
+      this.errorMessage = 'Number of birds cannot be negative.';
+      this.cdr.detectChanges();
+      return;
+    }
     this.isSaving = true;
     this.editingId = null;
     this.errorMessage = '';
@@ -105,6 +127,7 @@ export class BatchManagementComponent implements OnInit {
       );
       this.editForm = {};
       await this.loadBatches();
+      this.flockService.notifyBatchesChanged();
     } catch {
       this.errorMessage = 'Could not update batch.';
     } finally {
@@ -128,6 +151,7 @@ export class BatchManagementComponent implements OnInit {
     try {
       await this.db.run('DELETE FROM batches WHERE batch_id = ?', [batchId]);
       this.batches = this.batches.filter(b => b.batch_id !== batchId);
+      this.flockService.notifyBatchesChanged();
     } catch {
       this.errorMessage = 'Could not delete batch.';
     } finally {

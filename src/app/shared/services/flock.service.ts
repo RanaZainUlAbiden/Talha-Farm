@@ -1,5 +1,5 @@
 import { Injectable } from '@angular/core';
-import { BehaviorSubject, distinctUntilChanged } from 'rxjs';
+import { BehaviorSubject, Subject, distinctUntilChanged } from 'rxjs';
 import { DatabaseService } from './database.service';
 
 @Injectable({
@@ -9,12 +9,21 @@ export class FlockService {
 
   private currentFlockSubject = new BehaviorSubject<any>(null);
   private flocksSubject = new BehaviorSubject<any[]>([]);
+  private batchesChangedSubject = new Subject<void>();
 
   currentFlock$ = this.currentFlockSubject.asObservable().pipe(
-    distinctUntilChanged((a, b) => a?.flock_id === b?.flock_id)
+    distinctUntilChanged((a, b) => a?.flock_id === b?.flock_id && !!a?.batch_id === !!b?.batch_id)
   );
 
   flocks$ = this.flocksSubject.asObservable();
+
+  // Emits whenever batches are created/edited/deleted so the layout can
+  // refresh its "Active Batch" selector and the "Create First Batch" prompt.
+  batchesChanged$ = this.batchesChangedSubject.asObservable();
+
+  notifyBatchesChanged() {
+    this.batchesChangedSubject.next();
+  }
 
   constructor(private db: DatabaseService) {
     const stored = localStorage.getItem('currentFlock');
@@ -34,7 +43,7 @@ export class FlockService {
       return;
     }
     const current = this.currentFlockSubject.value;
-    if (current?.flock_id === flock?.flock_id) return;
+    if (current?.flock_id === flock?.flock_id && !!current?.batch_id === !!flock?.batch_id) return;
     this.currentFlockSubject.next(flock);
     localStorage.setItem('currentFlock', JSON.stringify(flock));
   }

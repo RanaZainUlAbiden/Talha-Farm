@@ -118,6 +118,13 @@
       <span>Ctrl+S — save all</span>
     </div>
 
+    <div class="filter-bar" style="display:flex;align-items:center;gap:8px;margin-bottom:12px;">
+      <label style="font-size:13px;font-weight:500;">Filter by Date:</label>
+      <input type="date" class="inline-input" style="width:160px;" [(ngModel)]="selectedDateFilter"/>
+      <button class="btn-apply" (click)="applyDateFilter()" style="padding:4px 12px;">Apply</button>
+      <button class="btn-clear" *ngIf="filteredByDate" (click)="clearDateFilter()" style="padding:4px 12px;">Clear</button>
+    </div>
+
     <!-- Empty state -->
     <div class="empty-state"
       *ngIf="entries.length === 0 && pendingRows.length === 0">
@@ -177,7 +184,7 @@
           </tr>
 
           <!-- EXISTING ENTRIES -->
-          <tr *ngFor="let entry of entries"
+          <tr *ngFor="let entry of paginatedEntries"
             [class.editing]="editingEntryId === entry.entry_id">
 
             <!-- VIEW MODE -->
@@ -253,6 +260,7 @@
           </tr>
         </tfoot>
       </table>
+      <app-pagination [currentPage]="currentPage" [totalItems]="filteredEntries.length" [pageSize]="pageSize" (pageChange)="currentPage = $event"></app-pagination>
     </div>
   </ng-container>
 

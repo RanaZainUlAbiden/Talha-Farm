@@ -4,11 +4,12 @@ import { FormsModule } from '@angular/forms';
 import { DatabaseService } from '../shared/services/database.service';
 import { AuthService } from '../shared/services/auth.service';
 import { ConfirmDialogComponent } from '../shared/components/confirm-dialog/confirm-dialog.component';
+import { PaginationComponent } from '../shared/components/pagination/pagination.component';
 
 @Component({
   selector: 'app-inventory',
   standalone: true,
-  imports: [CommonModule, FormsModule, ConfirmDialogComponent],
+  imports: [CommonModule, FormsModule, ConfirmDialogComponent, PaginationComponent],
   templateUrl: './inventory.component.html',
   styleUrl: './inventory.component.scss'
 })
@@ -23,6 +24,14 @@ export class InventoryComponent implements OnInit {
   isSaving = false;
   errorMessage = '';
   newRow = { product_name: '', category: 'medicine', unit: '', current_stock: 0, min_stock_alert: 0, cost_price: 0, selling_price: 0 };
+
+  currentPage = 1;
+  pageSize = 20;
+
+  get paginatedProducts() {
+    const start = (this.currentPage - 1) * this.pageSize;
+    return this.products.slice(start, start + this.pageSize);
+  }
 
   constructor(private db: DatabaseService, private authService: AuthService, private cdr: ChangeDetectorRef) {}
 

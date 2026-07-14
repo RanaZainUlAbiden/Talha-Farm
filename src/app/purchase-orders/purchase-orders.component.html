@@ -38,7 +38,7 @@
           <td><input class="inline-input" type="text" [(ngModel)]="row.notes" placeholder="Notes"/></td>
           <td><button class="btn-remove-row" (click)="removePendingRow(i)">✕</button></td>
         </tr>
-        <tr *ngFor="let o of orders" [class.editing]="editingId === o.purchase_id">
+        <tr *ngFor="let o of paginatedOrders" [class.editing]="editingId === o.purchase_id">
           <ng-container *ngIf="editingId !== o.purchase_id"><td></td>
             <td>{{ getProductName(o.product_id) }}</td><td>{{ getSupplierName(o.supplier_id) }}</td><td>{{ o.date | dateOnly }}</td>
             <td>{{ o.quantity | number }}</td><td>Rs. {{ o.cost_price | number:'1.0-2' }}</td><td class="amount">Rs. {{ o.total_amount | number:'1.0-0' }}</td>
@@ -59,6 +59,7 @@
         </tr>
       </tbody>
     </table>
+    <app-pagination [currentPage]="currentPage" [totalItems]="orders.length" [pageSize]="pageSize" (pageChange)="currentPage = $event"></app-pagination>
   </div>
 </div>
 <app-confirm-dialog *ngIf="showDeleteDialog" title="Delete Order" message="Are you sure?" confirmText="Delete" cancelText="Cancel" type="danger" (confirmed)="onDeleteConfirmed()" (cancelled)="onDeleteCancelled()"/>

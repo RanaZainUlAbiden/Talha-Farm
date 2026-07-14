@@ -152,6 +152,14 @@ export class LayoutComponent implements OnInit, OnDestroy {
       })
     );
 
+    // Refresh the batch selector / "Create First Batch" prompt whenever
+    // batches are added, edited or removed in batch-management.
+    this.subs.add(
+      this.flockService.batchesChanged$.subscribe(() => {
+        if (this.isLayerMode) this.loadBatches();
+      })
+    );
+
     this.loadActiveBusinessData();
 
     const currentUrl = this.router.url.split('/').pop();
@@ -206,13 +214,18 @@ export class LayoutComponent implements OnInit, OnDestroy {
       this.selectBatch(this.batches[0]);
     } else if (this.batches.length === 0) {
       this.currentFlock = null;
+      this.flockService.setCurrentFlock(null);
     }
 
     this.cdr.detectChanges();
   }
 
   selectBatch(batch: any) {
-    this.currentFlock = { ...batch, flock_name: batch.batch_name, flock_id: batch.batch_id };
+    // Persist the batch through FlockService (shaped like a flock) so that
+    // flock-scoped pages (Income, etc.) also see the active batch.
+    const batchAsFlock = { ...batch, flock_name: batch.batch_name, flock_id: batch.batch_id, batch_id: batch.batch_id };
+    this.currentFlock = batchAsFlock;
+    this.flockService.setCurrentFlock(batchAsFlock);
     this.showFlockDropdown = false;
     this.cdr.detectChanges();
   }
