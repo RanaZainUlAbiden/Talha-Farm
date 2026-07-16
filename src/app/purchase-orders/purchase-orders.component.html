@@ -13,6 +13,9 @@
     </div>
   </div>
 
+  <!-- 🔥 FIX: errorMessage was being set all over this component but never shown -->
+  <div class="error-message" *ngIf="errorMessage">{{ errorMessage }}</div>
+
   <div class="empty-state" *ngIf="products.length === 0">
     <p>No products found. Add products in Inventory first.</p>
   </div>
@@ -34,7 +37,14 @@
           <td><input class="inline-input" type="number" [(ngModel)]="row.quantity" placeholder="0"/></td>
           <td><input class="inline-input" type="number" [(ngModel)]="row.cost_price" placeholder="0"/></td>
           <td class="amount">Rs. {{ (row.quantity || 0) * (row.cost_price || 0) | number:'1.0-0' }}</td>
-          <td><select class="inline-input" [(ngModel)]="row.payment_type"><option value="cash">Cash</option><option value="credit">Credit</option></select></td>
+          <!-- 🔥 Relabeled: value stays 'cash'/'credit' internally, but labels now
+               spell out debit/credit meaning as requested -->
+          <td>
+            <select class="inline-input" [(ngModel)]="row.payment_type">
+              <option value="cash">Paid (Debit)</option>
+              <option value="credit">Unpaid (Credit)</option>
+            </select>
+          </td>
           <td><input class="inline-input" type="text" [(ngModel)]="row.notes" placeholder="Notes"/></td>
           <td><button class="btn-remove-row" (click)="removePendingRow(i)">✕</button></td>
         </tr>
@@ -42,7 +52,7 @@
           <ng-container *ngIf="editingId !== o.purchase_id"><td></td>
             <td>{{ getProductName(o.product_id) }}</td><td>{{ getSupplierName(o.supplier_id) }}</td><td>{{ o.date | dateOnly }}</td>
             <td>{{ o.quantity | number }}</td><td>Rs. {{ o.cost_price | number:'1.0-2' }}</td><td class="amount">Rs. {{ o.total_amount | number:'1.0-0' }}</td>
-            <td><span class="payment-badge" [class.cash]="o.payment_type==='cash'">{{ o.payment_type }}</span></td><td>{{ o.notes || '—' }}</td>
+            <td><span class="payment-badge" [class.cash]="o.payment_type==='cash'">{{ o.payment_type === 'cash' ? 'Paid (Debit)' : 'Unpaid (Credit)' }}</span></td><td>{{ o.notes || '—' }}</td>
             <td class="actions"><button class="btn-edit" (click)="startEdit(o)">Edit</button><button class="btn-delete" (click)="confirmDelete(o.purchase_id)">Delete</button></td>
           </ng-container>
           <ng-container *ngIf="editingId === o.purchase_id"><td></td>
@@ -52,7 +62,12 @@
             <td><input class="inline-input" type="number" [(ngModel)]="editForm.quantity"/></td>
             <td><input class="inline-input" type="number" [(ngModel)]="editForm.cost_price"/></td>
             <td class="amount">Rs. {{ (editForm.quantity || 0) * (editForm.cost_price || 0) | number:'1.0-0' }}</td>
-            <td><select class="inline-input" [(ngModel)]="editForm.payment_type"><option value="cash">Cash</option><option value="credit">Credit</option></select></td>
+            <td>
+              <select class="inline-input" [(ngModel)]="editForm.payment_type">
+                <option value="cash">Paid (Debit)</option>
+                <option value="credit">Unpaid (Credit)</option>
+              </select>
+            </td>
             <td><input class="inline-input" type="text" [(ngModel)]="editForm.notes"/></td>
             <td class="actions"><button class="btn-save" (click)="saveEdit(o.purchase_id)">Save</button><button class="btn-cancel-edit" (click)="cancelEdit()">Cancel</button></td>
           </ng-container>

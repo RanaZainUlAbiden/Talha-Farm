@@ -53,14 +53,15 @@ export class LayoutComponent implements OnInit, OnDestroy {
   ];
 
   distributionMenu = [
-    { label: 'Inventory',     icon: '📦', route: 'inventory'            },
-    { label: 'Purchase',      icon: '📥', route: 'purchase-orders'      },
-    { label: 'Sales Orders',  icon: '📤', route: 'sales-orders'         },
-    { label: 'Customers',     icon: '👥', route: 'customer-management'  },
-    { label: 'Suppliers',     icon: '🏭', route: 'supplier-management'  },
-    { label: 'Income',        icon: '📈', route: 'income'               },
-    { label: 'Report',        icon: '📄', route: 'distribution-report'  }
-  ];
+  { label: 'Inventory',     icon: '📦', route: 'inventory'            },
+  { label: 'Purchase',      icon: '📥', route: 'purchase-orders'      },
+  { label: 'Sales Orders',  icon: '📤', route: 'sales-orders'         },
+  { label: 'Customers',     icon: '👥', route: 'customer-management'  },
+  { label: 'Suppliers',     icon: '🏭', route: 'supplier-management'  },
+  { label: 'Account Ledger',icon: '📊', route: 'account-ledger'       }, // NEW
+  // { label: 'Income',        icon: '📈', route: 'income'               },
+  { label: 'Report',        icon: '📄', route: 'distribution-report'  }
+];
 
   allMenu = [
     { label: 'Expenses',      icon: '💰', route: 'expenses'         },

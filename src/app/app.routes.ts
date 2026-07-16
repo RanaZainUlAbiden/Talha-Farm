@@ -106,66 +106,100 @@ export const routes: Routes = [
             .then(m => m.FlockManagementComponent)
       },
       {
-  path: 'batch-management',
-  loadComponent: () =>
-    import('./batch-management/batch-management.component')
-      .then(m => m.BatchManagementComponent)
-},
-{
-  path: 'egg-collection',
-  loadComponent: () =>
-    import('./egg-collection/egg-collection.component')
-      .then(m => m.EggCollectionComponent)
-},
-{
-  path: 'egg-sales',
-  loadComponent: () =>
-    import('./egg-sales/egg-sales.component')
-      .then(m => m.EggSalesComponent)
-},
-{
-  path: 'vaccination',
-  loadComponent: () =>
-    import('./vaccination/vaccination.component')
-      .then(m => m.VaccinationComponent)
-},
-{
-  path: 'layer-mortality',
-  loadComponent: () =>
-    import('./layer-mortality/layer-mortality.component')
-      .then(m => m.LayerMortalityComponent)
-},
-{
-  path: 'layer-report',
-  loadComponent: () =>
-    import('./layer-report/layer-report.component')
-      .then(m => m.LayerReportComponent)
-},
-{
-  path: 'inventory',
-  loadComponent: () => import('./inventory/inventory.component').then(m => m.InventoryComponent)
-},
-{
-  path: 'purchase-orders',
-  loadComponent: () => import('./purchase-orders/purchase-orders.component').then(m => m.PurchaseOrdersComponent)
-},
-{
-  path: 'sales-orders',
-  loadComponent: () => import('./sales-orders/sales-orders.component').then(m => m.SalesOrdersComponent)
-},
-{
-  path: 'customer-management',
-  loadComponent: () => import('./customer-management/customer-management.component').then(m => m.CustomerManagementComponent)
-},
-{
-  path: 'supplier-management',
-  loadComponent: () => import('./supplier-management/supplier-management.component').then(m => m.SupplierManagementComponent)
-},
-{
-  path: 'distribution-report',
-  loadComponent: () => import('./distribution-report/distribution-report.component').then(m => m.DistributionReportComponent)
-}
-
+        path: 'batch-management',
+        loadComponent: () =>
+          import('./batch-management/batch-management.component')
+            .then(m => m.BatchManagementComponent)
+      },
+      {
+        path: 'egg-collection',
+        loadComponent: () =>
+          import('./egg-collection/egg-collection.component')
+            .then(m => m.EggCollectionComponent)
+      },
+      {
+        path: 'egg-sales',
+        loadComponent: () =>
+          import('./egg-sales/egg-sales.component')
+            .then(m => m.EggSalesComponent)
+      },
+      {
+        path: 'vaccination',
+        loadComponent: () =>
+          import('./vaccination/vaccination.component')
+            .then(m => m.VaccinationComponent)
+      },
+      {
+        path: 'layer-mortality',
+        loadComponent: () =>
+          import('./layer-mortality/layer-mortality.component')
+            .then(m => m.LayerMortalityComponent)
+      },
+      {
+        path: 'layer-report',
+        loadComponent: () =>
+          import('./layer-report/layer-report.component')
+            .then(m => m.LayerReportComponent)
+      },
+      // ── Distribution Module Routes ──────────────────────
+      {
+        path: 'inventory',
+        loadComponent: () => import('./inventory/inventory.component').then(m => m.InventoryComponent)
+      },
+      {
+        path: 'distribution-batch/:productId',
+        loadComponent: () => import('./distribution-batch/distribution-batch.component').then(m => m.DistributionBatchComponent)
+      },
+      {
+        path: 'purchase-orders',
+        loadComponent: () => import('./purchase-orders/purchase-orders.component').then(m => m.PurchaseOrdersComponent)
+      },
+      {
+        path: 'sales-orders',
+        loadComponent: () => import('./sales-orders/sales-orders.component').then(m => m.SalesOrdersComponent)
+      },
+      {
+        path: 'customer-management',
+        loadComponent: () => import('./customer-management/customer-management.component').then(m => m.CustomerManagementComponent)
+      },
+      {
+        path: 'supplier-management',
+        loadComponent: () => import('./supplier-management/supplier-management.component').then(m => m.SupplierManagementComponent)
+      },
+      {
+        path: 'distribution-report',
+        loadComponent: () => import('./distribution-report/distribution-report.component').then(m => m.DistributionReportComponent)
+      },
+      // ── Account Ledger Routes ────────────────────────────
+      {
+        path: 'account-ledger',
+        loadComponent: () => import('./account-ledger/account-ledger.component').then(m => m.AccountLedgerComponent)
+      },
+      {
+        path: 'customer-ledger',
+        loadComponent: () => import('./account-ledger/customer-ledger/customer-ledger.component').then(m => m.CustomerLedgerComponent)
+      },
+      {
+        path: 'customer-ledger/:id',
+        loadComponent: () => import('./account-ledger/customer-ledger/customer-ledger.component').then(m => m.CustomerLedgerComponent)
+      },
+      {
+        path: 'supplier-ledger',
+        loadComponent: () => import('./account-ledger/supplier-ledger/supplier-ledger.component').then(m => m.SupplierLedgerComponent)
+      },
+      {
+        path: 'supplier-ledger/:id',
+        loadComponent: () => import('./account-ledger/supplier-ledger/supplier-ledger.component').then(m => m.SupplierLedgerComponent)
+      },
+      {
+        path: 'bank-ledger',
+        loadComponent: () => import('./account-ledger/bank-ledger/bank-ledger.component').then(m => m.BankLedgerComponent)
+      }
     ]
+  },
+  // ── Fallback Routes (Outside App) ──────────────────────
+  {
+    path: 'distribution-batch/:productId',
+    loadComponent: () => import('./distribution-batch/distribution-batch.component').then(m => m.DistributionBatchComponent)
   }
 ];
