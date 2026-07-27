@@ -19,3 +19,195 @@ tr.editing td { background: #f0faf4 !important; }
 .btn-save { background: #1a5c38; color: white; border: none; padding: 6px 12px; border-radius: 6px; cursor: pointer; }
 .btn-cancel-edit { background: #f5f5f5; color: #666; border: 1px solid #e0e0e0; padding: 6px 12px; border-radius: 6px; cursor: pointer; }
 .btn-remove-row { background: none; border: none; color: #ccc; font-size: 16px; cursor: pointer; &:hover { color: #e53935; } }
+// ── AUTO-FILL HINT ─────────────────────────────────────────
+
+.auto-fill-hint {
+  display: block;
+  font-size: 9px;
+  color: #1a5c38;
+  background: #e8f5e9;
+  padding: 1px 6px;
+  border-radius: 4px;
+  margin-top: 2px;
+  text-align: center;
+}
+
+// ── PAYMENT BADGE ──────────────────────────────────────────
+
+.payment-badge {
+  padding: 3px 10px;
+  border-radius: 20px;
+  font-size: 11px;
+  font-weight: 500;
+  white-space: nowrap;
+
+  &.cash {
+    background: #e8f5e9;
+    color: #1a5c38;
+  }
+
+  &:not(.cash) {
+    background: #fff3e0;
+    color: #e65100;
+  }
+}
+
+// ── PENDING ROW STYLES ─────────────────────────────────────
+
+.pending-row td {
+  background: #fffde7 !important;
+}
+
+.pending-row:hover td {
+  background: #fff8e1 !important;
+}
+
+// ── ERROR MESSAGE ──────────────────────────────────────────
+
+.error-message {
+  margin-bottom: 16px;
+  padding: 12px 16px;
+  border-radius: 8px;
+  background: #fef2f2;
+  border: 1px solid #fecaca;
+  color: #b91c1c;
+  font-size: 13px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+
+  &::before {
+    content: '⚠️';
+    font-size: 16px;
+  }
+}
+
+// ── RESPONSIVE ─────────────────────────────────────────────
+
+@media (max-width: 768px) {
+  .table-card {
+    overflow-x: auto;
+  }
+
+  table {
+    min-width: 800px;
+  }
+
+  .auto-fill-hint {
+    font-size: 8px;
+  }
+}
+
+// ── COST PRICE DISPLAY ─────────────────────────────────────
+
+.cost-display {
+  background: #f5f5f5 !important;
+  color: #1a5c38 !important;
+  font-weight: 600 !important;
+  cursor: not-allowed !important;
+  border-color: #d0d0d0 !important;
+}
+
+.auto-fill-hint {
+  display: block;
+  font-size: 9px;
+  color: #1a5c38;
+  background: #e8f5e9;
+  padding: 1px 6px;
+  border-radius: 4px;
+  margin-top: 2px;
+  text-align: center;
+}
+
+// ── PAYMENT BADGE ──────────────────────────────────────────
+
+.payment-badge {
+  padding: 3px 10px;
+  border-radius: 20px;
+  font-size: 11px;
+  font-weight: 500;
+  white-space: nowrap;
+
+  &.cash {
+    background: #e8f5e9;
+    color: #1a5c38;
+  }
+
+  &:not(.cash) {
+    background: #fff3e0;
+    color: #e65100;
+  }
+}
+
+// ── COST PRICE DISPLAY ─────────────────────────────────────
+
+.cost-display {
+  background: #f5f5f5 !important;
+  color: #1a5c38 !important;
+  font-weight: 600 !important;
+  cursor: not-allowed !important;
+  border-color: #d0d0d0 !important;
+}
+
+// ── AUTO-FILL HINT ─────────────────────────────────────────
+
+.auto-fill-hint {
+  display: block;
+  font-size: 9px;
+  color: #1a5c38;
+  background: #e8f5e9;
+  padding: 1px 6px;
+  border-radius: 4px;
+  margin-top: 2px;
+  text-align: center;
+}
+
+// ── PAYMENT BADGE ──────────────────────────────────────────
+
+.payment-badge {
+  padding: 3px 10px;
+  border-radius: 20px;
+  font-size: 11px;
+  font-weight: 500;
+  white-space: nowrap;
+
+  &.cash {
+    background: #e8f5e9;
+    color: #1a5c38;
+  }
+
+  &:not(.cash) {
+    background: #fff3e0;
+    color: #e65100;
+  }
+}
+
+// ── PENDING ROW STYLES ─────────────────────────────────────
+
+.pending-row td {
+  background: #fffde7 !important;
+}
+
+.pending-row:hover td {
+  background: #fff8e1 !important;
+}
+
+// ── ERROR MESSAGE ──────────────────────────────────────────
+
+.error-message {
+  margin-bottom: 16px;
+  padding: 12px 16px;
+  border-radius: 8px;
+  background: #fef2f2;
+  border: 1px solid #fecaca;
+  color: #b91c1c;
+  font-size: 13px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+
+  &::before {
+    content: '⚠️';
+    font-size: 16px;
+  }
+}

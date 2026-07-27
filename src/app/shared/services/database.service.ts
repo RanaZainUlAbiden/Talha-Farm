@@ -305,8 +305,6 @@ export class DatabaseService {
   }
 
   // ── CUSTOMER LEDGER METHODS ──────────────────────────────
-  // Customer ledger = RECEIVABLE: debit (credit sale) increases balance,
-  // credit (customer payment) decreases balance. Unchanged / correct.
 
   async getCustomerLedger(customerId: number): Promise<any> {
     return this.get(
@@ -376,11 +374,6 @@ export class DatabaseService {
   }
 
   // ── SUPPLIER LEDGER METHODS ──────────────────────────────
-  // 🔥 FIX: Supplier ledger = PAYABLE, not receivable. A credit purchase
-  // (unpaid) increases what YOU owe the supplier; a payment (debit)
-  // decreases it. Balance = SUM(credit - debit) — opposite sign from
-  // the customer ledger above. This was previously using the same
-  // formula as customer_ledger, which made balances wrong.
 
   async getSupplierLedger(supplierId: number): Promise<any> {
     return this.get(
@@ -427,8 +420,6 @@ export class DatabaseService {
     );
   }
 
-  // 🔥 NEW: mirrors getAllCustomersWithBalance so the supplier list view
-  // can show a real Total Payable instead of a hardcoded placeholder.
   async getAllSuppliersWithBalance(farmId: number): Promise<any> {
     return this.get(
       `SELECT 
@@ -445,36 +436,67 @@ export class DatabaseService {
 
   async getBankAccounts(farmId: number): Promise<any> {
     return this.get(
-      `SELECT * FROM bank_accounts WHERE farm_id = ? ORDER BY bank_name ASC`,
+      `SELECT 
+        ba.*,
+        c.customer_name
+       FROM bank_accounts ba
+       LEFT JOIN customers c ON ba.customer_id = c.customer_id
+       WHERE ba.farm_id = ?
+       ORDER BY ba.bank_name ASC`,
       [farmId]
     );
   }
 
   async getBankAccount(bankId: number): Promise<any> {
     const result = await this.get(
-      `SELECT * FROM bank_accounts WHERE bank_id = ?`,
+      `SELECT 
+        ba.*,
+        c.customer_name
+       FROM bank_accounts ba
+       LEFT JOIN customers c ON ba.customer_id = c.customer_id
+       WHERE ba.bank_id = ?`,
       [bankId]
     );
     return result.success && result.data && result.data.length > 0 ? result.data[0] : null;
   }
-
-  async addBankAccount(account: {
-    farm_id: number;
-    bank_name: string;
-    account_number?: string;
-    account_holder?: string;
-    opening_balance?: number;
-  }): Promise<any> {
-    const { farm_id, bank_name, account_number, account_holder, opening_balance = 0 } = account;
-    
-    return this.run(
-      `INSERT INTO bank_accounts 
-       (farm_id, bank_name, account_number, account_holder, opening_balance, current_balance)
-       VALUES (?, ?, ?, ?, ?, ?)`,
-      [farm_id, bank_name, account_number || null, account_holder || null, opening_balance, opening_balance]
-    );
+// 🔥 FIXED: addBankAccount with opening balance ledger entry
+async addBankAccount(account: {
+  farm_id: number;
+  customer_id: number;
+  bank_name: string;
+  account_number?: string;
+  account_holder?: string;
+  opening_balance?: number;
+}): Promise<any> {
+  const { farm_id, customer_id, bank_name, account_number, account_holder, opening_balance = 0 } = account;
+  
+  const result = await this.run(
+    `INSERT INTO bank_accounts 
+     (farm_id, customer_id, bank_name, account_number, account_holder, opening_balance, current_balance)
+     VALUES (?, ?, ?, ?, ?, ?, ?)`,
+    [farm_id, customer_id, bank_name, account_number || null, account_holder || null, opening_balance, opening_balance]
+  );
+  
+  // 🔥 FIX: Add opening balance to bank_ledger
+  if (result.success && result.lastId && opening_balance > 0) {
+    await this.addBankLedgerEntry({
+      bank_id: result.lastId,
+      transaction_date: new Date().toISOString().split('T')[0],
+      description: 'Opening Balance',
+      debit: opening_balance,
+      credit: 0,
+      reference_type: 'opening',
+      reference_id: null
+    });
   }
-
+  
+  // Link customer to bank
+  if (result.success && result.lastId) {
+    await this.linkCustomerToBank(customer_id, result.lastId);
+  }
+  
+  return result;
+}
   async updateBankAccount(bankId: number, data: any): Promise<any> {
     const fields: string[] = [];
     const values: any[] = [];
@@ -525,7 +547,7 @@ export class DatabaseService {
     debit?: number;
     credit?: number;
     reference_type?: string;
-    reference_id?: number;
+    reference_id?: number | null;
   }): Promise<any> {
     const { bank_id, transaction_date, description, debit = 0, credit = 0, reference_type, reference_id } = entry;
     
@@ -538,7 +560,6 @@ export class DatabaseService {
       [bank_id, transaction_date, description, debit, credit, bank_id, debit, credit, reference_type || null, reference_id || null]
     );
     
-    // Update bank account current balance
     if (result.success) {
       await this.run(
         `UPDATE bank_accounts SET current_balance = 
@@ -551,4 +572,69 @@ export class DatabaseService {
     return result;
   }
 
+  // ── CUSTOMER BANK ACCOUNT METHODS ──────────────────────────
+
+  async getCustomerBankAccount(customerId: number): Promise<any> {
+    return this.get(
+      `SELECT ba.* 
+       FROM bank_accounts ba
+       INNER JOIN customers c ON c.bank_id = ba.bank_id
+       WHERE c.customer_id = ?`,
+      [customerId]
+    );
+  }
+
+  async getCustomerBankBalance(customerId: number): Promise<number> {
+    const result = await this.get(
+      `SELECT ba.current_balance 
+       FROM bank_accounts ba
+       INNER JOIN customers c ON c.bank_id = ba.bank_id
+       WHERE c.customer_id = ?`,
+      [customerId]
+    );
+    return result.success && result.data && result.data.length > 0 ? result.data[0].current_balance : 0;
+  }
+
+  async deductCustomerBank(customerId: number, amount: number, description: string): Promise<any> {
+    // Get the customer's bank account
+    const bankResult = await this.getCustomerBankAccount(customerId);
+    if (!bankResult.success || !bankResult.data || bankResult.data.length === 0) {
+      return { success: false, error: 'Customer has no bank account' };
+    }
+    
+    const bank = bankResult.data[0];
+    
+    // Add withdrawal to bank ledger
+    return this.addBankLedgerEntry({
+      bank_id: bank.bank_id,
+      transaction_date: new Date().toISOString().split('T')[0],
+      description: description,
+      debit: 0,
+      credit: amount,
+      reference_type: 'payment',
+      reference_id: null
+    });
+  }
+
+  async linkCustomerToBank(customerId: number, bankId: number): Promise<any> {
+    return this.run(
+      `UPDATE customers SET bank_id = ? WHERE customer_id = ?`,
+      [bankId, customerId]
+    );
+  }
+
+  async getCustomersWithBankAccounts(farmId: number): Promise<any> {
+    return this.get(
+      `SELECT 
+        c.*,
+        ba.bank_id,
+        ba.bank_name,
+        ba.current_balance
+       FROM customers c
+       LEFT JOIN bank_accounts ba ON c.bank_id = ba.bank_id
+       WHERE c.farm_id = ?
+       ORDER BY c.customer_name ASC`,
+      [farmId]
+    );
+  }
 }

@@ -17,7 +17,13 @@
           <div class="bill-right">
             <span class="bill-date">{{ bill.bill_date | dateOnly }}</span>
             <span class="bill-amt">Rs. {{ bill.total_amount | number:'1.0-0' }}</span>
-            <span class="bill-status" [class.paid]="bill.amount_paid >= bill.total_amount" [class.unpaid]="bill.amount_paid < bill.total_amount">{{ bill.amount_paid >= bill.total_amount ? 'Paid' : 'Unpaid' }}</span>
+            <!-- 🔥 FIX: Added Payment Method Badge -->
+            <span class="payment-badge" [class.bank]="bill.payment_type === 'bank'" [class.cash]="bill.payment_type === 'cash' || !bill.payment_type">
+              {{ bill.payment_type === 'bank' ? '🏦 Bank' : '💰 Cash' }}
+            </span>
+            <span class="bill-status" [class.paid]="bill.amount_paid >= bill.total_amount" [class.unpaid]="bill.amount_paid < bill.total_amount">
+              {{ bill.amount_paid >= bill.total_amount ? 'Paid' : 'Unpaid' }}
+            </span>
             <button class="bill-delete" (click)="confirmDeleteBill($event, bill.bill_id)">Delete</button>
           </div>
         </div>
@@ -43,7 +49,10 @@
         </div>
         <div class="pdrop" *ngIf="showProductDropdown">
           <div class="pd-row" *ngFor="let p of productOptions" (click)="selectProductOption(p)">
-            <span class="pd-name">{{ p.product_name }}</span><span class="pd-price">Rs. {{ p.selling_price | number:'1.0-0' }}</span><span class="pd-stock">{{ p.current_stock }} left</span>
+            <span class="pd-name">{{ p.product_name }}</span>
+            <span class="pd-price">Rs. {{ p.selling_price | number:'1.0-0' }}</span>
+            <!-- 🔥 FIX: Use calculated_stock for accurate stock display -->
+            <span class="pd-stock">{{ p.calculated_stock || 0 }} left</span>
           </div>
           <div class="pdrop-empty" *ngIf="productOptions.length === 0">No products found</div>
         </div></div>
@@ -69,16 +78,53 @@
         <div class="rblock">
           <p class="rblock-title">Customer</p>
           <div class="ctype-row">
-            <button class="ct-opt" [class.ct-on]="customerType==='walkin'" (click)="customerType='walkin'; selectedCustomer=null; paidAmount=cartSubtotal">Walk-in</button>
+            <button class="ct-opt" [class.ct-on]="customerType==='walkin'" (click)="customerType='walkin'; selectedCustomer=null; paidAmount=cartSubtotal; paymentMethod='cash'">Walk-in</button>
             <button class="ct-opt" [class.ct-on]="customerType==='regular'" (click)="customerType='regular'">Regular</button>
           </div>
           <div *ngIf="customerType==='regular'" style="margin-top:8px">
-            <select class="inline-input" [(ngModel)]="selectedCustomerId">
+            <select class="inline-input" [(ngModel)]="selectedCustomerId" (change)="onCustomerSelect()">
               <option [ngValue]="null">Select Customer</option>
               <option *ngFor="let c of customers" [ngValue]="c.customer_id">{{ c.customer_name }}</option>
             </select>
           </div>
           <div *ngIf="customerType==='walkin'" class="walkin-badge">Walk-in customer</div>
+        </div>
+
+        <!-- ========== PAYMENT METHOD ========== -->
+        <div class="rblock" *ngIf="customerType === 'regular' && selectedCustomerId">
+          <p class="rblock-title">Payment Method</p>
+          <div class="payment-methods">
+            <button 
+              class="pm-opt" 
+              [class.active]="paymentMethod === 'cash'" 
+              (click)="paymentMethod = 'cash'">
+              💰 Cash
+            </button>
+            
+            <button 
+              *ngIf="customerHasBank" 
+              class="pm-opt bank" 
+              [class.active]="paymentMethod === 'bank'" 
+              (click)="paymentMethod = 'bank'">
+              🏦 Bank (Rs. {{ customerBankBalance | number:'1.0-0' }})
+            </button>
+            
+            <button 
+              *ngIf="!customerHasBank" 
+              class="pm-opt create-bank" 
+              (click)="createBankAccount()">
+              ➕ Create Bank Account
+            </button>
+          </div>
+          <div *ngIf="paymentMethod === 'bank' && customerHasBank" class="bank-info">
+            <span>💰 Balance: <strong>Rs. {{ customerBankBalance | number:'1.0-0' }}</strong></span>
+            <span *ngIf="customerBankBalance < 0" style="color: #e53935; font-size: 12px; margin-left: 8px;">
+              (Trust/Overdraft)
+            </span>
+          </div>
+          <div *ngIf="!customerHasBank && selectedCustomerId" class="bank-info warning">
+            ⚠️ No bank account found. Please create one to pay via bank.
+          </div>
         </div>
 
         <div class="rblock">

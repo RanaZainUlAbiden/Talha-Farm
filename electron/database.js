@@ -32,7 +32,7 @@ function createTables(db) {
 
   // ── Distribution Module ─────────────────────────────────
   db.run(`CREATE TABLE IF NOT EXISTS products (product_id INTEGER PRIMARY KEY AUTOINCREMENT, farm_id INTEGER NOT NULL, product_name TEXT NOT NULL, category TEXT, unit TEXT, current_stock REAL DEFAULT 0, min_stock_alert REAL DEFAULT 0, cost_price REAL DEFAULT 0, selling_price REAL DEFAULT 0, FOREIGN KEY (farm_id) REFERENCES farms(farm_id));`)
-  db.run(`CREATE TABLE IF NOT EXISTS customers (customer_id INTEGER PRIMARY KEY AUTOINCREMENT, farm_id INTEGER NOT NULL, customer_name TEXT NOT NULL, phone TEXT, address TEXT, outstanding_balance REAL DEFAULT 0, FOREIGN KEY (farm_id) REFERENCES farms(farm_id));`)
+  db.run(`CREATE TABLE IF NOT EXISTS customers (customer_id INTEGER PRIMARY KEY AUTOINCREMENT, farm_id INTEGER NOT NULL, customer_name TEXT NOT NULL, phone TEXT, address TEXT, outstanding_balance REAL DEFAULT 0, bank_id INTEGER, FOREIGN KEY (farm_id) REFERENCES farms(farm_id));`)
   db.run(`CREATE TABLE IF NOT EXISTS suppliers (supplier_id INTEGER PRIMARY KEY AUTOINCREMENT, farm_id INTEGER NOT NULL, supplier_name TEXT NOT NULL, phone TEXT, products_supplied TEXT, FOREIGN KEY (farm_id) REFERENCES farms(farm_id));`)
   db.run(`CREATE TABLE IF NOT EXISTS purchase_orders (purchase_id INTEGER PRIMARY KEY AUTOINCREMENT, farm_id INTEGER NOT NULL, supplier_id INTEGER, product_id INTEGER NOT NULL, date DATE NOT NULL, quantity REAL NOT NULL, cost_price REAL NOT NULL, total_amount REAL NOT NULL, payment_type TEXT DEFAULT 'cash', notes TEXT, FOREIGN KEY (farm_id) REFERENCES farms(farm_id), FOREIGN KEY (supplier_id) REFERENCES suppliers(supplier_id), FOREIGN KEY (product_id) REFERENCES products(product_id));`)
   db.run(`CREATE TABLE IF NOT EXISTS sales_orders (order_id INTEGER PRIMARY KEY AUTOINCREMENT, farm_id INTEGER NOT NULL, customer_id INTEGER, product_id INTEGER NOT NULL, date DATE NOT NULL, quantity REAL NOT NULL, selling_price REAL NOT NULL, total_amount REAL NOT NULL, payment_type TEXT DEFAULT 'cash', amount_paid REAL DEFAULT 0, notes TEXT, FOREIGN KEY (farm_id) REFERENCES farms(farm_id), FOREIGN KEY (customer_id) REFERENCES customers(customer_id), FOREIGN KEY (product_id) REFERENCES products(product_id));`)
@@ -102,17 +102,19 @@ function createTables(db) {
     FOREIGN KEY (supplier_id) REFERENCES suppliers(supplier_id) ON DELETE CASCADE
   );`)
 
-  // Bank Accounts
+  // Bank Accounts - 🔥 FIX: Added customer_id column
   db.run(`CREATE TABLE IF NOT EXISTS bank_accounts (
     bank_id INTEGER PRIMARY KEY AUTOINCREMENT,
     farm_id INTEGER NOT NULL,
+    customer_id INTEGER,
     bank_name TEXT NOT NULL,
     account_number TEXT,
     account_holder TEXT,
     opening_balance REAL DEFAULT 0,
     current_balance REAL DEFAULT 0,
     created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-    FOREIGN KEY (farm_id) REFERENCES farms(farm_id)
+    FOREIGN KEY (farm_id) REFERENCES farms(farm_id),
+    FOREIGN KEY (customer_id) REFERENCES customers(customer_id)
   );`)
 
   // Bank Ledger
@@ -137,6 +139,7 @@ function createTables(db) {
   db.run(`CREATE INDEX IF NOT EXISTS idx_supplier_ledger_date ON supplier_ledger(transaction_date);`)
   db.run(`CREATE INDEX IF NOT EXISTS idx_bank_ledger_bank ON bank_ledger(bank_id);`)
   db.run(`CREATE INDEX IF NOT EXISTS idx_bank_ledger_date ON bank_ledger(transaction_date);`)
+  db.run(`CREATE INDEX IF NOT EXISTS idx_customers_bank ON customers(bank_id);`)
 
   // Add indexes for performance
   db.run(`CREATE INDEX IF NOT EXISTS idx_batches_product ON product_batches(product_id);`)
@@ -266,6 +269,7 @@ async function initializeDatabase() {
     `ALTER TABLE flocks ADD COLUMN end_date DATE`,
     `ALTER TABLE sales ADD COLUMN receipt_image TEXT`,
     `ALTER TABLE bills ADD COLUMN status TEXT DEFAULT 'completed'`,
+    `ALTER TABLE customers ADD COLUMN bank_id INTEGER`,
   ]
   
   for (const sql of alterStatements) {
@@ -314,8 +318,6 @@ function saveDatabase(dbPath) {
 // =============================================
 // RUN QUERY (INSERT/UPDATE/DELETE) - FIXED
 // =============================================
-// Maps table name -> its primary key column, used only by the MAX(pk)
-// fallback below when last_insert_rowid() can't be trusted.
 const PRIMARY_KEY_MAP = {
   purchase_orders: 'purchase_id',
   sales_orders: 'order_id',
@@ -356,12 +358,6 @@ function runQuery(sql, params = []) {
     let lastId = null;
 
     if (sqlUpper.startsWith('INSERT')) {
-      // 🔥 FIX (Bug #1, round 3): db.run(sql, params) — the Database-level
-      // convenience method — was leaving last_insert_rowid() reporting 0
-      // for purchase_orders inserts, even though the row itself was
-      // inserted correctly. Switched to db.prepare(sql).run(params), the
-      // EXACT method addBatch() already uses successfully elsewhere in
-      // this file, so INSERTs now go through a single proven code path.
       const stmt = db.prepare(sql);
       stmt.run(params);
       stmt.free();
@@ -375,12 +371,6 @@ function runQuery(sql, params = []) {
         console.error('last_insert_rowid lookup failed:', e.message);
       }
 
-      // 🔥 SAFETY NET: if last_insert_rowid() still comes back falsy for
-      // any reason, fall back to MAX(<primary_key>) on the target table.
-      // This app is single-user with sequential (non-concurrent) writes,
-      // so MAX(pk) immediately after an insert is guaranteed to be the
-      // row that was just created. This makes lastId reliable no matter
-      // what is causing last_insert_rowid() to misbehave.
       if (!lastId) {
         const tableMatch = sql.match(/INSERT\s+INTO\s+["`\[]?(\w+)["`\]]?/i);
         const tableName = tableMatch ? tableMatch[1] : null;
@@ -742,14 +732,10 @@ function migrateExistingStock(farmId) {
 
 // ── LEDGER OPERATIONS ─────────────────────────────────────────
 
-// Customer ledger is a RECEIVABLE: a credit sale increases what the
-// customer owes you, so balance = SUM(debit - credit).
-// (debit = sale on credit → balance up, credit = customer payment → balance down)
 function addCustomerLedgerEntry(entry) {
   try {
     const { customer_id, transaction_date, description, debit = 0, credit = 0, reference_type, reference_id } = entry;
     
-    // Get current balance
     let currentBalance = 0;
     try {
       const stmt = db.prepare(`
@@ -781,17 +767,10 @@ function addCustomerLedgerEntry(entry) {
   }
 }
 
-// 🔥 FIX (Bug #2): Supplier ledger is a PAYABLE, not a receivable.
-// A credit purchase (unpaid) increases what YOU owe the supplier, and a
-// payment (debit) decreases it. So the balance formula must be
-// SUM(credit - debit) — the opposite sign convention from customer_ledger.
-// Previously this reused SUM(debit - credit), which made balances come
-// out negative/wrong for every supplier transaction.
 function addSupplierLedgerEntry(entry) {
   try {
     const { supplier_id, transaction_date, description, debit = 0, credit = 0, reference_type, reference_id } = entry;
     
-    // Get current balance (payable convention: credit increases, debit decreases)
     let currentBalance = 0;
     try {
       const stmt = db.prepare(`
@@ -823,6 +802,7 @@ function addSupplierLedgerEntry(entry) {
   }
 }
 
+// 🔥 FIX: addBankLedgerEntry now correctly calculates balance
 function addBankLedgerEntry(entry) {
   try {
     const { bank_id, transaction_date, description, debit = 0, credit = 0, reference_type, reference_id } = entry;
@@ -843,6 +823,7 @@ function addBankLedgerEntry(entry) {
       console.error('Error getting balance:', e.message);
     }
     
+    // Calculate new balance: current + deposit - withdrawal
     const newBalance = currentBalance + debit - credit;
     
     const stmt = db.prepare(`
@@ -856,7 +837,7 @@ function addBankLedgerEntry(entry) {
     // Update bank account current balance
     db.run(`UPDATE bank_accounts SET current_balance = ? WHERE bank_id = ?`, [newBalance, bank_id])
     
-    return { success: true }
+    return { success: true, balance: newBalance }
   } catch (err) {
     return { success: false, error: err.message }
   }
@@ -907,8 +888,6 @@ function getCustomerLedgerWithBalance(customerId) {
   }
 }
 
-// 🔥 FIX (Bug #2): running_balance now uses SUM(credit - debit) to match
-// the payable convention (see addSupplierLedgerEntry above).
 function getSupplierLedgerWithBalance(supplierId) {
   try {
     const stmt = db.prepare(`
@@ -959,10 +938,17 @@ function getBankLedgerWithBalance(bankId) {
   }
 }
 
+// 🔥 FIX: getBankAccounts now returns accounts with customer info
 function getBankAccounts(farmId) {
   try {
     const stmt = db.prepare(`
-      SELECT * FROM bank_accounts WHERE farm_id = ? ORDER BY bank_name ASC
+      SELECT 
+        ba.*,
+        c.customer_name
+      FROM bank_accounts ba
+      LEFT JOIN customers c ON ba.customer_id = c.customer_id
+      WHERE ba.farm_id = ?
+      ORDER BY ba.bank_name ASC
     `)
     stmt.bind([farmId])
     const rows = []
@@ -978,7 +964,14 @@ function getBankAccounts(farmId) {
 
 function getBankAccount(bankId) {
   try {
-    const stmt = db.prepare(`SELECT * FROM bank_accounts WHERE bank_id = ?`)
+    const stmt = db.prepare(`
+      SELECT 
+        ba.*,
+        c.customer_name
+      FROM bank_accounts ba
+      LEFT JOIN customers c ON ba.customer_id = c.customer_id
+      WHERE ba.bank_id = ?
+    `)
     stmt.bind([bankId])
     const result = stmt.getAsObject()
     stmt.free()
@@ -988,24 +981,46 @@ function getBankAccount(bankId) {
   }
 }
 
+// 🔥 FIXED: addBankAccount now creates a ledger entry for opening balance
 function addBankAccount(account) {
   try {
-    const { farm_id, bank_name, account_number, account_holder, opening_balance = 0 } = account;
+    const { farm_id, customer_id, bank_name, account_number, account_holder, opening_balance = 0 } = account;
     
+    // Insert bank account
     const stmt = db.prepare(`
       INSERT INTO bank_accounts 
-      (farm_id, bank_name, account_number, account_holder, opening_balance, current_balance)
-      VALUES (?, ?, ?, ?, ?, ?)
+      (farm_id, customer_id, bank_name, account_number, account_holder, opening_balance, current_balance)
+      VALUES (?, ?, ?, ?, ?, ?, ?)
     `)
-    stmt.run([farm_id, bank_name, account_number || null, account_holder || null, opening_balance, opening_balance])
+    stmt.run([farm_id, customer_id || null, bank_name, account_number || null, account_holder || null, opening_balance, opening_balance])
     stmt.free()
     
-    return { success: true }
+    const bankId = db.exec('SELECT last_insert_rowid() as id')[0].values[0][0]
+    
+    // 🔥 FIX: Add opening balance to bank_ledger
+    if (opening_balance > 0) {
+      const entry = {
+        bank_id: bankId,
+        transaction_date: new Date().toISOString().split('T')[0],
+        description: 'Opening Balance',
+        debit: opening_balance,
+        credit: 0,
+        reference_type: 'opening',
+        reference_id: null
+      };
+      addBankLedgerEntry(entry);
+    }
+    
+    // Link customer to bank
+    if (customer_id && bankId) {
+      db.run(`UPDATE customers SET bank_id = ? WHERE customer_id = ?`, [bankId, customer_id])
+    }
+    
+    return { success: true, bank_id: bankId }
   } catch (err) {
     return { success: false, error: err.message }
   }
 }
-
 function updateBankAccount(bankId, data) {
   try {
     const fields = []
@@ -1057,10 +1072,6 @@ function getAllCustomersWithBalance(farmId) {
   }
 }
 
-// 🔥 NEW: Suppliers need the same "with balance" helper the customers list
-// already has, so the Supplier Ledger list view can show a real Total
-// Payable instead of the hardcoded placeholder that currently just
-// returns the running sum unmodified (see supplier-ledger.component.ts).
 function getAllSuppliersWithBalance(farmId) {
   try {
     const stmt = db.prepare(`
@@ -1070,6 +1081,103 @@ function getAllSuppliersWithBalance(farmId) {
       FROM suppliers s
       WHERE s.farm_id = ?
       ORDER BY s.supplier_name ASC
+    `)
+    stmt.bind([farmId])
+    const rows = []
+    while (stmt.step()) {
+      rows.push(stmt.getAsObject())
+    }
+    stmt.free()
+    return { success: true, data: rows }
+  } catch (err) {
+    return { success: false, error: err.message }
+  }
+}
+
+// ── CUSTOMER BANK METHODS ────────────────────────────────────
+
+function getCustomerBankAccount(customerId) {
+  try {
+    const stmt = db.prepare(`
+      SELECT ba.* 
+      FROM bank_accounts ba
+      INNER JOIN customers c ON c.bank_id = ba.bank_id
+      WHERE c.customer_id = ?
+    `)
+    stmt.bind([customerId])
+    const result = stmt.getAsObject()
+    stmt.free()
+    return { success: true, data: result }
+  } catch (err) {
+    return { success: false, error: err.message }
+  }
+}
+
+function getCustomerBankBalance(customerId) {
+  try {
+    const stmt = db.prepare(`
+      SELECT ba.current_balance 
+      FROM bank_accounts ba
+      INNER JOIN customers c ON c.bank_id = ba.bank_id
+      WHERE c.customer_id = ?
+    `)
+    stmt.bind([customerId])
+    const result = stmt.getAsObject()
+    stmt.free()
+    return { success: true, balance: result.current_balance || 0 }
+  } catch (err) {
+    return { success: false, error: err.message }
+  }
+}
+
+function deductCustomerBank(customerId, amount, description) {
+  try {
+    // Get the customer's bank account
+    const bankResult = getCustomerBankAccount(customerId);
+    if (!bankResult.success || !bankResult.data) {
+      return { success: false, error: 'Customer has no bank account' };
+    }
+    
+    const bank = bankResult.data;
+    
+    // Add withdrawal to bank ledger
+    const entry = {
+      bank_id: bank.bank_id,
+      transaction_date: new Date().toISOString().split('T')[0],
+      description: description,
+      debit: 0,
+      credit: amount,
+      reference_type: 'payment',
+      reference_id: null
+    };
+    
+    return addBankLedgerEntry(entry);
+  } catch (err) {
+    return { success: false, error: err.message }
+  }
+}
+
+function linkCustomerToBank(customerId, bankId) {
+  try {
+    db.run(`UPDATE customers SET bank_id = ? WHERE customer_id = ?`, [bankId, customerId]);
+    return { success: true }
+  } catch (err) {
+    return { success: false, error: err.message }
+  }
+}
+
+function getCustomersWithBankAccounts(farmId) {
+  try {
+    const stmt = db.prepare(`
+      SELECT 
+        c.*,
+        ba.bank_id,
+        ba.bank_name,
+        ba.current_balance
+      FROM customers c
+      LEFT JOIN bank_accounts ba ON c.bank_id = ba.bank_id
+      WHERE c.farm_id = ?
+      ORDER BY c.customer_name ASC
     `)
     stmt.bind([farmId])
     const rows = []
@@ -1113,5 +1221,11 @@ module.exports = {
   updateBankAccount,
   deleteBankAccount,
   getAllCustomersWithBalance,
-  getAllSuppliersWithBalance
+  getAllSuppliersWithBalance,
+  // Customer Bank functions
+  getCustomerBankAccount,
+  getCustomerBankBalance,
+  deductCustomerBank,
+  linkCustomerToBank,
+  getCustomersWithBankAccounts
 }

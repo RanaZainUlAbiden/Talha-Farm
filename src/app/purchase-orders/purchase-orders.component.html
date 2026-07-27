@@ -13,7 +13,6 @@
     </div>
   </div>
 
-  <!-- 🔥 FIX: errorMessage was being set all over this component but never shown -->
   <div class="error-message" *ngIf="errorMessage">{{ errorMessage }}</div>
 
   <div class="empty-state" *ngIf="products.length === 0">
@@ -26,19 +25,51 @@
   <div class="table-card" *ngIf="orders.length > 0 || pendingRows.length > 0">
     <table>
       <thead>
-        <tr><th style="width:32px"></th><th>Product</th><th>Supplier</th><th>Date</th><th>Qty</th><th>Cost Price</th><th>Total</th><th>Payment</th><th>Notes</th><th>Actions</th></tr>
+        <tr>
+          <th style="width:32px"></th>
+          <th>Product</th>
+          <th>Supplier</th>
+          <th>Date</th>
+          <th>Qty</th>
+          <th>Cost Price</th>
+          <th>Total</th>
+          <th>Payment</th>
+          <th>Notes</th>
+          <th>Actions</th>
+        </tr>
       </thead>
       <tbody>
+        <!-- PENDING ROWS -->
         <tr *ngFor="let row of pendingRows; let i = index" class="pending-row">
           <td class="row-plus-cell"><button class="row-plus-btn" (click)="addRowAfter(i)">+</button></td>
-          <td><select class="inline-input" [(ngModel)]="row.product_id"><option *ngFor="let p of products" [value]="p.product_id">{{ p.product_name }}</option></select></td>
-          <td><select class="inline-input" [(ngModel)]="row.supplier_id"><option [value]="null">—</option><option *ngFor="let s of suppliers" [value]="s.supplier_id">{{ s.supplier_name }}</option></select></td>
+          <td>
+            <select class="inline-input" [(ngModel)]="row.product_id" (change)="onProductSelect(row)">
+              <option [ngValue]="null">Select Product</option>
+              <option *ngFor="let p of products" [value]="p.product_id">
+                {{ p.product_name }} (Rs. {{ p.cost_price || 0 }})
+              </option>
+            </select>
+          </td>
+          <td>
+            <select class="inline-input" [(ngModel)]="row.supplier_id">
+              <option [ngValue]="null">—</option>
+              <option *ngFor="let s of suppliers" [value]="s.supplier_id">{{ s.supplier_name }}</option>
+            </select>
+          </td>
           <td><input class="inline-input" type="date" [(ngModel)]="row.date"/></td>
-          <td><input class="inline-input" type="number" [(ngModel)]="row.quantity" placeholder="0"/></td>
-          <td><input class="inline-input" type="number" [(ngModel)]="row.cost_price" placeholder="0"/></td>
+          <td><input class="inline-input" type="number" [(ngModel)]="row.quantity" placeholder="0" min="0"/></td>
+          <td>
+            <!-- 🔥 FIX: Using [(ngModel)] with disabled input -->
+            <input 
+              class="inline-input cost-display" 
+              type="text" 
+              [(ngModel)]="row.cost_price" 
+              disabled
+              placeholder="—"
+            />
+            <span class="auto-fill-hint" *ngIf="row.cost_price && row.cost_price > 0">Auto-filled</span>
+          </td>
           <td class="amount">Rs. {{ (row.quantity || 0) * (row.cost_price || 0) | number:'1.0-0' }}</td>
-          <!-- 🔥 Relabeled: value stays 'cash'/'credit' internally, but labels now
-               spell out debit/credit meaning as requested -->
           <td>
             <select class="inline-input" [(ngModel)]="row.payment_type">
               <option value="cash">Paid (Debit)</option>
@@ -48,19 +79,53 @@
           <td><input class="inline-input" type="text" [(ngModel)]="row.notes" placeholder="Notes"/></td>
           <td><button class="btn-remove-row" (click)="removePendingRow(i)">✕</button></td>
         </tr>
+
+        <!-- EXISTING ORDERS -->
         <tr *ngFor="let o of paginatedOrders" [class.editing]="editingId === o.purchase_id">
-          <ng-container *ngIf="editingId !== o.purchase_id"><td></td>
-            <td>{{ getProductName(o.product_id) }}</td><td>{{ getSupplierName(o.supplier_id) }}</td><td>{{ o.date | dateOnly }}</td>
-            <td>{{ o.quantity | number }}</td><td>Rs. {{ o.cost_price | number:'1.0-2' }}</td><td class="amount">Rs. {{ o.total_amount | number:'1.0-0' }}</td>
-            <td><span class="payment-badge" [class.cash]="o.payment_type==='cash'">{{ o.payment_type === 'cash' ? 'Paid (Debit)' : 'Unpaid (Credit)' }}</span></td><td>{{ o.notes || '—' }}</td>
-            <td class="actions"><button class="btn-edit" (click)="startEdit(o)">Edit</button><button class="btn-delete" (click)="confirmDelete(o.purchase_id)">Delete</button></td>
+          <ng-container *ngIf="editingId !== o.purchase_id">
+            <td></td>
+            <td>{{ getProductName(o.product_id) }}</td>
+            <td>{{ getSupplierName(o.supplier_id) }}</td>
+            <td>{{ o.date | dateOnly }}</td>
+            <td>{{ o.quantity | number }}</td>
+            <td>Rs. {{ o.cost_price | number:'1.0-2' }}</td>
+            <td class="amount">Rs. {{ o.total_amount | number:'1.0-0' }}</td>
+            <td>
+              <span class="payment-badge" [class.cash]="o.payment_type==='cash'">
+                {{ o.payment_type === 'cash' ? 'Paid (Debit)' : 'Unpaid (Credit)' }}
+              </span>
+            </td>
+            <td>{{ o.notes || '—' }}</td>
+            <td class="actions">
+              <button class="btn-edit" (click)="startEdit(o)">Edit</button>
+              <button class="btn-delete" (click)="confirmDelete(o.purchase_id)">Delete</button>
+            </td>
           </ng-container>
-          <ng-container *ngIf="editingId === o.purchase_id"><td></td>
-            <td><select class="inline-input" [(ngModel)]="editForm.product_id"><option *ngFor="let p of products" [value]="p.product_id">{{ p.product_name }}</option></select></td>
-            <td><select class="inline-input" [(ngModel)]="editForm.supplier_id"><option [value]="null">—</option><option *ngFor="let s of suppliers" [value]="s.supplier_id">{{ s.supplier_name }}</option></select></td>
+
+          <!-- EDIT MODE -->
+          <ng-container *ngIf="editingId === o.purchase_id">
+            <td></td>
+            <td>
+              <select class="inline-input" [(ngModel)]="editForm.product_id">
+                <option *ngFor="let p of products" [value]="p.product_id">{{ p.product_name }}</option>
+              </select>
+            </td>
+            <td>
+              <select class="inline-input" [(ngModel)]="editForm.supplier_id">
+                <option [ngValue]="null">—</option>
+                <option *ngFor="let s of suppliers" [value]="s.supplier_id">{{ s.supplier_name }}</option>
+              </select>
+            </td>
             <td><input class="inline-input" type="date" [(ngModel)]="editForm.date"/></td>
-            <td><input class="inline-input" type="number" [(ngModel)]="editForm.quantity"/></td>
-            <td><input class="inline-input" type="number" [(ngModel)]="editForm.cost_price"/></td>
+            <td><input class="inline-input" type="number" [(ngModel)]="editForm.quantity" min="0"/></td>
+            <td>
+              <input 
+                class="inline-input cost-display" 
+                type="text" 
+                [(ngModel)]="editForm.cost_price" 
+                disabled
+              />
+            </td>
             <td class="amount">Rs. {{ (editForm.quantity || 0) * (editForm.cost_price || 0) | number:'1.0-0' }}</td>
             <td>
               <select class="inline-input" [(ngModel)]="editForm.payment_type">
@@ -69,7 +134,10 @@
               </select>
             </td>
             <td><input class="inline-input" type="text" [(ngModel)]="editForm.notes"/></td>
-            <td class="actions"><button class="btn-save" (click)="saveEdit(o.purchase_id)">Save</button><button class="btn-cancel-edit" (click)="cancelEdit()">Cancel</button></td>
+            <td class="actions">
+              <button class="btn-save" (click)="saveEdit(o.purchase_id)">Save</button>
+              <button class="btn-cancel-edit" (click)="cancelEdit()">Cancel</button>
+            </td>
           </ng-container>
         </tr>
       </tbody>
@@ -77,4 +145,12 @@
     <app-pagination [currentPage]="currentPage" [totalItems]="orders.length" [pageSize]="pageSize" (pageChange)="currentPage = $event"></app-pagination>
   </div>
 </div>
-<app-confirm-dialog *ngIf="showDeleteDialog" title="Delete Order" message="Are you sure?" confirmText="Delete" cancelText="Cancel" type="danger" (confirmed)="onDeleteConfirmed()" (cancelled)="onDeleteCancelled()"/>
+<app-confirm-dialog 
+  *ngIf="showDeleteDialog" 
+  title="Delete Order" 
+  message="Are you sure?" 
+  confirmText="Delete" 
+  cancelText="Cancel" 
+  type="danger" 
+  (confirmed)="onDeleteConfirmed()" 
+  (cancelled)="onDeleteCancelled()"/>

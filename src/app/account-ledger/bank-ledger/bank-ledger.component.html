@@ -17,7 +17,7 @@
 
   <div class="loading-state" *ngIf="isLoading">
     <div class="spinner"></div>
-    <p>Loading...</p>
+    <p>Loading bank accounts...</p>
   </div>
 
   <!-- Bank List View -->
@@ -37,6 +37,7 @@
       <table>
         <thead>
           <tr>
+            <th>Customer</th>
             <th>Bank Name</th>
             <th>Account Number</th>
             <th>Account Holder</th>
@@ -46,10 +47,11 @@
         </thead>
         <tbody>
           <tr *ngFor="let b of bankAccounts">
+            <td class="customer-name">{{ getCustomerName(b.customer_id) }}</td>
             <td class="bank-name">{{ b.bank_name }}</td>
             <td>{{ b.account_number || '—' }}</td>
             <td>{{ b.account_holder || '—' }}</td>
-            <td [class.bank-balance]="b.current_balance > 0">
+            <td [class.bank-balance]="b.current_balance > 0" [class.negative]="b.current_balance < 0">
               Rs. {{ b.current_balance | number:'1.0-0' }}
             </td>
             <td>
@@ -59,7 +61,7 @@
             </td>
           </tr>
           <tr *ngIf="bankAccounts.length === 0">
-            <td colspan="5" class="empty-row">No bank accounts found</td>
+            <td colspan="6" class="empty-row">No bank accounts found</td>
           </tr>
         </tbody>
       </table>
@@ -79,7 +81,9 @@
       </div>
       <div class="summary-item">
         <span class="summary-label">Current Balance</span>
-        <span class="summary-value bank-balance">Rs. {{ getBankBalance() | number:'1.0-0' }}</span>
+        <span class="summary-value" [class.bank-balance]="getBankBalance() > 0" [class.negative]="getBankBalance() < 0">
+          Rs. {{ getBankBalance() | number:'1.0-0' }}
+        </span>
       </div>
     </div>
 
@@ -103,7 +107,7 @@
             <td class="deposit" *ngIf="entry.debit === 0">—</td>
             <td class="withdrawal" *ngIf="entry.credit > 0">Rs. {{ entry.credit | number:'1.0-0' }}</td>
             <td class="withdrawal" *ngIf="entry.credit === 0">—</td>
-            <td class="balance">Rs. {{ entry.balance | number:'1.0-0' }}</td>
+            <td class="balance" [class.negative]="entry.balance < 0">Rs. {{ entry.balance | number:'1.0-0' }}</td>
             <td>
               <button class="btn-delete" (click)="confirmDelete(entry.ledger_id, 'entry')">🗑️</button>
             </td>
@@ -120,6 +124,17 @@
   <div class="form-overlay" *ngIf="showBankForm">
     <div class="form-modal">
       <h4>{{ isEditingBank ? 'Edit Bank Account' : 'Add Bank Account' }}</h4>
+      
+      <div class="form-group">
+        <label>Customer *</label>
+        <select class="form-control" [(ngModel)]="bankForm.customer_id">
+          <option [ngValue]="null">Select Customer</option>
+          <option *ngFor="let c of customers" [ngValue]="c.customer_id">
+            {{ c.customer_name }}
+          </option>
+        </select>
+      </div>
+      
       <div class="form-group">
         <label>Bank Name *</label>
         <input class="form-control" type="text" [(ngModel)]="bankForm.bank_name" placeholder="e.g. HBL, UBL"/>
@@ -152,6 +167,10 @@
       <div class="form-group">
         <label>Bank</label>
         <input class="form-control" [value]="selectedBank.bank_name" disabled/>
+      </div>
+      <div class="form-group">
+        <label>Customer</label>
+        <input class="form-control" [value]="getCustomerName(selectedBank.customer_id)" disabled/>
       </div>
       <div class="form-group">
         <label>Current Balance</label>

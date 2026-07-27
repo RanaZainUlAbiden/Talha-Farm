@@ -1,6 +1,7 @@
 import { Component, OnInit, ChangeDetectorRef, HostListener } from '@angular/core';
 import { CommonModule } from '@angular/common';
 import { FormsModule } from '@angular/forms';
+import { Router } from '@angular/router'; // 🔥 FIX: Properly imported
 import { DatabaseService } from '../shared/services/database.service';
 import { AuthService } from '../shared/services/auth.service';
 import { DateOnlyPipe } from '../shared/pipes/date-format.pipe';
@@ -48,10 +49,22 @@ export class SalesOrdersComponent implements OnInit {
   selectedCustomerId: number | null = null;
   selectedCustomer: any = null;
 
+  // ── PAYMENT METHOD ──────────────────────────────────────
+  paymentMethod: 'cash' | 'bank' = 'cash';
+  customerHasBank: boolean = false;
+  customerBankBalance: number = 0;
+  customerBankId: number | null = null;
+
   paidAmount: number = 0;
   isSubmitting: boolean = false;
 
-  constructor(private db: DatabaseService, private authService: AuthService, private cdr: ChangeDetectorRef) {}
+  // 🔥 FIX: Properly injected Router
+  constructor(
+    private db: DatabaseService,
+    private authService: AuthService,
+    private cdr: ChangeDetectorRef,
+    private router: Router  // 🔥 FIX: Added proper Router injection
+  ) {}
 
   ngOnInit() {
     this.currentFarm = this.authService.getCurrentFarm();
@@ -61,6 +74,13 @@ export class SalesOrdersComponent implements OnInit {
   async loadData() {
     const pr = await this.db.get('SELECT * FROM products WHERE farm_id=?', [this.currentFarm.farm_id]);
     this.products = pr.success ? pr.data : [];
+    
+    // 🔥 FIX: Load calculated stock for each product
+    for (const product of this.products) {
+      const totalStock = await this.db.getTotalStock(product.product_id);
+      product.calculated_stock = totalStock;
+    }
+    
     const cr = await this.db.get('SELECT * FROM customers WHERE farm_id=?', [this.currentFarm.farm_id]);
     this.customers = cr.success ? cr.data : [];
     await this.loadBills();
@@ -84,7 +104,8 @@ export class SalesOrdersComponent implements OnInit {
     this.viewMode = 'create';
     this.isEditMode = false;
     this.editingBillId = null;
-    this.errorMessage = ''; // Clear error when creating new bill
+    this.errorMessage = '';
+    this.paymentMethod = 'cash';
   }
 
   async selectBill(bill: any) {
@@ -94,7 +115,12 @@ export class SalesOrdersComponent implements OnInit {
     this.customerType = bill.customer_id ? 'regular' : 'walkin';
     this.selectedCustomerId = bill.customer_id || null;
     this.paidAmount = bill.amount_paid;
-    this.errorMessage = ''; // Clear error when selecting bill
+    this.errorMessage = '';
+    this.paymentMethod = 'cash';
+
+    if (this.selectedCustomerId) {
+      await this.checkCustomerBank(this.selectedCustomerId);
+    }
 
     const items = await this.db.get('SELECT * FROM bill_items WHERE bill_id=?', [bill.bill_id]);
     this.gridItems = items.success ? items.data.map((i: any) => ({
@@ -107,6 +133,7 @@ export class SalesOrdersComponent implements OnInit {
     this.resetForm();
     this.viewMode = 'list';
     this.errorMessage = '';
+    this.paymentMethod = 'cash';
     this.loadBills();
   }
 
@@ -121,6 +148,10 @@ export class SalesOrdersComponent implements OnInit {
     this.isEditMode = false;
     this.editingBillId = null;
     this.errorMessage = '';
+    this.paymentMethod = 'cash';
+    this.customerHasBank = false;
+    this.customerBankBalance = 0;
+    this.customerBankId = null;
   }
 
   async getAvailableStock(productId: number): Promise<number> {
@@ -128,14 +159,77 @@ export class SalesOrdersComponent implements OnInit {
     return totalStock;
   }
 
-  // ====================================================
-  // 🟢 REAL-TIME PRODUCT SEARCH - FIXED
-  // ====================================================
+  // ── CUSTOMER BANK METHODS ──────────────────────────────────
+
+  async checkCustomerBank(customerId: number | null) {
+    if (!customerId) {
+      this.customerHasBank = false;
+      this.customerBankBalance = 0;
+      this.customerBankId = null;
+      this.paymentMethod = 'cash';
+      this.cdr.detectChanges();
+      return;
+    }
+    
+    try {
+      const result = await this.db.getCustomerBankAccount(customerId);
+      if (result.success && result.data && result.data.length > 0) {
+        this.customerHasBank = true;
+        this.customerBankId = result.data[0].bank_id;
+        this.customerBankBalance = result.data[0].current_balance || 0;
+        this.paymentMethod = 'cash';
+      } else {
+        this.customerHasBank = false;
+        this.customerBankBalance = 0;
+        this.customerBankId = null;
+        this.paymentMethod = 'cash';
+      }
+    } catch (error) {
+      console.error('Error checking customer bank:', error);
+      this.customerHasBank = false;
+      this.customerBankBalance = 0;
+      this.customerBankId = null;
+      this.paymentMethod = 'cash';
+    }
+    this.cdr.detectChanges();
+  }
+
+  onCustomerSelect() {
+    this.checkCustomerBank(this.selectedCustomerId);
+  }
+
+  async processBankPayment(customerId: number, amount: number, billNumber: string) {
+    try {
+      const result = await this.db.deductCustomerBank(customerId, amount, `Payment - Bill #${billNumber}`);
+      if (result.success) {
+        console.log(`✅ Bank payment of ${amount} processed for customer ${customerId}`);
+        return true;
+      } else {
+        this.errorMessage = 'Bank payment failed: ' + (result.error || 'Unknown error');
+        return false;
+      }
+    } catch (error: any) {
+      this.errorMessage = 'Bank payment error: ' + error.message;
+      return false;
+    }
+  }
+
+  // 🔥 FIX: Proper navigation with customer ID
+  createBankAccount() {
+    if (this.selectedCustomerId) {
+      this.router.navigate(['/app/bank-ledger'], { 
+        queryParams: { customerId: this.selectedCustomerId }
+      });
+    } else {
+      this.router.navigate(['/app/bank-ledger']);
+    }
+  }
+
+  // ── REAL-TIME PRODUCT SEARCH ──────────────────────────────
 
   onProductSearch() {
     const term = this.productSearchTerm.trim().toLowerCase();
     
-    // Hide dropdown if search term is empty
     if (!term) { 
       this.productOptions = []; 
       this.showProductDropdown = false; 
@@ -143,21 +237,16 @@ export class SalesOrdersComponent implements OnInit {
       return; 
     }
     
-    // 🔥 REAL-TIME FILTER: Search as user types
     this.productOptions = this.products.filter(p => 
       p.product_name.toLowerCase().includes(term) ||
       (p.category && p.category.toLowerCase().includes(term)) ||
       (p.unit && p.unit.toLowerCase().includes(term))
     );
     
-    // Show dropdown if there are results OR show empty state
     this.showProductDropdown = true;
-    
-    // Force change detection for immediate UI update
     this.cdr.detectChanges();
   }
 
-  // Click outside to close dropdown
   @HostListener('document:click', ['$event'])
   onDocumentClick(event: MouseEvent) {
     const target = event.target as HTMLElement;
@@ -168,7 +257,6 @@ export class SalesOrdersComponent implements OnInit {
   }
 
   async selectProductOption(product: any) {
-    // Check if product already in cart
     const existing = this.gridItems.find(i => i.productId === product.product_id);
     if (existing) {
       existing.quantity += 1;
@@ -183,12 +271,10 @@ export class SalesOrdersComponent implements OnInit {
       });
     }
     
-    // Clear search and close dropdown
     this.productSearchTerm = '';
     this.productOptions = [];
     this.showProductDropdown = false;
     
-    // Update paid amount for walk-in customers
     if (this.customerType === 'walkin') {
       this.paidAmount = this.cartSubtotal;
     }
@@ -252,14 +338,11 @@ export class SalesOrdersComponent implements OnInit {
     return true;
   }
 
-  // ====================================================
-  // 🟢 CUSTOMER LEDGER INTEGRATION
-  // ====================================================
+  // ── CUSTOMER LEDGER INTEGRATION ──────────────────────────
 
   async addToCustomerLedger(customerId: number, billId: number, totalAmount: number, paidAmount: number, billNumber: string) {
     if (!customerId) return;
     
-    // 1. Add DEBIT for the total bill amount (Customer owes total)
     await this.db.addCustomerLedgerEntry({
       customer_id: customerId,
       transaction_date: new Date().toISOString().split('T')[0],
@@ -270,7 +353,6 @@ export class SalesOrdersComponent implements OnInit {
       reference_id: billId
     });
     
-    // 2. If payment was made, add CREDIT for the paid amount
     if (paidAmount > 0) {
       await this.db.addCustomerLedgerEntry({
         customer_id: customerId,
@@ -290,30 +372,13 @@ export class SalesOrdersComponent implements OnInit {
   async removeFromCustomerLedger(billId: number, customerId: number) {
     if (!customerId) return;
     
-    // Delete both bill and payment entries
     await this.db.run('DELETE FROM customer_ledger WHERE reference_id = ? AND reference_type IN (?, ?)', [billId, 'bill', 'payment']);
     await this.db.updateCustomerOutstandingBalance(customerId);
     console.log(`✅ Removed bill ${billId} from customer ${customerId} ledger`);
   }
 
-  async updateCustomerLedgerOnEdit(billId: number, customerId: number, oldCustomerId: number, totalAmount: number, paidAmount: number, billNumber: string) {
-    // Remove old entries
-    if (oldCustomerId) {
-      await this.db.run('DELETE FROM customer_ledger WHERE reference_id = ? AND reference_type IN (?, ?)', [billId, 'bill', 'payment']);
-      await this.db.updateCustomerOutstandingBalance(oldCustomerId);
-    }
-    
-    // Add new entries if customer exists
-    if (customerId) {
-      await this.addToCustomerLedger(customerId, billId, totalAmount, paidAmount, billNumber);
-    }
-    
-    console.log(`✅ Updated customer ledger for bill ${billId}`);
-  }
+  // ── STOCK OPERATIONS ──────────────────────────────────────
 
-  // ====================================================
-  // 🟢 Restore stock from BATCHES
-  // ====================================================
   private async restoreBillStock(billId: number) {
     const existingItems = await this.getBillItems(billId);
     for (const item of existingItems) {
@@ -347,9 +412,6 @@ export class SalesOrdersComponent implements OnInit {
     }
   }
 
-  // ====================================================
-  // 🟢 Deduct stock from BATCHES (FIFO)
-  // ====================================================
   private async deductFromBatches(productId: number, quantity: number, billId?: number) {
     try {
       const batchesResult = await this.db.getBatchesByProduct(productId, this.currentFarm.farm_id);
@@ -404,9 +466,8 @@ export class SalesOrdersComponent implements OnInit {
     }
   }
 
-  // ====================================================
-  // 🟢 Save bill with BATCH + LEDGER integration
-  // ====================================================
+  // ── SAVE BILL ─────────────────────────────────────────────
+
   async saveBill(): Promise<number | null> {
     if (this.gridItems.length === 0 || this.isSubmitting) return null;
     if (!(await this.validateStockForBill())) return null;
@@ -421,22 +482,20 @@ export class SalesOrdersComponent implements OnInit {
       if (this.isEditMode && this.editingBillId) {
         savedBillId = this.editingBillId;
         
-        // Get old customer ID for ledger update
         const oldBill = this.allBills.find(b => b.bill_id === this.editingBillId);
         const oldCustomerId = oldBill?.customer_id;
         const oldBillNumber = oldBill?.bill_number || '';
         
-        // Restore old stock
         await this.restoreBillStock(this.editingBillId);
         
-        // Remove old ledger entries
         if (oldCustomerId) {
           await this.removeFromCustomerLedger(this.editingBillId, oldCustomerId);
         }
         
-        // Update bill
+        const effectivePaidAmount = this.paymentMethod === 'bank' ? totalAmount : this.paidAmount;
+        
         await this.db.run('UPDATE bills SET customer_id=?, customer_name=?, subtotal=?, total_amount=?, amount_paid=?, payment_type=? WHERE bill_id=?',
-          [this.selectedCustomerId, customerName, totalAmount, totalAmount, this.paidAmount, 'cash', this.editingBillId]);
+          [this.selectedCustomerId, customerName, totalAmount, totalAmount, effectivePaidAmount, this.paymentMethod === 'bank' ? 'bank' : 'cash', this.editingBillId]);
         await this.db.run('DELETE FROM bill_items WHERE bill_id=?', [this.editingBillId]);
         
         for (const item of this.gridItems) {
@@ -444,26 +503,36 @@ export class SalesOrdersComponent implements OnInit {
             [this.editingBillId, item.productId, item.productName, item.quantity, item.unitPrice, item.totalPrice]);
         }
         
-        // Deduct new stock from batches
         for (const item of this.gridItems) {
           await this.deductFromBatches(item.productId, item.quantity, this.editingBillId);
         }
         
-        // Add new ledger entries with payment
         if (this.selectedCustomerId) {
           await this.addToCustomerLedger(
             this.selectedCustomerId, 
             this.editingBillId, 
             totalAmount, 
-            this.paidAmount, 
+            effectivePaidAmount, 
             oldBillNumber || billNumber
           );
         }
+
+        if (this.paymentMethod === 'bank' && this.selectedCustomerId) {
+          const bankSuccess = await this.processBankPayment(
+            this.selectedCustomerId, 
+            totalAmount, 
+            oldBillNumber || billNumber
+          );
+          if (!bankSuccess) {
+            throw new Error(this.errorMessage || 'Bank payment failed');
+          }
+        }
         
       } else {
-        // Create new bill
+        const effectivePaidAmount = this.paymentMethod === 'bank' ? totalAmount : this.paidAmount;
+        
         await this.db.run('INSERT INTO bills (farm_id, bill_number, customer_id, customer_name, bill_date, subtotal, total_amount, amount_paid, payment_type) VALUES (?,?,?,?,?,?,?,?,?)',
-          [this.currentFarm.farm_id, billNumber, this.selectedCustomerId, customerName, new Date().toISOString().split('T')[0], totalAmount, totalAmount, this.paidAmount, 'cash']);
+          [this.currentFarm.farm_id, billNumber, this.selectedCustomerId, customerName, new Date().toISOString().split('T')[0], totalAmount, totalAmount, effectivePaidAmount, this.paymentMethod === 'bank' ? 'bank' : 'cash']);
         
         const lastBill = await this.db.get('SELECT MAX(bill_id) as bid FROM bills WHERE farm_id=?', [this.currentFarm.farm_id]);
         const billId = lastBill.success && lastBill.data[0] ? lastBill.data[0].bid : null;
@@ -477,15 +546,25 @@ export class SalesOrdersComponent implements OnInit {
             await this.deductFromBatches(item.productId, item.quantity, billId);
           }
           
-          // Add to customer ledger with payment
           if (this.selectedCustomerId) {
             await this.addToCustomerLedger(
               this.selectedCustomerId, 
               billId, 
               totalAmount, 
-              this.paidAmount, 
+              effectivePaidAmount, 
               billNumber
             );
+          }
+
+          if (this.paymentMethod === 'bank' && this.selectedCustomerId) {
+            const bankSuccess = await this.processBankPayment(
+              this.selectedCustomerId, 
+              totalAmount, 
+              billNumber
+            );
+            if (!bankSuccess) {
+              throw new Error(this.errorMessage || 'Bank payment failed');
+            }
           }
         }
       }
@@ -512,15 +591,11 @@ export class SalesOrdersComponent implements OnInit {
     this.showDeleteDialog = true;
   }
 
-  // ====================================================
-  // 🟢 Delete with LEDGER cleanup
-  // ====================================================
   async onDeleteConfirmed() {
     if (!this.deletingBillId) return;
     try {
       const bill = this.allBills.find(b => b.bill_id === this.deletingBillId);
       
-      // Remove from customer ledger
       if (bill?.customer_id) {
         await this.removeFromCustomerLedger(this.deletingBillId, bill.customer_id);
       }

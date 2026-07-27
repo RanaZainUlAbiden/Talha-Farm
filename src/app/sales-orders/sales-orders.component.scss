@@ -99,3 +99,286 @@
 .btn-print { width: 100%; background: #333; color: white; border: none; padding: 12px; border-radius: 8px; font-size: 14px; cursor: pointer; &:hover { background: #222; } &:disabled { background: #aaa; } }
 .btn-cancel-edit { background: #f5f5f5; color: #666; border: 1px solid #e0e0e0; padding: 10px; border-radius: 8px; font-size: 14px; cursor: pointer; }
 .empty-state { text-align: center; padding: 60px; color: #aaa; font-size: 15px; }
+// ── PAYMENT METHOD BADGE ──────────────────────────────────
+
+.payment-badge {
+  padding: 3px 10px;
+  border-radius: 20px;
+  font-size: 11px;
+  font-weight: 500;
+  white-space: nowrap;
+
+  &.cash {
+    background: #e8f5e9;
+    color: #1a5c38;
+  }
+
+  &.bank {
+    background: #e3f2fd;
+    color: #0d47a1;
+  }
+}
+
+// ── PAYMENT METHODS (New Bill Screen) ────────────────────
+
+.payment-methods {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin-top: 8px;
+}
+
+.pm-opt {
+  padding: 8px 16px;
+  border: 2px solid #e0e0e0;
+  border-radius: 8px;
+  background: white;
+  cursor: pointer;
+  font-size: 13px;
+  transition: all 0.2s;
+  flex: 1;
+  min-width: 80px;
+  font-weight: 500;
+
+  &:hover {
+    border-color: #999;
+    background: #f5f5f5;
+  }
+
+  &.active {
+    border-color: #1a5c38;
+    background: #e8f5e9;
+    font-weight: 600;
+    box-shadow: 0 2px 8px rgba(26, 92, 56, 0.15);
+  }
+
+  &.bank {
+    background: #f5f9ff;
+    border-color: #90caf9;
+
+    &.active {
+      background: #bbdefb;
+      border-color: #0d47a1;
+      box-shadow: 0 2px 8px rgba(13, 71, 161, 0.15);
+    }
+
+    &:hover {
+      background: #e3f2fd;
+    }
+  }
+
+  &.create-bank {
+    background: #fff3e0;
+    border-color: #ffcc80;
+    color: #e65100;
+
+    &:hover {
+      background: #ffe0b2;
+      border-color: #ffa726;
+    }
+
+    &.active {
+      background: #ffe0b2;
+      border-color: #e65100;
+    }
+  }
+}
+
+.bank-info {
+  margin-top: 8px;
+  padding: 8px 12px;
+  background: #f5f5f5;
+  border-radius: 6px;
+  font-size: 13px;
+
+  strong {
+    color: #1a5c38;
+  }
+
+  &.warning {
+    background: #fff3e0;
+    border-left: 3px solid #ff9800;
+    color: #e65100;
+  }
+}
+
+// ── BILL LIST ITEMS ────────────────────────────────────────
+
+.bill-item {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  background: white;
+  border: 1px solid #e0e0e0;
+  border-radius: 10px;
+  padding: 14px 20px;
+  cursor: pointer;
+  transition: all 0.15s;
+
+  &:hover {
+    border-color: #1a5c38;
+    background: #f8fdf9;
+    transform: translateY(-1px);
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.06);
+  }
+}
+
+.bill-left {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.bill-num {
+  font-size: 15px;
+  font-weight: 600;
+  color: #1a5c38;
+}
+
+.bill-cust {
+  font-size: 13px;
+  color: #666;
+}
+
+.bill-right {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  flex-wrap: wrap;
+}
+
+.bill-date {
+  font-size: 12px;
+  color: #888;
+}
+
+.bill-amt {
+  font-size: 15px;
+  font-weight: 600;
+  color: #1a1a1a;
+}
+
+.bill-status {
+  padding: 4px 12px;
+  border-radius: 20px;
+  font-size: 12px;
+  font-weight: 500;
+
+  &.paid {
+    background: #e8f5e9;
+    color: #1a5c38;
+  }
+
+  &.unpaid {
+    background: #fce4ec;
+    color: #c62828;
+  }
+}
+
+.bill-delete {
+  background: #fce4ec;
+  color: #c62828;
+  border: none;
+  padding: 5px 12px;
+  border-radius: 6px;
+  font-size: 12px;
+  cursor: pointer;
+  transition: background 0.15s;
+
+  &:hover {
+    background: #f8bbd0;
+  }
+}
+
+// ── PRODUCT DROPDOWN ───────────────────────────────────────
+
+.pdrop {
+  position: absolute;
+  left: 20px;
+  right: 20px;
+  top: 52px;
+  background: white;
+  border: 1px solid #e0e0e0;
+  border-radius: 8px;
+  box-shadow: 0 6px 24px rgba(0, 0, 0, 0.12);
+  z-index: 100;
+  max-height: 280px;
+  overflow-y: auto;
+
+  .pd-row {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 10px 14px;
+    cursor: pointer;
+    border-bottom: 1px solid #f5f5f5;
+    transition: background 0.1s;
+
+    &:hover {
+      background: #f0faf4;
+    }
+
+    &:last-child {
+      border-bottom: none;
+    }
+  }
+
+  .pd-name {
+    font-size: 14px;
+    font-weight: 500;
+    color: #1a1a1a;
+    flex: 1;
+  }
+
+  .pd-price {
+    font-size: 13px;
+    color: #1a5c38;
+    font-weight: 600;
+    margin: 0 12px;
+  }
+
+  .pd-stock {
+    font-size: 11px;
+    color: #888;
+    white-space: nowrap;
+    background: #f5f5f5;
+    padding: 2px 8px;
+    border-radius: 12px;
+  }
+
+  .pdrop-empty {
+    padding: 20px;
+    text-align: center;
+    color: #aaa;
+    font-size: 13px;
+  }
+}
+
+// ── RESPONSIVE ADJUSTMENTS ─────────────────────────────────
+
+@media (max-width: 768px) {
+  .payment-methods {
+    flex-direction: column;
+  }
+
+  .pm-opt {
+    flex: none;
+    width: 100%;
+  }
+
+  .bill-right {
+    gap: 8px;
+  }
+
+  .bill-item {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 10px;
+  }
+
+  .bill-right {
+    width: 100%;
+    justify-content: flex-start;
+    flex-wrap: wrap;
+  }
+}
