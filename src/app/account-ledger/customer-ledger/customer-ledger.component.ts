@@ -21,6 +21,7 @@ export class CustomerLedgerComponent implements OnInit {
   filteredCustomers: any[] = [];
   selectedCustomer: any = null;
   ledgerEntries: any[] = [];
+  customerBills: any[] = [];
   isLoading = true;
   errorMessage = '';
   searchTerm: string = '';
@@ -31,6 +32,11 @@ export class CustomerLedgerComponent implements OnInit {
   paymentDate: string = '';
   paymentNote: string = '';
   isSubmitting = false;
+  
+  // Bill selection for payment
+  selectedBillId: number | null = null;
+  showBillSelection: boolean = false;
+  unpaidBills: any[] = [];
   
   // Delete dialog
   showDeleteDialog = false;
@@ -48,7 +54,6 @@ export class CustomerLedgerComponent implements OnInit {
     this.currentFarm = this.authService.getCurrentFarm();
     this.paymentDate = new Date().toISOString().split('T')[0];
     
-    // 🔥 FIX: Use route.params.subscribe to handle navigation properly
     this.route.params.subscribe(params => {
       const customerId = params['id'];
       if (customerId) {
@@ -85,8 +90,14 @@ export class CustomerLedgerComponent implements OnInit {
     this.errorMessage = '';
     this.selectedCustomer = null;
     this.ledgerEntries = [];
+    this.customerBills = [];
+    this.unpaidBills = [];
     
     try {
+      // 🔥 selectedCustomer.outstanding_balance comes from this query, and is
+      // now bills-derived (see DatabaseService.updateCustomerOutstandingBalance).
+      // This is what getCustomerBalance() reads from, so it always matches
+      // what Sales Orders / Reports show for this customer.
       const customerResult = await this.db.get(
         'SELECT * FROM customers WHERE customer_id = ? AND farm_id = ?',
         [customerId, this.currentFarm.farm_id]
@@ -98,6 +109,19 @@ export class CustomerLedgerComponent implements OnInit {
         const ledgerResult = await this.db.getCustomerLedgerWithBalance(customerId);
         if (ledgerResult.success) {
           this.ledgerEntries = ledgerResult.data || [];
+        }
+        
+        // Load customer's unpaid bills
+        const billsResult = await this.db.get(
+          `SELECT * FROM bills 
+           WHERE customer_id = ? 
+           AND (amount_paid < total_amount OR amount_paid IS NULL)
+           ORDER BY bill_date ASC`,
+          [customerId]
+        );
+        if (billsResult.success) {
+          this.customerBills = billsResult.data || [];
+          this.unpaidBills = this.customerBills.filter(b => (b.amount_paid || 0) < (b.total_amount || 0));
         }
       } else {
         this.errorMessage = 'Customer not found';
@@ -135,7 +159,6 @@ export class CustomerLedgerComponent implements OnInit {
   // ── NAVIGATION METHODS ────────────────────────────────────
 
   selectCustomer(customer: any) {
-    // 🔥 FIX: Use navigateByUrl to ensure proper navigation
     this.router.navigateByUrl(`/app/customer-ledger/${customer.customer_id}`).then(
       (success) => {
         if (!success) {
@@ -149,8 +172,9 @@ export class CustomerLedgerComponent implements OnInit {
   goBack() {
     this.selectedCustomer = null;
     this.ledgerEntries = [];
+    this.customerBills = [];
+    this.unpaidBills = [];
     this.searchTerm = '';
-    // 🔥 FIX: Navigate back to the list view
     this.router.navigate(['/app/customer-ledger']).then(() => {
       this.loadCustomers();
     });
@@ -170,9 +194,12 @@ export class CustomerLedgerComponent implements OnInit {
     return this.ledgerEntries.reduce((sum, e) => sum + (e.credit || 0), 0);
   }
 
+  // 🔥 FIX: read the balance straight off the customer record (bills-derived),
+  // instead of trusting the last ledger row's running `balance` field.
+  // This is the single change that keeps this screen in sync with
+  // Sales Orders and the Distribution Report.
   getCustomerBalance(): number {
-    if (this.ledgerEntries.length === 0) return 0;
-    return this.ledgerEntries[this.ledgerEntries.length - 1]?.balance || 0;
+    return this.selectedCustomer?.outstanding_balance || 0;
   }
 
   // ── PAYMENT METHODS ──────────────────────────────────────
@@ -182,12 +209,20 @@ export class CustomerLedgerComponent implements OnInit {
     this.paymentAmount = this.getCustomerBalance();
     this.paymentDate = new Date().toISOString().split('T')[0];
     this.paymentNote = '';
+    this.selectedBillId = null;
+    
+    this.showBillSelection = this.unpaidBills.length > 0;
+    if (this.unpaidBills.length === 1) {
+      this.selectedBillId = this.unpaidBills[0].bill_id;
+    }
   }
 
   closePaymentForm() {
     this.showPaymentForm = false;
     this.paymentAmount = 0;
     this.paymentNote = '';
+    this.selectedBillId = null;
+    this.showBillSelection = false;
   }
 
   async submitPayment() {
@@ -205,6 +240,49 @@ export class CustomerLedgerComponent implements OnInit {
     this.errorMessage = '';
 
     try {
+      // 🔥 FIX: apply the payment to the actual bill(s) FIRST. This is the
+      // real, authoritative change — everything else (ledger entry, balance
+      // recalculation) is derived from this and must happen after it.
+      if (this.selectedBillId) {
+        const billResult = await this.db.get(
+          'SELECT total_amount, amount_paid FROM bills WHERE bill_id = ?',
+          [this.selectedBillId]
+        );
+        if (billResult.success && billResult.data && billResult.data.length > 0) {
+          const bill = billResult.data[0];
+          const currentPaid = bill.amount_paid || 0;
+          const totalAmount = bill.total_amount || 0;
+          const newPaid = Math.min(currentPaid + this.paymentAmount, totalAmount);
+
+          await this.db.run(
+            'UPDATE bills SET amount_paid = ? WHERE bill_id = ?',
+            [newPaid, this.selectedBillId]
+          );
+        }
+      } else {
+        // Distribute payment across unpaid bills, oldest first (FIFO)
+        let remaining = this.paymentAmount;
+
+        for (const bill of this.unpaidBills) {
+          if (remaining <= 0) break;
+          const currentPaid = bill.amount_paid || 0;
+          const totalAmount = bill.total_amount || 0;
+          const outstanding = totalAmount - currentPaid;
+
+          if (outstanding > 0) {
+            const payAmount = Math.min(remaining, outstanding);
+            const newPaid = currentPaid + payAmount;
+            await this.db.run(
+              'UPDATE bills SET amount_paid = ? WHERE bill_id = ?',
+              [newPaid, bill.bill_id]
+            );
+            remaining -= payAmount;
+          }
+        }
+      }
+
+      // Log to customer_ledger for the audit trail / PDF statement.
+      // This is display-only now — it no longer feeds outstanding_balance.
       await this.db.addCustomerLedgerEntry({
         customer_id: this.selectedCustomer.customer_id,
         transaction_date: this.paymentDate,
@@ -213,6 +291,8 @@ export class CustomerLedgerComponent implements OnInit {
         reference_type: 'payment'
       });
 
+      // 🔥 FIX: recompute AFTER bills are updated, since the balance is
+      // now derived from bills.amount_paid vs bills.total_amount
       await this.db.updateCustomerOutstandingBalance(this.selectedCustomer.customer_id);
 
       this.closePaymentForm();
@@ -220,6 +300,7 @@ export class CustomerLedgerComponent implements OnInit {
       
     } catch (error: any) {
       this.errorMessage = 'Failed to record payment: ' + error.message;
+      console.error('Payment error:', error);
     } finally {
       this.isSubmitting = false;
       this.cdr.detectChanges();
@@ -238,7 +319,11 @@ export class CustomerLedgerComponent implements OnInit {
     
     try {
       await this.db.run('DELETE FROM customer_ledger WHERE ledger_id = ?', [this.deletingEntryId]);
-      await this.db.updateCustomerOutstandingBalance(this.selectedCustomer.customer_id);
+      // NOTE: outstanding_balance is derived from `bills`, not from
+      // customer_ledger, so deleting a ledger row only removes it from the
+      // history/PDF statement — it does NOT and should NOT change the real
+      // outstanding balance. To actually reverse a payment, undo it on the
+      // bill itself (in Sales Orders) so bills.amount_paid reflects reality.
       this.showDeleteDialog = false;
       this.deletingEntryId = null;
       await this.loadCustomerDetail(this.selectedCustomer.customer_id);
@@ -257,51 +342,66 @@ export class CustomerLedgerComponent implements OnInit {
   printReport() {
     if (!this.selectedCustomer) return;
     
-    const doc = new jsPDF();
+    const doc = new jsPDF('p', 'mm', 'a4');
     const pw = doc.internal.pageSize.getWidth();
+    const ph = doc.internal.pageSize.getHeight();
     const B: [number, number, number] = [0, 0, 0];
+    const G: [number, number, number] = [120, 120, 120];
     const farmName = this.currentFarm?.farm_name || 'Farm';
     const today = new Date().toISOString().split('T')[0];
+    const margin = 14;
+    const pageWidth = pw - (margin * 2);
     
     let y = 20;
     
-    // ── Header ──────────────────────────────────────────────
+    // ── HEADER ──────────────────────────────────────────────
     doc.setFont('helvetica', 'bold');
-    doc.setFontSize(18);
+    doc.setFontSize(20);
     doc.setTextColor(...B);
     doc.text(farmName.toUpperCase(), pw / 2, y, { align: 'center' });
     y += 8;
     
-    doc.setFontSize(12);
-    doc.text('Customer Ledger Report', pw / 2, y, { align: 'center' });
+    doc.setFontSize(14);
+    doc.setTextColor(...B);
+    doc.text('CUSTOMER LEDGER REPORT', pw / 2, y, { align: 'center' });
     y += 8;
     
     doc.setFont('helvetica', 'normal');
-    doc.setFontSize(10);
-    doc.text(`Report Date: ${today}`, 14, y);
-    doc.text(`Farm ID: ${this.currentFarm?.farm_id || ''}`, pw - 14, y, { align: 'right' });
-    y += 6;
+    doc.setFontSize(9);
+    doc.setTextColor(...G);
+    doc.text(`Report Date: ${today}`, margin, y);
+    doc.text(`Farm ID: ${this.currentFarm?.farm_id || ''}`, pw - margin, y, { align: 'right' });
+    y += 10;
     
-    // ── Customer Info ──────────────────────────────────────
+    // ── DIVIDER ─────────────────────────────────────────────
+    doc.setDrawColor(200, 200, 200);
+    doc.line(margin, y, pw - margin, y);
+    y += 8;
+    
+    // ── CUSTOMER INFO ──────────────────────────────────────
     doc.setFont('helvetica', 'bold');
     doc.setFontSize(11);
-    doc.text(`Customer: ${this.selectedCustomer.customer_name}`, 14, y);
+    doc.setTextColor(...B);
+    doc.text('Customer Details', margin, y);
     y += 6;
     
     doc.setFont('helvetica', 'normal');
-    doc.setFontSize(10);
-    doc.text(`Phone: ${this.selectedCustomer.phone || 'N/A'}`, 14, y);
-    y += 6;
-    doc.text(`Address: ${this.selectedCustomer.address || 'N/A'}`, 14, y);
-    y += 6;
-    doc.text(`Current Balance: Rs. ${this.getCustomerBalance().toLocaleString()}`, 14, y);
+    doc.setFontSize(9);
+    doc.setTextColor(...B);
+    doc.text(`Customer: ${this.selectedCustomer.customer_name}`, margin, y);
+    doc.text(`Phone: ${this.selectedCustomer.phone || 'N/A'}`, margin + 70, y);
+    y += 5;
+    doc.text(`Address: ${this.selectedCustomer.address || 'N/A'}`, margin, y);
+    y += 5;
+    doc.text(`Current Balance: Rs. ${this.getCustomerBalance().toLocaleString()}`, margin, y);
+    y += 10;
+    
+    // ── DIVIDER ─────────────────────────────────────────────
+    doc.setDrawColor(200, 200, 200);
+    doc.line(margin, y, pw - margin, y);
     y += 8;
     
-    doc.setDrawColor(...B);
-    doc.line(14, y, pw - 14, y);
-    y += 6;
-    
-    // ── Table ──────────────────────────────────────────────
+    // ── TABLE ──────────────────────────────────────────────
     const tableData = this.ledgerEntries.map((entry: any) => [
       entry.transaction_date || '',
       entry.description || '—',
@@ -315,46 +415,75 @@ export class CustomerLedgerComponent implements OnInit {
       head: [['Date', 'Description', 'Debit', 'Credit', 'Balance']],
       body: tableData.length > 0 ? tableData : [['No transactions found', '', '', '', '']],
       theme: 'striped',
-      headStyles: { fontStyle: 'bold', fontSize: 9, fillColor: [26, 92, 56], textColor: [255, 255, 255] },
-      bodyStyles: { fontSize: 8 },
-      margin: { left: 14, right: 14 },
+      headStyles: { 
+        fontStyle: 'bold', 
+        fontSize: 8, 
+        fillColor: [26, 92, 56], 
+        textColor: [255, 255, 255],
+        halign: 'center'
+      },
+      bodyStyles: { 
+        fontSize: 8, 
+        textColor: [0, 0, 0],
+        halign: 'center'
+      },
+      alternateRowStyles: {
+        fillColor: [245, 245, 245]
+      },
+      margin: { left: margin, right: margin },
       columnStyles: {
-        0: { cellWidth: 30 },
+        0: { cellWidth: 25 },
         1: { cellWidth: 60 },
         2: { cellWidth: 35, halign: 'right' },
         3: { cellWidth: 35, halign: 'right' },
         4: { cellWidth: 40, halign: 'right' }
+      },
+      tableWidth: pageWidth,
+      styles: {
+        overflow: 'linebreak',
+        cellPadding: 4
+      },
+      didDrawPage: (data: any) => {
+        const pageInfo = (doc.internal as any).getCurrentPageInfo?.() || { pageNumber: doc.getNumberOfPages() };
+        const pageNumber = pageInfo.pageNumber;
+        const totalPages = doc.getNumberOfPages();
+        doc.setFontSize(7);
+        doc.setTextColor(...G);
+        doc.text(`Page ${pageNumber} of ${totalPages}`, pw / 2, ph - 8, { align: 'center' });
       }
     });
     
-    const finalY = (doc as any).lastAutoTable.finalY + 6;
+    const finalY = (doc as any).lastAutoTable.finalY + 8;
     
-    // ── Summary ─────────────────────────────────────────────
-    doc.setDrawColor(...B);
-    doc.line(14, finalY, pw - 14, finalY);
-    y = finalY + 6;
+    // ── SUMMARY ─────────────────────────────────────────────
+    if (finalY < ph - 40) {
+      doc.setDrawColor(200, 200, 200);
+      doc.line(margin, finalY, pw - margin, finalY);
+      y = finalY + 8;
+      
+      doc.setFont('helvetica', 'bold');
+      doc.setFontSize(10);
+      doc.setTextColor(...B);
+      doc.text('SUMMARY', margin, y);
+      y += 6;
+      
+      doc.setFont('helvetica', 'normal');
+      doc.setFontSize(9);
+      doc.text(`Total Debit (Sales):    Rs. ${this.getTotalDebit().toLocaleString()}`, margin + 5, y);
+      y += 5;
+      doc.text(`Total Credit (Payments): Rs. ${this.getTotalCredit().toLocaleString()}`, margin + 5, y);
+      y += 5;
+      doc.text(`Current Balance:         Rs. ${this.getCustomerBalance().toLocaleString()}`, margin + 5, y);
+      y += 10;
+    }
     
-    doc.setFont('helvetica', 'bold');
-    doc.setFontSize(10);
-    doc.text('SUMMARY', 14, y);
-    y += 6;
+    // ── FOOTER ──────────────────────────────────────────────
+    doc.setFontSize(7);
+    doc.setTextColor(...G);
+    const footer = 'Generated by: www.devinfantary.com  |  Contact: 0302 6938217';
+    doc.text(footer, pw / 2, ph - 4, { align: 'center' });
     
-    doc.setFont('helvetica', 'normal');
-    doc.setFontSize(9);
-    doc.text(`Total Debit (Sales): Rs. ${this.getTotalDebit().toLocaleString()}`, 20, y);
-    y += 5;
-    doc.text(`Total Credit (Payments): Rs. ${this.getTotalCredit().toLocaleString()}`, 20, y);
-    y += 5;
-    doc.text(`Current Balance: Rs. ${this.getCustomerBalance().toLocaleString()}`, 20, y);
-    y += 8;
-    
-    // ── Footer ──────────────────────────────────────────────
-    doc.setFontSize(7.5);
-    doc.setTextColor(120, 120, 120);
-    const footer = 'Software By: www.devinfantary.com  |  Contact: 0302 6938217';
-    doc.text(footer, pw / 2, 285, { align: 'center' });
-    
-    // ── Save ────────────────────────────────────────────────
+    // ── SAVE ────────────────────────────────────────────────
     doc.save(`Customer_Ledger_${this.selectedCustomer.customer_name}_${today}.pdf`);
   }
 }

@@ -60,12 +60,10 @@ export class BankLedgerComponent implements OnInit {
     this.currentFarm = this.authService.getCurrentFarm();
     this.transactionDate = new Date().toISOString().split('T')[0];
     
-    // 🔥 FIX: Load customers first, then banks
     this.loadCustomers().then(() => {
       this.loadBanks();
     });
     
-    // 🔥 Check if customerId is passed from sales order
     this.route.queryParams.subscribe(params => {
       const customerId = params['customerId'];
       if (customerId) {
@@ -102,7 +100,6 @@ export class BankLedgerComponent implements OnInit {
       const result = await this.db.getBankAccounts(this.currentFarm.farm_id);
       if (result.success) {
         this.bankAccounts = result.data || [];
-        // Enrich with customer names
         for (const bank of this.bankAccounts) {
           const customer = this.customers.find(c => c.customer_id === bank.customer_id);
           bank.customer_name = customer ? customer.customer_name : '—';
@@ -241,7 +238,6 @@ export class BankLedgerComponent implements OnInit {
           account_holder: this.bankForm.account_holder
         });
       } else {
-        // 🔥 Add bank account with customer_id
         const addResult = await this.db.addBankAccount({
           farm_id: this.currentFarm.farm_id,
           customer_id: this.bankForm.customer_id,
@@ -251,7 +247,6 @@ export class BankLedgerComponent implements OnInit {
           opening_balance: this.bankForm.opening_balance || 0
         });
 
-        // 🔥 Link customer to bank using the returned bank_id
         if (addResult && addResult.lastId) {
           await this.db.linkCustomerToBank(this.bankForm.customer_id, addResult.lastId);
         }
@@ -260,10 +255,6 @@ export class BankLedgerComponent implements OnInit {
       this.closeBankForm();
       await this.loadBanks();
       
-      // If we created a new bank and came from sales order, refresh customer bank status
-      if (this.bankForm.customer_id) {
-        // Refresh customer bank data
-      }
     } catch (error: any) {
       this.errorMessage = 'Failed to save bank: ' + error.message;
       console.error('Error saving bank:', error);
@@ -361,50 +352,68 @@ export class BankLedgerComponent implements OnInit {
   printReport() {
     if (!this.selectedBank) return;
     
-    const doc = new jsPDF();
+    const doc = new jsPDF('p', 'mm', 'a4');
     const pw = doc.internal.pageSize.getWidth();
+    const ph = doc.internal.pageSize.getHeight();
     const B: [number, number, number] = [0, 0, 0];
+    const G: [number, number, number] = [120, 120, 120];
+    const W: [number, number, number] = [255, 255, 255];
     const farmName = this.currentFarm?.farm_name || 'Farm';
     const today = new Date().toISOString().split('T')[0];
+    const margin = 14;
+    const pageWidth = pw - (margin * 2);
     
     let y = 20;
     
+    // ── HEADER ──────────────────────────────────────────────
     doc.setFont('helvetica', 'bold');
-    doc.setFontSize(18);
+    doc.setFontSize(20);
     doc.setTextColor(...B);
     doc.text(farmName.toUpperCase(), pw / 2, y, { align: 'center' });
     y += 8;
     
-    doc.setFontSize(12);
-    doc.text('Bank Ledger Report', pw / 2, y, { align: 'center' });
+    doc.setFontSize(14);
+    doc.setTextColor(...B);
+    doc.text('BANK LEDGER REPORT', pw / 2, y, { align: 'center' });
     y += 8;
     
     doc.setFont('helvetica', 'normal');
-    doc.setFontSize(10);
-    doc.text(`Report Date: ${today}`, 14, y);
-    doc.text(`Farm ID: ${this.currentFarm?.farm_id || ''}`, pw - 14, y, { align: 'right' });
-    y += 6;
+    doc.setFontSize(9);
+    doc.setTextColor(...G);
+    doc.text(`Report Date: ${today}`, margin, y);
+    doc.text(`Farm ID: ${this.currentFarm?.farm_id || ''}`, pw - margin, y, { align: 'right' });
+    y += 10;
     
+    // ── DIVIDER ─────────────────────────────────────────────
+    doc.setDrawColor(200, 200, 200);
+    doc.line(margin, y, pw - margin, y);
+    y += 8;
+    
+    // ── BANK INFO ──────────────────────────────────────────
     doc.setFont('helvetica', 'bold');
     doc.setFontSize(11);
-    doc.text(`Bank: ${this.selectedBank.bank_name}`, 14, y);
+    doc.setTextColor(...B);
+    doc.text('Bank Details', margin, y);
     y += 6;
     
     doc.setFont('helvetica', 'normal');
-    doc.setFontSize(10);
-    doc.text(`Customer: ${this.selectedBank.customer_name || 'N/A'}`, 14, y);
-    y += 6;
-    doc.text(`Account #: ${this.selectedBank.account_number || 'N/A'}`, 14, y);
-    y += 6;
-    doc.text(`Account Holder: ${this.selectedBank.account_holder || 'N/A'}`, 14, y);
-    y += 6;
-    doc.text(`Current Balance: Rs. ${this.getBankBalance().toLocaleString()}`, 14, y);
+    doc.setFontSize(9);
+    doc.setTextColor(...B);
+    doc.text(`Bank: ${this.selectedBank.bank_name}`, margin, y);
+    doc.text(`Customer: ${this.selectedBank.customer_name || 'N/A'}`, margin + 70, y);
+    y += 5;
+    doc.text(`Account #: ${this.selectedBank.account_number || 'N/A'}`, margin, y);
+    doc.text(`Account Holder: ${this.selectedBank.account_holder || 'N/A'}`, margin + 70, y);
+    y += 5;
+    doc.text(`Current Balance: Rs. ${this.getBankBalance().toLocaleString()}`, margin, y);
+    y += 10;
+    
+    // ── DIVIDER ─────────────────────────────────────────────
+    doc.setDrawColor(200, 200, 200);
+    doc.line(margin, y, pw - margin, y);
     y += 8;
     
-    doc.setDrawColor(...B);
-    doc.line(14, y, pw - 14, y);
-    y += 6;
-    
+    // ── TABLE ──────────────────────────────────────────────
     const tableData = this.ledgerEntries.map((entry: any) => [
       entry.transaction_date || '',
       entry.description || '—',
@@ -418,43 +427,75 @@ export class BankLedgerComponent implements OnInit {
       head: [['Date', 'Description', 'Deposit', 'Withdrawal', 'Balance']],
       body: tableData.length > 0 ? tableData : [['No transactions found', '', '', '', '']],
       theme: 'striped',
-      headStyles: { fontStyle: 'bold', fontSize: 9, fillColor: [249, 168, 37], textColor: [0, 0, 0] },
-      bodyStyles: { fontSize: 8 },
-      margin: { left: 14, right: 14 },
+      headStyles: { 
+        fontStyle: 'bold', 
+        fontSize: 8, 
+        fillColor: [13, 71, 161], 
+        textColor: [255, 255, 255],
+        halign: 'center'
+      },
+      bodyStyles: { 
+        fontSize: 8, 
+        textColor: [0, 0, 0],
+        halign: 'center'
+      },
+      alternateRowStyles: {
+        fillColor: [245, 245, 245]
+      },
+      margin: { left: margin, right: margin },
       columnStyles: {
-        0: { cellWidth: 30 },
+        0: { cellWidth: 25 },
         1: { cellWidth: 60 },
         2: { cellWidth: 35, halign: 'right' },
         3: { cellWidth: 35, halign: 'right' },
         4: { cellWidth: 40, halign: 'right' }
+      },
+      tableWidth: pageWidth,
+      styles: {
+        overflow: 'linebreak',
+        cellPadding: 4
+      },
+      didDrawPage: (data: any) => {
+        // Add page number
+        const pageNumber = (doc as any).internal.getCurrentPageInfo().pageNumber;
+        const totalPages = (doc as any).internal.getNumberOfPages();
+        doc.setFontSize(7);
+        doc.setTextColor(...G);
+        doc.text(`Page ${pageNumber} of ${totalPages}`, pw / 2, ph - 8, { align: 'center' });
       }
     });
     
-    const finalY = (doc as any).lastAutoTable.finalY + 6;
+    const finalY = (doc as any).lastAutoTable.finalY + 8;
     
-    doc.setDrawColor(...B);
-    doc.line(14, finalY, pw - 14, finalY);
-    y = finalY + 6;
+    // ── SUMMARY ─────────────────────────────────────────────
+    if (finalY < ph - 40) {
+      doc.setDrawColor(200, 200, 200);
+      doc.line(margin, finalY, pw - margin, finalY);
+      y = finalY + 8;
+      
+      doc.setFont('helvetica', 'bold');
+      doc.setFontSize(10);
+      doc.setTextColor(...B);
+      doc.text('SUMMARY', margin, y);
+      y += 6;
+      
+      doc.setFont('helvetica', 'normal');
+      doc.setFontSize(9);
+      doc.text(`Total Deposits:     Rs. ${this.getTotalDeposits().toLocaleString()}`, margin + 5, y);
+      y += 5;
+      doc.text(`Total Withdrawals:  Rs. ${this.getTotalWithdrawals().toLocaleString()}`, margin + 5, y);
+      y += 5;
+      doc.text(`Current Balance:    Rs. ${this.getBankBalance().toLocaleString()}`, margin + 5, y);
+      y += 10;
+    }
     
-    doc.setFont('helvetica', 'bold');
-    doc.setFontSize(10);
-    doc.text('SUMMARY', 14, y);
-    y += 6;
+    // ── FOOTER ──────────────────────────────────────────────
+    doc.setFontSize(7);
+    doc.setTextColor(...G);
+    const footer = 'Generated by: www.devinfantary.com  |  Contact: 0302 6938217';
+    doc.text(footer, pw / 2, ph - 4, { align: 'center' });
     
-    doc.setFont('helvetica', 'normal');
-    doc.setFontSize(9);
-    doc.text(`Total Deposits: Rs. ${this.getTotalDeposits().toLocaleString()}`, 20, y);
-    y += 5;
-    doc.text(`Total Withdrawals: Rs. ${this.getTotalWithdrawals().toLocaleString()}`, 20, y);
-    y += 5;
-    doc.text(`Current Balance: Rs. ${this.getBankBalance().toLocaleString()}`, 20, y);
-    y += 8;
-    
-    doc.setFontSize(7.5);
-    doc.setTextColor(120, 120, 120);
-    const footer = 'Software By: www.devinfantary.com  |  Contact: 0302 6938217';
-    doc.text(footer, pw / 2, 285, { align: 'center' });
-    
+    // ── SAVE ────────────────────────────────────────────────
     doc.save(`Bank_Ledger_${this.selectedBank.bank_name}_${today}.pdf`);
   }
 }

@@ -43,9 +43,11 @@
         <tr *ngFor="let row of pendingRows; let i = index" class="pending-row">
           <td class="row-plus-cell"><button class="row-plus-btn" (click)="addRowAfter(i)">+</button></td>
           <td>
+            <!-- 🔥 FIX: [ngValue] instead of [value] so product_id stays a NUMBER
+                 and matches products[].product_id in onProductSelect() -->
             <select class="inline-input" [(ngModel)]="row.product_id" (change)="onProductSelect(row)">
               <option [ngValue]="null">Select Product</option>
-              <option *ngFor="let p of products" [value]="p.product_id">
+              <option *ngFor="let p of products" [ngValue]="p.product_id">
                 {{ p.product_name }} (Rs. {{ p.cost_price || 0 }})
               </option>
             </select>
@@ -53,17 +55,16 @@
           <td>
             <select class="inline-input" [(ngModel)]="row.supplier_id">
               <option [ngValue]="null">—</option>
-              <option *ngFor="let s of suppliers" [value]="s.supplier_id">{{ s.supplier_name }}</option>
+              <option *ngFor="let s of suppliers" [ngValue]="s.supplier_id">{{ s.supplier_name }}</option>
             </select>
           </td>
           <td><input class="inline-input" type="date" [(ngModel)]="row.date"/></td>
           <td><input class="inline-input" type="number" [(ngModel)]="row.quantity" placeholder="0" min="0"/></td>
           <td>
-            <!-- 🔥 FIX: Using [(ngModel)] with disabled input -->
-            <input 
-              class="inline-input cost-display" 
-              type="text" 
-              [(ngModel)]="row.cost_price" 
+            <input
+              class="inline-input cost-display"
+              type="text"
+              [(ngModel)]="row.cost_price"
               disabled
               placeholder="—"
             />
@@ -106,23 +107,25 @@
           <ng-container *ngIf="editingId === o.purchase_id">
             <td></td>
             <td>
-              <select class="inline-input" [(ngModel)]="editForm.product_id">
-                <option *ngFor="let p of products" [value]="p.product_id">{{ p.product_name }}</option>
+              <!-- 🔥 FIX: [ngValue] here too, and now wired to onProductSelect
+                   so cost_price updates if the user changes the product while editing -->
+              <select class="inline-input" [(ngModel)]="editForm.product_id" (change)="onProductSelect(editForm)">
+                <option *ngFor="let p of products" [ngValue]="p.product_id">{{ p.product_name }}</option>
               </select>
             </td>
             <td>
               <select class="inline-input" [(ngModel)]="editForm.supplier_id">
                 <option [ngValue]="null">—</option>
-                <option *ngFor="let s of suppliers" [value]="s.supplier_id">{{ s.supplier_name }}</option>
+                <option *ngFor="let s of suppliers" [ngValue]="s.supplier_id">{{ s.supplier_name }}</option>
               </select>
             </td>
             <td><input class="inline-input" type="date" [(ngModel)]="editForm.date"/></td>
             <td><input class="inline-input" type="number" [(ngModel)]="editForm.quantity" min="0"/></td>
             <td>
-              <input 
-                class="inline-input cost-display" 
-                type="text" 
-                [(ngModel)]="editForm.cost_price" 
+              <input
+                class="inline-input cost-display"
+                type="text"
+                [(ngModel)]="editForm.cost_price"
                 disabled
               />
             </td>
@@ -145,12 +148,12 @@
     <app-pagination [currentPage]="currentPage" [totalItems]="orders.length" [pageSize]="pageSize" (pageChange)="currentPage = $event"></app-pagination>
   </div>
 </div>
-<app-confirm-dialog 
-  *ngIf="showDeleteDialog" 
-  title="Delete Order" 
-  message="Are you sure?" 
-  confirmText="Delete" 
-  cancelText="Cancel" 
-  type="danger" 
-  (confirmed)="onDeleteConfirmed()" 
+<app-confirm-dialog
+  *ngIf="showDeleteDialog"
+  title="Delete Order"
+  message="Are you sure?"
+  confirmText="Delete"
+  cancelText="Cancel"
+  type="danger"
+  (confirmed)="onDeleteConfirmed()"
   (cancelled)="onDeleteCancelled()"/>

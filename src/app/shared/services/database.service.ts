@@ -305,6 +305,12 @@ export class DatabaseService {
   }
 
   // ── CUSTOMER LEDGER METHODS ──────────────────────────────
+  // 🔥 IMPORTANT: outstanding_balance is now derived from the `bills` table
+  // (SUM of total_amount - amount_paid), NOT from customer_ledger.
+  // customer_ledger stays purely as a transaction history / audit log for
+  // display and PDF statements — it no longer drives the actual balance
+  // shown anywhere in the app. This is what keeps Sales Orders, the
+  // Distribution Report, and Customer Ledger all showing the same numbers.
 
   async getCustomerLedger(customerId: number): Promise<any> {
     return this.get(
@@ -352,20 +358,24 @@ export class DatabaseService {
     );
   }
 
+  // 🔥 FIX: compute outstanding balance from `bills`, the table that's
+  // actually maintained carefully (stock/batches tied to it). This can
+  // no longer drift from what Sales Orders / Reports show.
   async updateCustomerOutstandingBalance(customerId: number): Promise<any> {
     return this.run(
       `UPDATE customers SET outstanding_balance = 
-        (SELECT COALESCE(SUM(debit - credit), 0) FROM customer_ledger WHERE customer_id = ?)
+        (SELECT COALESCE(SUM(total_amount - amount_paid), 0) FROM bills WHERE customer_id = ?)
        WHERE customer_id = ?`,
       [customerId, customerId]
     );
   }
 
+  // 🔥 FIX: same change here — list view balance now matches everywhere else
   async getAllCustomersWithBalance(farmId: number): Promise<any> {
     return this.get(
       `SELECT 
         c.*,
-        (SELECT COALESCE(SUM(debit - credit), 0) FROM customer_ledger WHERE customer_id = c.customer_id) as outstanding_balance
+        (SELECT COALESCE(SUM(total_amount - amount_paid), 0) FROM bills WHERE customer_id = c.customer_id) as outstanding_balance
        FROM customers c
        WHERE c.farm_id = ?
        ORDER BY c.customer_name ASC`,
@@ -459,44 +469,46 @@ export class DatabaseService {
     );
     return result.success && result.data && result.data.length > 0 ? result.data[0] : null;
   }
-// 🔥 FIXED: addBankAccount with opening balance ledger entry
-async addBankAccount(account: {
-  farm_id: number;
-  customer_id: number;
-  bank_name: string;
-  account_number?: string;
-  account_holder?: string;
-  opening_balance?: number;
-}): Promise<any> {
-  const { farm_id, customer_id, bank_name, account_number, account_holder, opening_balance = 0 } = account;
-  
-  const result = await this.run(
-    `INSERT INTO bank_accounts 
-     (farm_id, customer_id, bank_name, account_number, account_holder, opening_balance, current_balance)
-     VALUES (?, ?, ?, ?, ?, ?, ?)`,
-    [farm_id, customer_id, bank_name, account_number || null, account_holder || null, opening_balance, opening_balance]
-  );
-  
-  // 🔥 FIX: Add opening balance to bank_ledger
-  if (result.success && result.lastId && opening_balance > 0) {
-    await this.addBankLedgerEntry({
-      bank_id: result.lastId,
-      transaction_date: new Date().toISOString().split('T')[0],
-      description: 'Opening Balance',
-      debit: opening_balance,
-      credit: 0,
-      reference_type: 'opening',
-      reference_id: null
-    });
+
+  // 🔥 FIXED: addBankAccount with opening balance ledger entry
+  async addBankAccount(account: {
+    farm_id: number;
+    customer_id: number;
+    bank_name: string;
+    account_number?: string;
+    account_holder?: string;
+    opening_balance?: number;
+  }): Promise<any> {
+    const { farm_id, customer_id, bank_name, account_number, account_holder, opening_balance = 0 } = account;
+    
+    const result = await this.run(
+      `INSERT INTO bank_accounts 
+       (farm_id, customer_id, bank_name, account_number, account_holder, opening_balance, current_balance)
+       VALUES (?, ?, ?, ?, ?, ?, ?)`,
+      [farm_id, customer_id, bank_name, account_number || null, account_holder || null, opening_balance, opening_balance]
+    );
+    
+    // 🔥 FIX: Add opening balance to bank_ledger
+    if (result.success && result.lastId && opening_balance > 0) {
+      await this.addBankLedgerEntry({
+        bank_id: result.lastId,
+        transaction_date: new Date().toISOString().split('T')[0],
+        description: 'Opening Balance',
+        debit: opening_balance,
+        credit: 0,
+        reference_type: 'opening',
+        reference_id: null
+      });
+    }
+    
+    // Link customer to bank
+    if (result.success && result.lastId) {
+      await this.linkCustomerToBank(customer_id, result.lastId);
+    }
+    
+    return result;
   }
-  
-  // Link customer to bank
-  if (result.success && result.lastId) {
-    await this.linkCustomerToBank(customer_id, result.lastId);
-  }
-  
-  return result;
-}
+
   async updateBankAccount(bankId: number, data: any): Promise<any> {
     const fields: string[] = [];
     const values: any[] = [];

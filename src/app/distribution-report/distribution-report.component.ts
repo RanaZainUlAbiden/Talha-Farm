@@ -17,14 +17,14 @@ export class DistributionReportComponent implements OnInit {
   products: any[] = [];
   purchases: any[] = [];
   sales: any[] = [];
+  customers: any[] = [];
+  customerBalances: Map<number, number> = new Map();
   isGenerating = false;
 
   // ── CALCULATIONS ──────────────────────────────────────────
 
-  // 🔥 FIX: Calculate inventory value from BATCHES
   get totalInventoryValue(): number {
     return this.products.reduce((sum: number, p: any) => {
-      // Use calculated_stock from batches (loaded from database)
       const stock = p.calculated_stock || 0;
       const cost = p.cost_price || 0;
       return sum + (stock * cost);
@@ -44,7 +44,7 @@ export class DistributionReportComponent implements OnInit {
   }
 
   get totalUnpaidSales(): number {
-    return this.totalSales - this.totalPaidSales;
+    return this.customers.reduce((sum: number, c: any) => sum + (c.outstanding_balance || 0), 0);
   }
 
   get totalProducts(): number {
@@ -73,17 +73,14 @@ export class DistributionReportComponent implements OnInit {
   // ── LOAD DATA ─────────────────────────────────────────────
 
   async loadData() {
-    // 🔥 FIX: Load products with batch data
     const pr = await this.db.get('SELECT * FROM products WHERE farm_id=?', [this.currentFarm.farm_id]);
     this.products = pr.success ? pr.data : [];
 
-    // 🔥 FIX: Calculate stock from batches for each product
     for (const product of this.products) {
       const totalStock = await this.db.getTotalStock(product.product_id);
       product.calculated_stock = totalStock;
     }
 
-    // Load purchases with product and supplier names
     const pu = await this.db.get(
       `SELECT po.*, p.product_name, s.supplier_name 
        FROM purchase_orders po 
@@ -95,21 +92,53 @@ export class DistributionReportComponent implements OnInit {
     );
     this.purchases = pu.success ? pu.data : [];
 
-    // Load sales bills
     const sa = await this.db.get(
       `SELECT * FROM bills WHERE farm_id = ? ORDER BY bill_date DESC, bill_id DESC`,
       [this.currentFarm.farm_id]
     );
     this.sales = sa.success ? sa.data : [];
 
+    // outstanding_balance here is now bills-derived (see DatabaseService),
+    // used for the customer-level summary total — NOT for per-bill status.
+    const customersResult = await this.db.getAllCustomersWithBalance(this.currentFarm.farm_id);
+    this.customers = customersResult.success ? customersResult.data : [];
+    
+    this.customerBalances = new Map();
+    for (const customer of this.customers) {
+      this.customerBalances.set(customer.customer_id, customer.outstanding_balance || 0);
+    }
+
+    // 🔥 FIX: a bill's paid status is a fact about that bill alone — it is
+    // NEVER inferred from the customer's overall balance. The old logic
+    // ("if customer balance is 0, mark ALL of their bills paid") was wrong:
+    // a customer can have one unpaid bill and one overpaid bill netting to
+    // zero overall, which would have wrongly marked both bills "Paid".
+    // This is also what keeps this report in agreement with Sales Orders,
+    // since both now read status directly off amount_paid vs total_amount.
+    for (const bill of this.sales) {
+      bill.is_paid = (bill.amount_paid || 0) >= (bill.total_amount || 0);
+    }
+
     console.log('✅ Distribution Report Data:', {
       products: this.products.length,
-      totalInventoryValue: this.totalInventoryValue,
+      inventoryValue: this.totalInventoryValue,
       purchases: this.purchases.length,
-      sales: this.sales.length
+      sales: this.sales.length,
+      unpaidSales: this.totalUnpaidSales,
+      customerBalances: Array.from(this.customerBalances.entries())
     });
 
     this.cdr.detectChanges();
+  }
+
+  // ── CHECK IF BILL IS PAID ────────────────────────────────
+  // 🔥 FIX: simplified to a single, unconditional rule — no customer-balance
+  // override. This matches exactly what sales-orders.component.ts does.
+  isBillPaid(bill: any): boolean {
+    if (bill.is_paid !== undefined) {
+      return bill.is_paid;
+    }
+    return (bill.amount_paid || 0) >= (bill.total_amount || 0);
   }
 
   // ── PROFESSIONAL PDF GENERATION ──────────────────────────
@@ -117,12 +146,13 @@ export class DistributionReportComponent implements OnInit {
   async generatePDF() {
     this.isGenerating = true;
     try {
-      const doc = new jsPDF();
+      const doc = new jsPDF('p', 'mm', 'a4');
       const pw = doc.internal.pageSize.getWidth();
       const ph = doc.internal.pageSize.getHeight();
       const farmName = this.currentFarm?.farm_name || 'Poultry Farm';
       const today = new Date().toLocaleDateString('en-PK');
       const footer = 'Software By: www.devinfantary.com  |  Contact: 0302 6938217';
+      const margin = 14;
       
       const formatDate = (d: any) => {
         if (!d) return '—';
@@ -137,14 +167,13 @@ export class DistributionReportComponent implements OnInit {
 
       // ── COVER PAGE ─────────────────────────────────────────
 
-      // Logo
       try {
         const id = await this.loadImageAsBase64('report-boiler.jpeg');
         const ip = doc.getImageProperties(id);
         const lh = 35;
         const lw = (ip.width * lh) / ip.height;
-        const tx = 14 + lw + 10;
-        doc.addImage(id, 'JPEG', 14, y, lw, lh);
+        const tx = margin + lw + 10;
+        doc.addImage(id, 'JPEG', margin, y, lw, lh);
         doc.setFont('helvetica', 'bold');
         doc.setFontSize(22);
         doc.setTextColor(...B);
@@ -173,7 +202,7 @@ export class DistributionReportComponent implements OnInit {
 
       doc.setDrawColor(...B);
       doc.setLineWidth(0.5);
-      doc.line(14, y, pw - 14, y);
+      doc.line(margin, y, pw - margin, y);
       y += 10;
 
       // ── SUMMARY SECTION ────────────────────────────────────
@@ -181,12 +210,12 @@ export class DistributionReportComponent implements OnInit {
       doc.setFont('helvetica', 'bold');
       doc.setFontSize(14);
       doc.setTextColor(...B);
-      doc.text('SUMMARY', 14, y);
+      doc.text('SUMMARY', margin, y);
       y += 8;
 
       const summaryData = [
         ['Total Products', String(this.totalProducts)],
-        ['Total Purchases', String(this.totalPurchasesCount)],
+        ['Total Purchase Orders', String(this.totalPurchasesCount)],
         ['Total Sales Bills', String(this.totalSalesCount)],
         ['Inventory Value', 'Rs. ' + this.totalInventoryValue.toLocaleString()],
         ['Total Purchases Amount', 'Rs. ' + this.totalPurchases.toLocaleString()],
@@ -199,9 +228,9 @@ export class DistributionReportComponent implements OnInit {
       doc.setFontSize(10);
       for (const [label, value] of summaryData) {
         doc.setTextColor(...G);
-        doc.text(label + ':', 20, y);
+        doc.text(label + ':', margin + 6, y);
         doc.setTextColor(...B);
-        doc.text(value, 90, y);
+        doc.text(value, margin + 80, y);
         y += 6;
       }
 
@@ -228,7 +257,7 @@ export class DistributionReportComponent implements OnInit {
           theme: 'striped',
           headStyles: { fontStyle: 'bold', fontSize: 8, fillColor: [26, 92, 56], textColor: [255, 255, 255] },
           bodyStyles: { fontSize: 8, textColor: B },
-          margin: { left: 14, right: 14 },
+          margin: { left: margin, right: margin },
           columnStyles: {
             0: { cellWidth: 35 },
             1: { cellWidth: 25 },
@@ -240,12 +269,11 @@ export class DistributionReportComponent implements OnInit {
           }
         });
 
-        // Add inventory summary
         const finalY = (doc as any).lastAutoTable.finalY + 6;
         doc.setFont('helvetica', 'bold');
         doc.setFontSize(9);
         doc.setTextColor(...B);
-        doc.text(`Total Inventory Value: Rs. ${this.totalInventoryValue.toLocaleString()}`, 14, finalY);
+        doc.text(`Total Inventory Value: Rs. ${this.totalInventoryValue.toLocaleString()}`, margin, finalY);
       }
 
       // ── PURCHASES SECTION ──────────────────────────────────
@@ -271,7 +299,7 @@ export class DistributionReportComponent implements OnInit {
           theme: 'striped',
           headStyles: { fontStyle: 'bold', fontSize: 8, fillColor: [26, 92, 56], textColor: [255, 255, 255] },
           bodyStyles: { fontSize: 8, textColor: B },
-          margin: { left: 14, right: 14 },
+          margin: { left: margin, right: margin },
           columnStyles: {
             0: { cellWidth: 25 },
             1: { cellWidth: 30 },
@@ -287,7 +315,7 @@ export class DistributionReportComponent implements OnInit {
         doc.setFont('helvetica', 'bold');
         doc.setFontSize(9);
         doc.setTextColor(...B);
-        doc.text(`Total Purchases: Rs. ${this.totalPurchases.toLocaleString()}`, 14, finalY);
+        doc.text(`Total Purchases: Rs. ${this.totalPurchases.toLocaleString()}`, margin, finalY);
       }
 
       // ── SALES SECTION ──────────────────────────────────────
@@ -296,14 +324,17 @@ export class DistributionReportComponent implements OnInit {
         doc.addPage();
         this.addPageHeader(doc, farmName, today, 'SALES BILLS');
         
-        const salesBody = this.sales.map(s => [
-          formatDate(s.bill_date),
-          s.bill_number || '—',
-          s.customer_name || 'Walk-in',
-          'Rs. ' + (s.total_amount || 0).toLocaleString(),
-          'Rs. ' + (s.amount_paid || 0).toLocaleString(),
-          (s.amount_paid || 0) >= (s.total_amount || 0) ? 'Paid' : 'Unpaid'
-        ]);
+        const salesBody = this.sales.map(s => {
+          const isPaid = this.isBillPaid(s);
+          return [
+            formatDate(s.bill_date),
+            s.bill_number || '—',
+            s.customer_name || 'Walk-in',
+            'Rs. ' + (s.total_amount || 0).toLocaleString(),
+            'Rs. ' + (s.amount_paid || 0).toLocaleString(),
+            isPaid ? '✅ Paid' : '❌ Unpaid'
+          ];
+        });
 
         autoTable(doc, {
           startY: 35,
@@ -312,7 +343,7 @@ export class DistributionReportComponent implements OnInit {
           theme: 'striped',
           headStyles: { fontStyle: 'bold', fontSize: 8, fillColor: [26, 92, 56], textColor: [255, 255, 255] },
           bodyStyles: { fontSize: 8, textColor: B },
-          margin: { left: 14, right: 14 },
+          margin: { left: margin, right: margin },
           columnStyles: {
             0: { cellWidth: 25 },
             1: { cellWidth: 30 },
@@ -327,9 +358,9 @@ export class DistributionReportComponent implements OnInit {
         doc.setFont('helvetica', 'bold');
         doc.setFontSize(9);
         doc.setTextColor(...B);
-        doc.text(`Total Sales: Rs. ${this.totalSales.toLocaleString()}`, 14, finalY);
-        doc.text(`Total Paid: Rs. ${this.totalPaidSales.toLocaleString()}`, 14, finalY + 6);
-        doc.text(`Total Unpaid: Rs. ${this.totalUnpaidSales.toLocaleString()}`, 14, finalY + 12);
+        doc.text(`Total Sales: Rs. ${this.totalSales.toLocaleString()}`, margin, finalY);
+        doc.text(`Total Paid: Rs. ${this.totalPaidSales.toLocaleString()}`, margin, finalY + 6);
+        doc.text(`Total Unpaid: Rs. ${this.totalUnpaidSales.toLocaleString()}`, margin, finalY + 12);
       }
 
       // ── FOOTER ─────────────────────────────────────────────
