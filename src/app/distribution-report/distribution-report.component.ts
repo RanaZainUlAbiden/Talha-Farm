@@ -18,17 +18,16 @@ export class DistributionReportComponent implements OnInit {
   purchases: any[] = [];
   sales: any[] = [];
   customers: any[] = [];
-  customerBalances: Map<number, number> = new Map();
   isGenerating = false;
 
   // ── CALCULATIONS ──────────────────────────────────────────
 
+  /**
+   * 🔥 FIX: Inventory Value = Total Purchases - Total Sales
+   * This is the correct accounting formula
+   */
   get totalInventoryValue(): number {
-    return this.products.reduce((sum: number, p: any) => {
-      const stock = p.calculated_stock || 0;
-      const cost = p.cost_price || 0;
-      return sum + (stock * cost);
-    }, 0);
+    return this.totalPurchases - this.totalSales;
   }
 
   get totalPurchases(): number {
@@ -73,14 +72,11 @@ export class DistributionReportComponent implements OnInit {
   // ── LOAD DATA ─────────────────────────────────────────────
 
   async loadData() {
+    // Load products
     const pr = await this.db.get('SELECT * FROM products WHERE farm_id=?', [this.currentFarm.farm_id]);
     this.products = pr.success ? pr.data : [];
 
-    for (const product of this.products) {
-      const totalStock = await this.db.getTotalStock(product.product_id);
-      product.calculated_stock = totalStock;
-    }
-
+    // Load purchases
     const pu = await this.db.get(
       `SELECT po.*, p.product_name, s.supplier_name 
        FROM purchase_orders po 
@@ -92,48 +88,30 @@ export class DistributionReportComponent implements OnInit {
     );
     this.purchases = pu.success ? pu.data : [];
 
+    // Load sales bills
     const sa = await this.db.get(
       `SELECT * FROM bills WHERE farm_id = ? ORDER BY bill_date DESC, bill_id DESC`,
       [this.currentFarm.farm_id]
     );
     this.sales = sa.success ? sa.data : [];
 
-    // outstanding_balance here is now bills-derived (see DatabaseService),
-    // used for the customer-level summary total — NOT for per-bill status.
+    // Load customers
     const customersResult = await this.db.getAllCustomersWithBalance(this.currentFarm.farm_id);
     this.customers = customersResult.success ? customersResult.data : [];
-    
-    this.customerBalances = new Map();
-    for (const customer of this.customers) {
-      this.customerBalances.set(customer.customer_id, customer.outstanding_balance || 0);
-    }
 
-    // 🔥 FIX: a bill's paid status is a fact about that bill alone — it is
-    // NEVER inferred from the customer's overall balance. The old logic
-    // ("if customer balance is 0, mark ALL of their bills paid") was wrong:
-    // a customer can have one unpaid bill and one overpaid bill netting to
-    // zero overall, which would have wrongly marked both bills "Paid".
-    // This is also what keeps this report in agreement with Sales Orders,
-    // since both now read status directly off amount_paid vs total_amount.
+    // Determine bill paid status
     for (const bill of this.sales) {
       bill.is_paid = (bill.amount_paid || 0) >= (bill.total_amount || 0);
     }
 
-    console.log('✅ Distribution Report Data:', {
-      products: this.products.length,
-      inventoryValue: this.totalInventoryValue,
-      purchases: this.purchases.length,
-      sales: this.sales.length,
-      unpaidSales: this.totalUnpaidSales,
-      customerBalances: Array.from(this.customerBalances.entries())
-    });
+    console.log('📊 Distribution Report Data:');
+    console.log(`Total Purchases: Rs. ${this.totalPurchases.toLocaleString()}`);
+    console.log(`Total Sales: Rs. ${this.totalSales.toLocaleString()}`);
+    console.log(`Inventory Value: Rs. ${this.totalInventoryValue.toLocaleString()}`);
 
     this.cdr.detectChanges();
   }
 
-  // ── CHECK IF BILL IS PAID ────────────────────────────────
-  // 🔥 FIX: simplified to a single, unconditional rule — no customer-balance
-  // override. This matches exactly what sales-orders.component.ts does.
   isBillPaid(bill: any): boolean {
     if (bill.is_paid !== undefined) {
       return bill.is_paid;
@@ -141,7 +119,7 @@ export class DistributionReportComponent implements OnInit {
     return (bill.amount_paid || 0) >= (bill.total_amount || 0);
   }
 
-  // ── PROFESSIONAL PDF GENERATION ──────────────────────────
+  // ── PDF GENERATION ────────────────────────────────────────
 
   async generatePDF() {
     this.isGenerating = true;
@@ -217,9 +195,9 @@ export class DistributionReportComponent implements OnInit {
         ['Total Products', String(this.totalProducts)],
         ['Total Purchase Orders', String(this.totalPurchasesCount)],
         ['Total Sales Bills', String(this.totalSalesCount)],
-        ['Inventory Value', 'Rs. ' + this.totalInventoryValue.toLocaleString()],
-        ['Total Purchases Amount', 'Rs. ' + this.totalPurchases.toLocaleString()],
-        ['Total Sales Amount', 'Rs. ' + this.totalSales.toLocaleString()],
+        ['Inventory Value (Purchases - Sales)', 'Rs. ' + this.totalInventoryValue.toLocaleString()],
+        ['Total Purchases', 'Rs. ' + this.totalPurchases.toLocaleString()],
+        ['Total Sales', 'Rs. ' + this.totalSales.toLocaleString()],
         ['Total Paid Sales', 'Rs. ' + this.totalPaidSales.toLocaleString()],
         ['Total Unpaid Sales', 'Rs. ' + this.totalUnpaidSales.toLocaleString()]
       ];
@@ -234,7 +212,7 @@ export class DistributionReportComponent implements OnInit {
         y += 6;
       }
 
-      // ── INVENTORY SECTION ──────────────────────────────────
+      // ── INVENTORY TABLE ────────────────────────────────────
 
       if (this.products.length > 0) {
         doc.addPage();
@@ -244,10 +222,10 @@ export class DistributionReportComponent implements OnInit {
           p.product_name,
           p.category || '—',
           String(p.unit || '—'),
-          String(p.calculated_stock || 0),
+          String(p.current_stock || 0),
           'Rs. ' + (p.cost_price || 0).toLocaleString(),
           'Rs. ' + (p.selling_price || 0).toLocaleString(),
-          'Rs. ' + ((p.calculated_stock || 0) * (p.cost_price || 0)).toLocaleString()
+          'Rs. ' + ((p.current_stock || 0) * (p.cost_price || 0)).toLocaleString()
         ]);
 
         autoTable(doc, {
@@ -276,7 +254,7 @@ export class DistributionReportComponent implements OnInit {
         doc.text(`Total Inventory Value: Rs. ${this.totalInventoryValue.toLocaleString()}`, margin, finalY);
       }
 
-      // ── PURCHASES SECTION ──────────────────────────────────
+      // ── PURCHASES ──────────────────────────────────────────
 
       if (this.purchases.length > 0) {
         doc.addPage();
@@ -318,7 +296,7 @@ export class DistributionReportComponent implements OnInit {
         doc.text(`Total Purchases: Rs. ${this.totalPurchases.toLocaleString()}`, margin, finalY);
       }
 
-      // ── SALES SECTION ──────────────────────────────────────
+      // ── SALES ──────────────────────────────────────────────
 
       if (this.sales.length > 0) {
         doc.addPage();

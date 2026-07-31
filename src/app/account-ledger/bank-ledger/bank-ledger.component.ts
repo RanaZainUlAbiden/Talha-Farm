@@ -21,8 +21,12 @@ export class BankLedgerComponent implements OnInit {
   bankAccounts: any[] = [];
   selectedBank: any = null;
   ledgerEntries: any[] = [];
+  filteredLedgerEntries: any[] = [];
   isLoading = true;
   errorMessage = '';
+  
+  // ── SEARCH ──────────────────────────────────────────────
+  transactionNumberSearch: string = '';
   
   // Bank form
   showBankForm = false;
@@ -120,6 +124,8 @@ export class BankLedgerComponent implements OnInit {
     this.errorMessage = '';
     this.selectedBank = null;
     this.ledgerEntries = [];
+    this.filteredLedgerEntries = [];
+    this.transactionNumberSearch = '';
     
     try {
       const bank = await this.db.getBankAccount(bankId);
@@ -131,6 +137,7 @@ export class BankLedgerComponent implements OnInit {
         const ledgerResult = await this.db.getBankLedgerWithBalance(bankId);
         if (ledgerResult.success) {
           this.ledgerEntries = ledgerResult.data || [];
+          this.filteredLedgerEntries = [...this.ledgerEntries];
           console.log(`✅ Loaded ${this.ledgerEntries.length} ledger entries for bank ${bankId}`);
         }
       } else {
@@ -153,7 +160,30 @@ export class BankLedgerComponent implements OnInit {
   goBack() {
     this.selectedBank = null;
     this.ledgerEntries = [];
+    this.filteredLedgerEntries = [];
+    this.transactionNumberSearch = '';
     this.loadBanks();
+  }
+
+  // ── SEARCH / FILTER ──────────────────────────────────────
+
+  filterLedger() {
+    const term = this.transactionNumberSearch.trim().toLowerCase();
+    if (!term) {
+      this.filteredLedgerEntries = [...this.ledgerEntries];
+      return;
+    }
+    this.filteredLedgerEntries = this.ledgerEntries.filter(e =>
+      (e.transaction_number && e.transaction_number.toLowerCase().includes(term)) ||
+      (e.description && e.description.toLowerCase().includes(term))
+    );
+    this.cdr.detectChanges();
+  }
+
+  clearTransactionSearch() {
+    this.transactionNumberSearch = '';
+    this.filteredLedgerEntries = [...this.ledgerEntries];
+    this.cdr.detectChanges();
   }
 
   // ── CALCULATION METHODS ──────────────────────────────────
@@ -264,6 +294,28 @@ export class BankLedgerComponent implements OnInit {
     }
   }
 
+  // ── GENERATE TRANSACTION NUMBER ──────────────────────────
+
+  async generateTransactionNumber(bankId: number, type: 'deposit' | 'withdrawal'): Promise<string> {
+    const prefix = type === 'deposit' ? 'DEP' : 'WD';
+    const result = await this.db.get(
+      `SELECT transaction_number FROM bank_ledger 
+       WHERE bank_id = ? AND transaction_number LIKE ? 
+       ORDER BY ledger_id DESC LIMIT 1`,
+      [bankId, prefix + '-%']
+    );
+    let lastNumber = 0;
+    if (result.success && result.data && result.data.length > 0) {
+      const last = result.data[0].transaction_number;
+      const parts = last.split('-');
+      if (parts.length === 2) {
+        lastNumber = parseInt(parts[1], 10) || 0;
+      }
+    }
+    const nextNumber = lastNumber + 1;
+    return `${prefix}-${String(nextNumber).padStart(4, '0')}`;
+  }
+
   // ── Transactions ──────────────────────────────────────────
 
   openTransactionForm(type: 'deposit' | 'withdrawal') {
@@ -293,6 +345,13 @@ export class BankLedgerComponent implements OnInit {
 
     try {
       const isDeposit = this.transactionType === 'deposit';
+      
+      // 🔥 Generate transaction number
+      const transactionNumber = await this.generateTransactionNumber(
+        this.selectedBank.bank_id,
+        this.transactionType
+      );
+
       await this.db.addBankLedgerEntry({
         bank_id: this.selectedBank.bank_id,
         transaction_date: this.transactionDate,
@@ -300,6 +359,7 @@ export class BankLedgerComponent implements OnInit {
         debit: isDeposit ? this.transactionAmount : 0,
         credit: isDeposit ? 0 : this.transactionAmount,
         reference_type: this.transactionType,
+        transaction_number: transactionNumber  // 🔥 Pass the generated number
       });
 
       this.closeTransactionForm();
@@ -357,7 +417,6 @@ export class BankLedgerComponent implements OnInit {
     const ph = doc.internal.pageSize.getHeight();
     const B: [number, number, number] = [0, 0, 0];
     const G: [number, number, number] = [120, 120, 120];
-    const W: [number, number, number] = [255, 255, 255];
     const farmName = this.currentFarm?.farm_name || 'Farm';
     const today = new Date().toISOString().split('T')[0];
     const margin = 14;
@@ -416,6 +475,7 @@ export class BankLedgerComponent implements OnInit {
     // ── TABLE ──────────────────────────────────────────────
     const tableData = this.ledgerEntries.map((entry: any) => [
       entry.transaction_date || '',
+      entry.transaction_number || '—',
       entry.description || '—',
       entry.debit > 0 ? 'Rs. ' + entry.debit.toLocaleString() : '—',
       entry.credit > 0 ? 'Rs. ' + entry.credit.toLocaleString() : '—',
@@ -424,8 +484,8 @@ export class BankLedgerComponent implements OnInit {
     
     autoTable(doc, {
       startY: y,
-      head: [['Date', 'Description', 'Deposit', 'Withdrawal', 'Balance']],
-      body: tableData.length > 0 ? tableData : [['No transactions found', '', '', '', '']],
+      head: [['Date', 'Transaction #', 'Description', 'Deposit', 'Withdrawal', 'Balance']],
+      body: tableData.length > 0 ? tableData : [['No transactions found', '', '', '', '', '']],
       theme: 'striped',
       headStyles: { 
         fontStyle: 'bold', 
@@ -444,19 +504,19 @@ export class BankLedgerComponent implements OnInit {
       },
       margin: { left: margin, right: margin },
       columnStyles: {
-        0: { cellWidth: 25 },
-        1: { cellWidth: 60 },
-        2: { cellWidth: 35, halign: 'right' },
-        3: { cellWidth: 35, halign: 'right' },
-        4: { cellWidth: 40, halign: 'right' }
+        0: { cellWidth: 22 },
+        1: { cellWidth: 30 },
+        2: { cellWidth: 40 },
+        3: { cellWidth: 28, halign: 'right' },
+        4: { cellWidth: 30, halign: 'right' },
+        5: { cellWidth: 35, halign: 'right' }
       },
       tableWidth: pageWidth,
       styles: {
         overflow: 'linebreak',
-        cellPadding: 4
+        cellPadding: 3
       },
       didDrawPage: (data: any) => {
-        // Add page number
         const pageNumber = (doc as any).internal.getCurrentPageInfo().pageNumber;
         const totalPages = (doc as any).internal.getNumberOfPages();
         doc.setFontSize(7);

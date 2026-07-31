@@ -194,6 +194,11 @@ export const routes: Routes = [
       {
         path: 'bank-ledger',
         loadComponent: () => import('./account-ledger/bank-ledger/bank-ledger.component').then(m => m.BankLedgerComponent)
+      },
+      // 🔥 NEW: Expense Ledger
+      {
+        path: 'expense-ledger',
+        loadComponent: () => import('./account-ledger/expense-ledger/expense-ledger.component').then(m => m.ExpenseLedgerComponent)
       }
     ]
   },

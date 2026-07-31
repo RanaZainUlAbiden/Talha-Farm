@@ -102,7 +102,7 @@ function createTables(db) {
     FOREIGN KEY (supplier_id) REFERENCES suppliers(supplier_id) ON DELETE CASCADE
   );`)
 
-  // Bank Accounts - 🔥 FIX: Added customer_id column
+  // Bank Accounts
   db.run(`CREATE TABLE IF NOT EXISTS bank_accounts (
     bank_id INTEGER PRIMARY KEY AUTOINCREMENT,
     farm_id INTEGER NOT NULL,
@@ -117,7 +117,7 @@ function createTables(db) {
     FOREIGN KEY (customer_id) REFERENCES customers(customer_id)
   );`)
 
-  // Bank Ledger
+  // Bank Ledger – 🔥 ADDED transaction_number column
   db.run(`CREATE TABLE IF NOT EXISTS bank_ledger (
     ledger_id INTEGER PRIMARY KEY AUTOINCREMENT,
     bank_id INTEGER NOT NULL,
@@ -128,8 +128,23 @@ function createTables(db) {
     balance REAL DEFAULT 0,
     reference_type TEXT,
     reference_id INTEGER,
+    transaction_number TEXT,
     created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
     FOREIGN KEY (bank_id) REFERENCES bank_accounts(bank_id) ON DELETE CASCADE
+  );`)
+
+  // 🔥 NEW: Expense Ledger
+  db.run(`CREATE TABLE IF NOT EXISTS expense_ledger (
+    expense_id INTEGER PRIMARY KEY AUTOINCREMENT,
+    farm_id INTEGER NOT NULL,
+    transaction_date DATE NOT NULL,
+    description TEXT NOT NULL,
+    amount REAL NOT NULL,
+    category TEXT,
+    payment_type TEXT DEFAULT 'cash',
+    notes TEXT,
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (farm_id) REFERENCES farms(farm_id)
   );`)
 
   // Indexes for performance
@@ -139,9 +154,12 @@ function createTables(db) {
   db.run(`CREATE INDEX IF NOT EXISTS idx_supplier_ledger_date ON supplier_ledger(transaction_date);`)
   db.run(`CREATE INDEX IF NOT EXISTS idx_bank_ledger_bank ON bank_ledger(bank_id);`)
   db.run(`CREATE INDEX IF NOT EXISTS idx_bank_ledger_date ON bank_ledger(transaction_date);`)
+  db.run(`CREATE INDEX IF NOT EXISTS idx_bank_ledger_number ON bank_ledger(transaction_number);`)
   db.run(`CREATE INDEX IF NOT EXISTS idx_customers_bank ON customers(bank_id);`)
+  db.run(`CREATE INDEX IF NOT EXISTS idx_expense_ledger_date ON expense_ledger(transaction_date);`)
+  db.run(`CREATE INDEX IF NOT EXISTS idx_expense_ledger_category ON expense_ledger(category);`)
 
-  // Add indexes for performance
+  // Add indexes for batch
   db.run(`CREATE INDEX IF NOT EXISTS idx_batches_product ON product_batches(product_id);`)
   db.run(`CREATE INDEX IF NOT EXISTS idx_batches_expiry ON product_batches(expiry_date);`)
   db.run(`CREATE INDEX IF NOT EXISTS idx_batches_status ON product_batches(status);`)
@@ -152,7 +170,7 @@ function createTables(db) {
 // ATTEMPT TO RECOVER DATA FROM CORRUPTED DB
 // =============================================
 function attemptRecovery(dbPath, oldDb, SQL) {
-  const tables = ['farms', 'flocks', 'ledgers', 'expenses', 'ledger_entries', 'medicine_traders', 'medicine_entries', 'sales', 'income', 'flock_health', 'balance', 'brokers', 'activation', 'batches', 'egg_collection', 'egg_sales', 'vaccinations', 'layer_mortality', 'products', 'customers', 'suppliers', 'purchase_orders', 'sales_orders', 'customer_payments', 'product_batches', 'batch_transactions', 'customer_ledger', 'supplier_ledger', 'bank_accounts', 'bank_ledger']
+  const tables = ['farms', 'flocks', 'ledgers', 'expenses', 'ledger_entries', 'medicine_traders', 'medicine_entries', 'sales', 'income', 'flock_health', 'balance', 'brokers', 'activation', 'batches', 'egg_collection', 'egg_sales', 'vaccinations', 'layer_mortality', 'products', 'customers', 'suppliers', 'purchase_orders', 'sales_orders', 'customer_payments', 'product_batches', 'batch_transactions', 'customer_ledger', 'supplier_ledger', 'bank_accounts', 'bank_ledger', 'expense_ledger']
   
   const newDb = new SQL.Database()
   createTables(newDb)
@@ -270,6 +288,8 @@ async function initializeDatabase() {
     `ALTER TABLE sales ADD COLUMN receipt_image TEXT`,
     `ALTER TABLE bills ADD COLUMN status TEXT DEFAULT 'completed'`,
     `ALTER TABLE customers ADD COLUMN bank_id INTEGER`,
+    // 🔥 ADD transaction_number to bank_ledger
+    `ALTER TABLE bank_ledger ADD COLUMN transaction_number TEXT`,
   ]
   
   for (const sql of alterStatements) {
@@ -349,7 +369,8 @@ const PRIMARY_KEY_MAP = {
   egg_sales: 'egg_sale_id',
   vaccinations: 'vaccination_id',
   layer_mortality: 'mortality_id',
-  farms: 'farm_id'
+  farms: 'farm_id',
+  expense_ledger: 'expense_id'
 };
 
 function runQuery(sql, params = []) {
@@ -802,45 +823,15 @@ function addSupplierLedgerEntry(entry) {
   }
 }
 
-// 🔥 FIX: addBankLedgerEntry now correctly calculates balance
 function addBankLedgerEntry(entry) {
-  try {
-    const { bank_id, transaction_date, description, debit = 0, credit = 0, reference_type, reference_id } = entry;
-    
-    // Get current balance
-    let currentBalance = 0;
-    try {
-      const stmt = db.prepare(`
-        SELECT COALESCE(SUM(debit - credit), 0) as balance 
-        FROM bank_ledger 
-        WHERE bank_id = ?
-      `)
-      stmt.bind([bank_id])
-      const result = stmt.getAsObject()
-      stmt.free()
-      currentBalance = result.balance || 0;
-    } catch (e) {
-      console.error('Error getting balance:', e.message);
-    }
-    
-    // Calculate new balance: current + deposit - withdrawal
-    const newBalance = currentBalance + debit - credit;
-    
-    const stmt = db.prepare(`
-      INSERT INTO bank_ledger 
-      (bank_id, transaction_date, description, debit, credit, balance, reference_type, reference_id)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-    `)
-    stmt.run([bank_id, transaction_date, description, debit, credit, newBalance, reference_type || null, reference_id || null])
-    stmt.free()
-    
-    // Update bank account current balance
-    db.run(`UPDATE bank_accounts SET current_balance = ? WHERE bank_id = ?`, [newBalance, bank_id])
-    
-    return { success: true, balance: newBalance }
-  } catch (err) {
-    return { success: false, error: err.message }
-  }
+  const { bank_id, transaction_date, description, debit = 0, credit = 0, reference_type, reference_id, transaction_number } = entry;
+  // ...
+  const stmt = db.prepare(`
+    INSERT INTO bank_ledger 
+    (bank_id, transaction_date, description, debit, credit, balance, reference_type, reference_id, transaction_number)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+  `);
+  stmt.run([bank_id, transaction_date, description, debit, credit, newBalance, reference_type || null, reference_id || null, transaction_number || null]);
 }
 
 function updateCustomerOutstandingBalance(customerId) {
@@ -938,7 +929,6 @@ function getBankLedgerWithBalance(bankId) {
   }
 }
 
-// 🔥 FIX: getBankAccounts now returns accounts with customer info
 function getBankAccounts(farmId) {
   try {
     const stmt = db.prepare(`
@@ -981,12 +971,10 @@ function getBankAccount(bankId) {
   }
 }
 
-// 🔥 FIXED: addBankAccount now creates a ledger entry for opening balance
 function addBankAccount(account) {
   try {
     const { farm_id, customer_id, bank_name, account_number, account_holder, opening_balance = 0 } = account;
     
-    // Insert bank account
     const stmt = db.prepare(`
       INSERT INTO bank_accounts 
       (farm_id, customer_id, bank_name, account_number, account_holder, opening_balance, current_balance)
@@ -997,7 +985,6 @@ function addBankAccount(account) {
     
     const bankId = db.exec('SELECT last_insert_rowid() as id')[0].values[0][0]
     
-    // 🔥 FIX: Add opening balance to bank_ledger
     if (opening_balance > 0) {
       const entry = {
         bank_id: bankId,
@@ -1011,7 +998,6 @@ function addBankAccount(account) {
       addBankLedgerEntry(entry);
     }
     
-    // Link customer to bank
     if (customer_id && bankId) {
       db.run(`UPDATE customers SET bank_id = ? WHERE customer_id = ?`, [bankId, customer_id])
     }
@@ -1021,6 +1007,7 @@ function addBankAccount(account) {
     return { success: false, error: err.message }
   }
 }
+
 function updateBankAccount(bankId, data) {
   try {
     const fields = []
@@ -1132,7 +1119,6 @@ function getCustomerBankBalance(customerId) {
 
 function deductCustomerBank(customerId, amount, description) {
   try {
-    // Get the customer's bank account
     const bankResult = getCustomerBankAccount(customerId);
     if (!bankResult.success || !bankResult.data) {
       return { success: false, error: 'Customer has no bank account' };
@@ -1140,7 +1126,6 @@ function deductCustomerBank(customerId, amount, description) {
     
     const bank = bankResult.data;
     
-    // Add withdrawal to bank ledger
     const entry = {
       bank_id: bank.bank_id,
       transaction_date: new Date().toISOString().split('T')[0],
@@ -1191,6 +1176,96 @@ function getCustomersWithBankAccounts(farmId) {
   }
 }
 
+// ── EXPENSE LEDGER OPERATIONS ──────────────────────────────
+
+function addExpense(expense) {
+  try {
+    const { farm_id, transaction_date, description, amount, category, payment_type, notes } = expense;
+    const stmt = db.prepare(`
+      INSERT INTO expense_ledger (farm_id, transaction_date, description, amount, category, payment_type, notes)
+      VALUES (?, ?, ?, ?, ?, ?, ?)
+    `)
+    stmt.run([farm_id, transaction_date, description, amount, category || null, payment_type || 'cash', notes || null])
+    stmt.free()
+    const expenseId = db.exec('SELECT last_insert_rowid() as id')[0].values[0][0]
+    return { success: true, expense_id: expenseId }
+  } catch (err) {
+    return { success: false, error: err.message }
+  }
+}
+
+function updateExpense(expenseId, data) {
+  try {
+    const fields = []
+    const values = []
+    if (data.transaction_date !== undefined) { fields.push('transaction_date = ?'); values.push(data.transaction_date) }
+    if (data.description !== undefined) { fields.push('description = ?'); values.push(data.description) }
+    if (data.amount !== undefined) { fields.push('amount = ?'); values.push(data.amount) }
+    if (data.category !== undefined) { fields.push('category = ?'); values.push(data.category) }
+    if (data.payment_type !== undefined) { fields.push('payment_type = ?'); values.push(data.payment_type) }
+    if (data.notes !== undefined) { fields.push('notes = ?'); values.push(data.notes) }
+    if (fields.length === 0) return { success: false, error: 'No fields to update' }
+    values.push(expenseId)
+    const sql = `UPDATE expense_ledger SET ${fields.join(', ')} WHERE expense_id = ?`
+    db.run(sql, values)
+    return { success: true }
+  } catch (err) {
+    return { success: false, error: err.message }
+  }
+}
+
+function deleteExpense(expenseId) {
+  try {
+    db.run(`DELETE FROM expense_ledger WHERE expense_id = ?`, [expenseId])
+    return { success: true }
+  } catch (err) {
+    return { success: false, error: err.message }
+  }
+}
+
+function getExpenses(farmId, startDate = null, endDate = null) {
+  try {
+    let sql = `SELECT * FROM expense_ledger WHERE farm_id = ?`
+    const params = [farmId]
+    if (startDate && endDate) {
+      sql += ` AND transaction_date BETWEEN ? AND ?`
+      params.push(startDate, endDate)
+    }
+    sql += ` ORDER BY transaction_date DESC`
+    const stmt = db.prepare(sql)
+    stmt.bind(params)
+    const rows = []
+    while (stmt.step()) {
+      rows.push(stmt.getAsObject())
+    }
+    stmt.free()
+    return { success: true, data: rows }
+  } catch (err) {
+    return { success: false, error: err.message }
+  }
+}
+
+function getExpenseCategories(farmId) {
+  try {
+    const stmt = db.prepare(`
+      SELECT category, SUM(amount) as total, COUNT(*) as count
+      FROM expense_ledger
+      WHERE farm_id = ?
+      GROUP BY category
+      ORDER BY total DESC
+    `)
+    stmt.bind([farmId])
+    const rows = []
+    while (stmt.step()) {
+      rows.push(stmt.getAsObject())
+    }
+    stmt.free()
+    return { success: true, data: rows }
+  } catch (err) {
+    return { success: false, error: err.message }
+  }
+}
+
 module.exports = { 
   initializeDatabase, 
   runQuery, 
@@ -1227,5 +1302,11 @@ module.exports = {
   getCustomerBankBalance,
   deductCustomerBank,
   linkCustomerToBank,
-  getCustomersWithBankAccounts
+  getCustomersWithBankAccounts,
+  // Expense Ledger functions
+  addExpense,
+  updateExpense,
+  deleteExpense,
+  getExpenses,
+  getExpenseCategories
 }

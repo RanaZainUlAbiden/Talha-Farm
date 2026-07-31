@@ -12,3 +12,73 @@
 .btn-save { background: #1a5c38; color: white; border: none; padding: 6px 12px; border-radius: 6px; cursor: pointer; }
 .btn-cancel-edit { background: #f5f5f5; color: #666; border: 1px solid #e0e0e0; padding: 6px 12px; border-radius: 6px; cursor: pointer; }
 .error-message { margin-bottom: 16px; padding: 10px 12px; border-radius: 8px; background: #fef2f2; color: #b91c1c; font-size: 13px; }
+
+// ── SUMMARY BAR ────────────────────────────────────────────
+
+.summary-bar {
+  display: flex;
+  gap: 16px;
+  margin-bottom: 20px;
+  flex-wrap: wrap;
+}
+
+.summary-item {
+  background: white;
+  padding: 14px 20px;
+  border-radius: 10px;
+  border: 1px solid #e8e8e8;
+  box-shadow: 0 1px 4px rgba(0,0,0,0.04);
+  flex: 1;
+  min-width: 150px;
+  text-align: center;
+
+  .summary-label {
+    display: block;
+    font-size: 12px;
+    color: #888;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    margin-bottom: 4px;
+  }
+
+  .summary-value {
+    display: block;
+    font-size: 22px;
+    font-weight: 700;
+    color: #1a1a1a;
+
+    &.payable {
+      color: #1a5c38;
+    }
+  }
+}
+
+// ── OUTSTANDING BALANCE (Payable) ──────────────────────────
+
+.outstanding {
+  color: #e53935;
+  font-weight: 600;
+}
+
+// ── LOADING STATE ───────────────────────────────────────────
+
+.loading-state {
+  text-align: center;
+  padding: 40px;
+  color: #aaa;
+  
+  .spinner {
+    width: 30px;
+    height: 30px;
+    border: 3px solid #f3f3f3;
+    border-top: 3px solid #1a5c38;
+    border-radius: 50%;
+    animation: spin 1s linear infinite;
+    margin: 0 auto 12px;
+  }
+  
+  @keyframes spin {
+    0% { transform: rotate(0deg); }
+    100% { transform: rotate(360deg); }
+  }
+}

@@ -70,6 +70,24 @@
 
   <!-- Bank Detail View -->
   <div class="bank-detail" *ngIf="!isLoading && selectedBank">
+    <!-- 🔥 SEARCH BAR for transaction number -->
+    <div class="search-container" style="margin-bottom:16px;">
+      <div class="search-box">
+        <span class="search-icon">🔍</span>
+        <input 
+          type="text" 
+          class="search-input" 
+          [(ngModel)]="transactionNumberSearch" 
+          (input)="filterLedger()" 
+          placeholder="Search by transaction number (e.g. DEP-0001, WD-0002)..."
+        />
+        <button class="search-clear" *ngIf="transactionNumberSearch" (click)="clearTransactionSearch()">✕</button>
+      </div>
+      <span class="search-results" *ngIf="transactionNumberSearch">
+        Found {{ filteredLedgerEntries.length }} result(s)
+      </span>
+    </div>
+
     <div class="detail-summary">
       <div class="summary-item">
         <span class="summary-label">Total Deposits</span>
@@ -92,6 +110,7 @@
         <thead>
           <tr>
             <th>Date</th>
+            <th>Transaction #</th>   <!-- 🔥 NEW COLUMN -->
             <th>Description</th>
             <th>Deposit</th>
             <th>Withdrawal</th>
@@ -100,8 +119,9 @@
           </tr>
         </thead>
         <tbody>
-          <tr *ngFor="let entry of ledgerEntries">
+          <tr *ngFor="let entry of filteredLedgerEntries">
             <td>{{ entry.transaction_date | date:'yyyy-MM-dd' }}</td>
+            <td class="transaction-number">{{ entry.transaction_number || '—' }}</td>
             <td>{{ entry.description || '—' }}</td>
             <td class="deposit" *ngIf="entry.debit > 0">Rs. {{ entry.debit | number:'1.0-0' }}</td>
             <td class="deposit" *ngIf="entry.debit === 0">—</td>
@@ -112,8 +132,10 @@
               <button class="btn-delete" (click)="confirmDelete(entry.ledger_id, 'entry')">🗑️</button>
             </td>
           </tr>
-          <tr *ngIf="ledgerEntries.length === 0">
-            <td colspan="6" class="empty-row">No transactions found</td>
+          <tr *ngIf="filteredLedgerEntries.length === 0">
+            <td colspan="7" class="empty-row">
+              {{ transactionNumberSearch ? 'No transactions found matching "' + transactionNumberSearch + '"' : 'No transactions found' }}
+            </td>
           </tr>
         </tbody>
       </table>

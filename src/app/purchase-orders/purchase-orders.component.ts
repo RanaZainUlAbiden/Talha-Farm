@@ -55,71 +55,56 @@ export class PurchaseOrdersComponent implements OnInit {
   getProductName(id: number) { return this.products.find(p => p.product_id === id)?.product_name || '—'; }
   getSupplierName(id: number) { return this.suppliers.find(s => s.supplier_id === id)?.supplier_name || '—'; }
 
-  // ── ROW CREATION ──────────────────────────────────────────
-
-  makeNewRow() {
-    return {
-      product_id: this.products[0]?.product_id ?? null,
-      supplier_id: null,
-      date: new Date().toISOString().split('T')[0],
-      quantity: null,
-      cost_price: null,
-      unit: null,
-      payment_type: 'cash',
-      notes: ''
-    };
+  makeNewRow() { 
+    return { 
+      product_id: this.products[0]?.product_id, 
+      supplier_id: null, 
+      date: new Date().toISOString().split('T')[0], 
+      quantity: null, 
+      cost_price: null, 
+      payment_type: 'cash', 
+      notes: '' 
+    }; 
   }
 
-  addPendingRow() {
-    if (this.isSaving) return;
-    const row = this.makeNewRow();
-    this.pendingRows.push(row);
-    // 🔥 FIX: auto-fill cost price immediately since the row is created
-    // with a default product already selected (no (change) event fires for that)
-    this.onProductSelect(row);
+  addPendingRow() { 
+    if (!this.isSaving) {
+      this.pendingRows.push(this.makeNewRow());
+    }
   }
 
-  addRowAfter(i: number) {
-    const row = this.makeNewRow();
-    this.pendingRows.splice(i + 1, 0, row);
-    this.onProductSelect(row);
+  addRowAfter(i: number) { 
+    this.pendingRows.splice(i + 1, 0, this.makeNewRow()); 
   }
 
-  removePendingRow(i: number) {
-    this.pendingRows.splice(i, 1);
+  removePendingRow(i: number) { 
+    this.pendingRows.splice(i, 1); 
   }
 
-  // ── AUTO-FILL COST PRICE ─────────────────────────────────
-  // Works for both pendingRows entries AND editForm, since both
-  // are plain objects with product_id / cost_price / unit fields.
-
+  // 🔥 FIX: Auto-fill cost price and unit when product is selected
   onProductSelect(row: any) {
     if (!row.product_id) {
       row.cost_price = null;
       row.unit = null;
-      this.cdr.detectChanges();
       return;
     }
-
-    // 🔥 FIX: product_id coming from a native <select> bound with [ngValue]
-    // stays a number, matching product_id in the products array. If you ever
-    // see this break again, check that the <option> tags use [ngValue] not [value].
+    
     const product = this.products.find(p => p.product_id === row.product_id);
-
     if (product) {
-      row.cost_price = product.cost_price ? product.cost_price : 0;
-      row.unit = product.unit || null;
-
-      if (!product.cost_price) {
+      if (product.cost_price) {
+        row.cost_price = product.cost_price;
+        console.log(`✅ Auto-filled cost price: Rs. ${product.cost_price} for ${product.product_name}`);
+      } else {
+        row.cost_price = 0;
         console.warn(`⚠️ No cost price found for ${product.product_name}`);
       }
-    } else {
-      row.cost_price = null;
-      row.unit = null;
-      console.warn('⚠️ Product not found for id', row.product_id);
+      
+      if (product.unit) {
+        row.unit = product.unit;
+      }
+      
+      console.log(`📦 Product selected: ${product.product_name} | Cost: Rs. ${product.cost_price} | Unit: ${product.unit}`);
     }
-
-    this.cdr.detectChanges();
   }
 
   // ── BATCH OPERATIONS ─────────────────────────────────────
@@ -130,7 +115,7 @@ export class PurchaseOrdersComponent implements OnInit {
       const oneYearLater = new Date();
       oneYearLater.setFullYear(oneYearLater.getFullYear() + 1);
       const expiryDate = oneYearLater.toISOString().split('T')[0];
-
+      
       const result = await this.db.addBatch({
         product_id: productId,
         farm_id: this.currentFarm.farm_id,
@@ -139,12 +124,14 @@ export class PurchaseOrdersComponent implements OnInit {
         quantity: quantity,
         purchase_price: costPrice
       });
-
-      if (!result.success) {
+      
+      if (result.success) {
+        console.log(`✅ Added ${quantity} units to product ${productId} as batch ${result.batch_code}`);
+      } else {
         console.error('Failed to add batch:', result.error);
         this.errorMessage = 'Failed to update inventory: ' + result.error;
       }
-
+      
       return result;
     } catch (error: any) {
       console.error('Failed to update inventory:', error);
@@ -153,24 +140,24 @@ export class PurchaseOrdersComponent implements OnInit {
     }
   }
 
-  async syncCost(productId: number, costPrice: number) {
-    await this.db.run('UPDATE products SET cost_price = ? WHERE product_id = ?', [costPrice, productId]);
-    // keep local products array in sync so dropdown labels + future auto-fills are correct
-    const p = this.products.find(pr => pr.product_id === productId);
-    if (p) p.cost_price = costPrice;
-  }
+  // 🔥 REMOVED syncCost() – no longer used
 
   // ── SUPPLIER LEDGER INTEGRATION ─────────────────────────
 
   async addToSupplierLedger(supplierId: number, purchaseId: number, amount: number, paymentType: string, notes: string) {
-    if (!supplierId) return;
-
+    if (!supplierId) {
+      console.warn('⚠️ No supplier ID provided, skipping ledger entry');
+      return;
+    }
+    
     const isPaid = paymentType?.toLowerCase() === 'cash';
     const credit = amount;
     const debit = isPaid ? amount : 0;
-
+    
+    console.log(`📝 Adding to supplier ledger: Supplier=${supplierId}, Purchase=${purchaseId}, Amount=${amount}, Type=${paymentType}, Debit=${debit}, Credit=${credit}`);
+    
     try {
-      await this.db.addSupplierLedgerEntry({
+      const result = await this.db.addSupplierLedgerEntry({
         supplier_id: supplierId,
         transaction_date: new Date().toISOString().split('T')[0],
         description: `Purchase Order #${purchaseId}${notes ? ' - ' + notes : ''}`,
@@ -179,6 +166,8 @@ export class PurchaseOrdersComponent implements OnInit {
         reference_type: 'purchase',
         reference_id: purchaseId
       });
+      
+      console.log(`✅ Added ${amount} to supplier ${supplierId} ledger (${paymentType})`, result);
     } catch (error) {
       console.error('❌ Failed to add supplier ledger entry:', error);
       this.errorMessage = 'Failed to update supplier ledger: ' + (error as any).message;
@@ -187,8 +176,10 @@ export class PurchaseOrdersComponent implements OnInit {
 
   async removeFromSupplierLedger(purchaseId: number, supplierId: number) {
     if (!supplierId) return;
+    
     try {
       await this.db.run('DELETE FROM supplier_ledger WHERE reference_id = ? AND reference_type = ?', [purchaseId, 'purchase']);
+      console.log(`✅ Removed purchase ${purchaseId} from supplier ${supplierId} ledger`);
     } catch (error) {
       console.error('❌ Failed to remove supplier ledger entry:', error);
     }
@@ -198,7 +189,7 @@ export class PurchaseOrdersComponent implements OnInit {
     if (oldSupplierId) {
       await this.db.run('DELETE FROM supplier_ledger WHERE reference_id = ? AND reference_type = ?', [purchaseId, 'purchase']);
     }
-
+    
     if (supplierId) {
       const isPaid = paymentType?.toLowerCase() === 'cash';
       await this.db.addSupplierLedgerEntry({
@@ -211,6 +202,8 @@ export class PurchaseOrdersComponent implements OnInit {
         reference_id: purchaseId
       });
     }
+    
+    console.log(`✅ Updated supplier ledger for purchase ${purchaseId}`);
   }
 
   // ── SAVE OPERATIONS ──────────────────────────────────────
@@ -219,7 +212,7 @@ export class PurchaseOrdersComponent implements OnInit {
     if (!this.pendingRows.length || this.isSavingAll) return;
     this.isSavingAll = true;
     this.errorMessage = '';
-
+    
     try {
       for (const row of this.pendingRows) {
         if (!row.product_id || !row.quantity || !row.cost_price) {
@@ -230,34 +223,45 @@ export class PurchaseOrdersComponent implements OnInit {
           this.errorMessage = 'Quantity and cost must be positive';
           continue;
         }
-
+        
         const totalAmount = row.quantity * row.cost_price;
         const paymentType = row.payment_type || 'credit';
-
+        
+        console.log(`📝 Saving purchase: Product=${row.product_id}, Supplier=${row.supplier_id}, Total=${totalAmount}, Payment=${paymentType}`);
+        
         const result = await this.db.run(
           'INSERT INTO purchase_orders (farm_id, supplier_id, product_id, date, quantity, cost_price, total_amount, payment_type, notes) VALUES (?,?,?,?,?,?,?,?,?)',
           [this.currentFarm.farm_id, row.supplier_id, row.product_id, row.date, row.quantity, row.cost_price, totalAmount, paymentType, row.notes]
         );
-
+        
+        console.log('📝 Purchase save result:', result);
+        
         if (result.success) {
           const purchaseId = result.lastId;
+          
+          console.log(`📝 Purchase ID: ${purchaseId}`);
+          
           const isValidPurchaseId = typeof purchaseId === 'number' && purchaseId > 0;
-
           if (row.supplier_id && isValidPurchaseId) {
             await this.addToSupplierLedger(row.supplier_id, purchaseId, totalAmount, paymentType, row.notes);
+          } else {
+            console.warn(`⚠️ Skipping supplier ledger - supplier_id=${row.supplier_id}, purchaseId=${purchaseId}`);
           }
-
+          
+          // ✅ Update inventory using BATCHES – this does not affect product cost
           await this.updateInventoryWithBatch(row.product_id, row.quantity, row.cost_price);
-          await this.syncCost(row.product_id, row.cost_price);
+          
+          // ❌ REMOVED: await this.syncCost(row.product_id, row.cost_price);
+          // Product cost remains unchanged, only purchase order's cost_price is saved.
         } else {
           console.error('❌ Failed to save purchase:', result.error);
           this.errorMessage = 'Failed to save purchase: ' + result.error;
         }
       }
-
+      
       this.pendingRows = [];
       await this.loadData();
-
+      
     } catch (error: any) {
       console.error('❌ Error saving:', error);
       this.errorMessage = 'Error saving: ' + error.message;
@@ -268,43 +272,40 @@ export class PurchaseOrdersComponent implements OnInit {
 
   cancelAllRows() { this.pendingRows = []; }
 
-  // ── EDIT EXISTING ORDER ──────────────────────────────────
-
-  startEdit(o: any) {
-    this.editingId = o.purchase_id;
-    this.editForm = {
-      product_id: o.product_id,
-      supplier_id: o.supplier_id,
-      date: o.date,
-      quantity: o.quantity,
-      cost_price: o.cost_price,
-      unit: null,
-      payment_type: o.payment_type,
+  startEdit(o: any) { 
+    this.editingId = o.purchase_id; 
+    this.editForm = { 
+      product_id: o.product_id, 
+      supplier_id: o.supplier_id, 
+      date: o.date, 
+      quantity: o.quantity, 
+      cost_price: o.cost_price, 
+      payment_type: o.payment_type, 
       notes: o.notes,
       old_product_id: o.product_id,
       old_quantity: o.quantity,
       old_supplier_id: o.supplier_id
-    };
+    }; 
   }
-
+  
   cancelEdit() { this.editingId = null; }
 
   async saveEdit(id: number) {
     try {
       const existing = this.orders.find(o => o.purchase_id === id);
       if (!existing) return;
-
+      
       const oldSupplierId = existing.supplier_id;
       const newSupplierId = this.editForm.supplier_id;
       const newTotal = this.editForm.quantity * this.editForm.cost_price;
       const paymentType = this.editForm.payment_type || 'credit';
       const isPaid = paymentType?.toLowerCase() === 'cash';
-
+      
       await this.db.run(
         'UPDATE purchase_orders SET supplier_id=?, product_id=?, date=?, quantity=?, cost_price=?, total_amount=?, payment_type=?, notes=? WHERE purchase_id=?',
         [newSupplierId, this.editForm.product_id, this.editForm.date, this.editForm.quantity, this.editForm.cost_price, newTotal, paymentType, this.editForm.notes, id]
       );
-
+      
       if (oldSupplierId !== newSupplierId) {
         if (oldSupplierId) {
           await this.db.run('DELETE FROM supplier_ledger WHERE reference_id = ? AND reference_type = ?', [id, 'purchase']);
@@ -326,20 +327,20 @@ export class PurchaseOrdersComponent implements OnInit {
           [isPaid ? newTotal : 0, newTotal, id, 'purchase']
         );
       }
-
+      
       const diff = Number(this.editForm.quantity) - Number(existing.quantity);
-
+      
       if (diff > 0) {
         await this.updateInventoryWithBatch(this.editForm.product_id, diff, this.editForm.cost_price);
       } else if (diff < 0) {
         await this.deductFromBatches(this.editForm.product_id, Math.abs(diff));
       }
-
-      await this.syncCost(this.editForm.product_id, this.editForm.cost_price);
-
+      
+      // ❌ REMOVED: await this.syncCost(this.editForm.product_id, this.editForm.cost_price);
+      
       this.editingId = null;
       await this.loadData();
-
+      
     } catch (error: any) {
       console.error('❌ Error saving edit:', error);
       this.errorMessage = 'Error saving edit: ' + error.message;
@@ -350,18 +351,18 @@ export class PurchaseOrdersComponent implements OnInit {
     try {
       const batchesResult = await this.db.getBatchesByProduct(productId, this.currentFarm.farm_id);
       if (!batchesResult.success || !batchesResult.data) return;
-
+      
       const activeBatches = batchesResult.data
         .filter((b: any) => (b.status === 'active' || b.status === 'expiring') && b.quantity > 0)
         .sort((a: any, b: any) => a.expiry_date.localeCompare(b.expiry_date));
-
+      
       let remaining = quantity;
-
+      
       for (const batch of activeBatches) {
         if (remaining <= 0) break;
         const deduct = Math.min(remaining, batch.quantity);
         const newQty = batch.quantity - deduct;
-
+        
         await this.db.updateBatch(batch.batch_id, { quantity: newQty });
         await this.db.addBatchTransaction(
           batch.batch_id,
@@ -372,12 +373,12 @@ export class PurchaseOrdersComponent implements OnInit {
           null,
           `Adjustment from purchase order edit (-${deduct})`
         );
-
+        
         remaining -= deduct;
       }
-
+      
       await this.db.updateBatchStatuses();
-
+      
     } catch (error) {
       console.error('Error deducting from batches:', error);
     }
@@ -397,12 +398,12 @@ export class PurchaseOrdersComponent implements OnInit {
       await this.db.run('DELETE FROM purchase_orders WHERE purchase_id=?', [this.deletingId]);
       this.showDeleteDialog = false;
       await this.loadData();
-
+      
     } catch (error: any) {
       console.error('❌ Error deleting:', error);
       this.errorMessage = 'Error deleting: ' + error.message;
     }
   }
-
+  
   onDeleteCancelled() { this.showDeleteDialog = false; }
 }

@@ -192,7 +192,7 @@ export class SupplierLedgerComponent implements OnInit {
     }
     
     if (this.paymentAmount > this.getSupplierBalance()) {
-      this.errorMessage = 'Payment amount cannot exceed outstanding balance';
+      this.errorMessage = 'Payment amount cannot exceed total payable';
       return;
     }
 
@@ -300,7 +300,8 @@ export class SupplierLedgerComponent implements OnInit {
     y += 5;
     doc.text(`Products Supplied: ${this.selectedSupplier.products_supplied || 'N/A'}`, margin, y);
     y += 5;
-    doc.text(`Current Balance: Rs. ${this.getSupplierBalance().toLocaleString()}`, margin, y);
+    // 🔥 FIX: "Current Balance" → "Total Payable"
+    doc.text(`Total Payable: Rs. ${this.getSupplierBalance().toLocaleString()}`, margin, y);
     y += 10;
     
     // ── DIVIDER ─────────────────────────────────────────────
@@ -379,7 +380,8 @@ export class SupplierLedgerComponent implements OnInit {
       y += 5;
       doc.text(`Total Credit (Purchases): Rs. ${this.getTotalCredit().toLocaleString()}`, margin + 5, y);
       y += 5;
-      doc.text(`Current Balance:           Rs. ${this.getSupplierBalance().toLocaleString()}`, margin + 5, y);
+      // 🔥 FIX: "Current Balance" → "Total Payable"
+      doc.text(`Total Payable:             Rs. ${this.getSupplierBalance().toLocaleString()}`, margin + 5, y);
       y += 10;
     }
     

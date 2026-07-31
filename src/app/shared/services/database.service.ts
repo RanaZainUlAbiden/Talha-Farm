@@ -305,12 +305,6 @@ export class DatabaseService {
   }
 
   // ── CUSTOMER LEDGER METHODS ──────────────────────────────
-  // 🔥 IMPORTANT: outstanding_balance is now derived from the `bills` table
-  // (SUM of total_amount - amount_paid), NOT from customer_ledger.
-  // customer_ledger stays purely as a transaction history / audit log for
-  // display and PDF statements — it no longer drives the actual balance
-  // shown anywhere in the app. This is what keeps Sales Orders, the
-  // Distribution Report, and Customer Ledger all showing the same numbers.
 
   async getCustomerLedger(customerId: number): Promise<any> {
     return this.get(
@@ -358,9 +352,6 @@ export class DatabaseService {
     );
   }
 
-  // 🔥 FIX: compute outstanding balance from `bills`, the table that's
-  // actually maintained carefully (stock/batches tied to it). This can
-  // no longer drift from what Sales Orders / Reports show.
   async updateCustomerOutstandingBalance(customerId: number): Promise<any> {
     return this.run(
       `UPDATE customers SET outstanding_balance = 
@@ -370,7 +361,6 @@ export class DatabaseService {
     );
   }
 
-  // 🔥 FIX: same change here — list view balance now matches everywhere else
   async getAllCustomersWithBalance(farmId: number): Promise<any> {
     return this.get(
       `SELECT 
@@ -470,7 +460,6 @@ export class DatabaseService {
     return result.success && result.data && result.data.length > 0 ? result.data[0] : null;
   }
 
-  // 🔥 FIXED: addBankAccount with opening balance ledger entry
   async addBankAccount(account: {
     farm_id: number;
     customer_id: number;
@@ -488,7 +477,6 @@ export class DatabaseService {
       [farm_id, customer_id, bank_name, account_number || null, account_holder || null, opening_balance, opening_balance]
     );
     
-    // 🔥 FIX: Add opening balance to bank_ledger
     if (result.success && result.lastId && opening_balance > 0) {
       await this.addBankLedgerEntry({
         bank_id: result.lastId,
@@ -501,7 +489,6 @@ export class DatabaseService {
       });
     }
     
-    // Link customer to bank
     if (result.success && result.lastId) {
       await this.linkCustomerToBank(customer_id, result.lastId);
     }
@@ -560,16 +547,17 @@ export class DatabaseService {
     credit?: number;
     reference_type?: string;
     reference_id?: number | null;
+    transaction_number?: string;
   }): Promise<any> {
-    const { bank_id, transaction_date, description, debit = 0, credit = 0, reference_type, reference_id } = entry;
+    const { bank_id, transaction_date, description, debit = 0, credit = 0, reference_type, reference_id, transaction_number } = entry;
     
     const result = await this.run(
       `INSERT INTO bank_ledger 
-       (bank_id, transaction_date, description, debit, credit, balance, reference_type, reference_id)
+       (bank_id, transaction_date, description, debit, credit, balance, reference_type, reference_id, transaction_number)
        VALUES (?, ?, ?, ?, ?, 
          (SELECT COALESCE(SUM(debit - credit), 0) FROM bank_ledger WHERE bank_id = ?) + ? - ?,
-         ?, ?)`,
-      [bank_id, transaction_date, description, debit, credit, bank_id, debit, credit, reference_type || null, reference_id || null]
+         ?, ?, ?)`,
+      [bank_id, transaction_date, description, debit, credit, bank_id, debit, credit, reference_type || null, reference_id || null, transaction_number || null]
     );
     
     if (result.success) {
@@ -608,7 +596,6 @@ export class DatabaseService {
   }
 
   async deductCustomerBank(customerId: number, amount: number, description: string): Promise<any> {
-    // Get the customer's bank account
     const bankResult = await this.getCustomerBankAccount(customerId);
     if (!bankResult.success || !bankResult.data || bankResult.data.length === 0) {
       return { success: false, error: 'Customer has no bank account' };
@@ -616,7 +603,6 @@ export class DatabaseService {
     
     const bank = bankResult.data[0];
     
-    // Add withdrawal to bank ledger
     return this.addBankLedgerEntry({
       bank_id: bank.bank_id,
       transaction_date: new Date().toISOString().split('T')[0],
@@ -646,6 +632,69 @@ export class DatabaseService {
        LEFT JOIN bank_accounts ba ON c.bank_id = ba.bank_id
        WHERE c.farm_id = ?
        ORDER BY c.customer_name ASC`,
+      [farmId]
+    );
+  }
+
+  // ── EXPENSE LEDGER METHODS ──────────────────────────────────
+
+  async getExpenses(farmId: number, startDate?: string, endDate?: string): Promise<any> {
+    let sql = 'SELECT * FROM expense_ledger WHERE farm_id = ?';
+    const params: any[] = [farmId];
+    if (startDate && endDate) {
+      sql += ' AND transaction_date BETWEEN ? AND ?';
+      params.push(startDate, endDate);
+    }
+    sql += ' ORDER BY transaction_date DESC';
+    return this.get(sql, params);
+  }
+
+  async addExpense(expense: {
+    farm_id: number;
+    transaction_date: string;
+    description: string;
+    amount: number;
+    category?: string;
+    payment_type?: string;
+    notes?: string;
+  }): Promise<any> {
+    const { farm_id, transaction_date, description, amount, category, payment_type, notes } = expense;
+    return this.run(
+      `INSERT INTO expense_ledger 
+       (farm_id, transaction_date, description, amount, category, payment_type, notes)
+       VALUES (?, ?, ?, ?, ?, ?, ?)`,
+      [farm_id, transaction_date, description, amount, category || null, payment_type || 'cash', notes || null]
+    );
+  }
+
+  async updateExpense(expenseId: number, data: any): Promise<any> {
+    const fields: string[] = [];
+    const values: any[] = [];
+
+    if (data.transaction_date !== undefined) { fields.push('transaction_date = ?'); values.push(data.transaction_date); }
+    if (data.description !== undefined) { fields.push('description = ?'); values.push(data.description); }
+    if (data.amount !== undefined) { fields.push('amount = ?'); values.push(data.amount); }
+    if (data.category !== undefined) { fields.push('category = ?'); values.push(data.category); }
+    if (data.payment_type !== undefined) { fields.push('payment_type = ?'); values.push(data.payment_type); }
+    if (data.notes !== undefined) { fields.push('notes = ?'); values.push(data.notes); }
+
+    if (fields.length === 0) return { success: false, error: 'No fields to update' };
+    values.push(expenseId);
+    const sql = `UPDATE expense_ledger SET ${fields.join(', ')} WHERE expense_id = ?`;
+    return this.run(sql, values);
+  }
+
+  async deleteExpense(expenseId: number): Promise<any> {
+    return this.run('DELETE FROM expense_ledger WHERE expense_id = ?', [expenseId]);
+  }
+
+  async getExpenseCategories(farmId: number): Promise<any> {
+    return this.get(
+      `SELECT category, SUM(amount) as total, COUNT(*) as count
+       FROM expense_ledger
+       WHERE farm_id = ?
+       GROUP BY category
+       ORDER BY total DESC`,
       [farmId]
     );
   }

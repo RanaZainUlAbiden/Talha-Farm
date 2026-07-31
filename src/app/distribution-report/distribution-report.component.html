@@ -56,43 +56,6 @@
       <div class="card-value">{{ totalSalesCount }}</div>
     </div>
   </div>
-
-  <!-- Inventory Table -->
-  <div class="table-card" style="margin-top:20px;">
-    <h4>📦 Inventory</h4>
-    <div class="empty-state" *ngIf="products.length === 0">
-      <p>No products in inventory.</p>
-    </div>
-    <table *ngIf="products.length > 0">
-      <thead>
-        <tr>
-          <th>Product</th>
-          <th>Category</th>
-          <th>Unit</th>
-          <th>Stock</th>
-          <th>Cost Price</th>
-          <th>Sell Price</th>
-          <th>Value</th>
-        </tr>
-      </thead>
-      <tbody>
-        <tr *ngFor="let p of products">
-          <td class="product-name">{{ p.product_name }}</td>
-          <td><span class="category-badge">{{ p.category || '—' }}</span></td>
-          <td>{{ p.unit || '—' }}</td>
-          <td>{{ p.calculated_stock || 0 }}</td>
-          <td>Rs. {{ p.cost_price | number:'1.0-0' }}</td>
-          <td>Rs. {{ p.selling_price | number:'1.0-0' }}</td>
-          <td class="amount">Rs. {{ (p.calculated_stock || 0) * (p.cost_price || 0) | number:'1.0-0' }}</td>
-        </tr>
-        <tr class="total-row">
-          <td colspan="6"><strong>Total Inventory Value</strong></td>
-          <td class="amount"><strong>Rs. {{ totalInventoryValue | number:'1.0-0' }}</strong></td>
-        </tr>
-      </tbody>
-    </table>
-  </div>
-
   <!-- Purchases Table -->
   <div class="table-card" style="margin-top:20px;">
     <h4>📥 Purchases</h4>

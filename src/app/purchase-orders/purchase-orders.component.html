@@ -43,8 +43,6 @@
         <tr *ngFor="let row of pendingRows; let i = index" class="pending-row">
           <td class="row-plus-cell"><button class="row-plus-btn" (click)="addRowAfter(i)">+</button></td>
           <td>
-            <!-- 🔥 FIX: [ngValue] instead of [value] so product_id stays a NUMBER
-                 and matches products[].product_id in onProductSelect() -->
             <select class="inline-input" [(ngModel)]="row.product_id" (change)="onProductSelect(row)">
               <option [ngValue]="null">Select Product</option>
               <option *ngFor="let p of products" [ngValue]="p.product_id">
@@ -60,15 +58,16 @@
           </td>
           <td><input class="inline-input" type="date" [(ngModel)]="row.date"/></td>
           <td><input class="inline-input" type="number" [(ngModel)]="row.quantity" placeholder="0" min="0"/></td>
+          <!-- 🔥 FIX: Cost Price is now editable (removed disabled, changed to number) -->
           <td>
             <input
-              class="inline-input cost-display"
-              type="text"
+              class="inline-input"
+              type="number"
               [(ngModel)]="row.cost_price"
-              disabled
-              placeholder="—"
+              placeholder="0"
+              step="0.01"
             />
-            <span class="auto-fill-hint" *ngIf="row.cost_price && row.cost_price > 0">Auto-filled</span>
+            <span class="auto-fill-hint" *ngIf="row.cost_price && row.cost_price > 0">Auto-filled (editable)</span>
           </td>
           <td class="amount">Rs. {{ (row.quantity || 0) * (row.cost_price || 0) | number:'1.0-0' }}</td>
           <td>
@@ -107,8 +106,6 @@
           <ng-container *ngIf="editingId === o.purchase_id">
             <td></td>
             <td>
-              <!-- 🔥 FIX: [ngValue] here too, and now wired to onProductSelect
-                   so cost_price updates if the user changes the product while editing -->
               <select class="inline-input" [(ngModel)]="editForm.product_id" (change)="onProductSelect(editForm)">
                 <option *ngFor="let p of products" [ngValue]="p.product_id">{{ p.product_name }}</option>
               </select>
@@ -121,12 +118,14 @@
             </td>
             <td><input class="inline-input" type="date" [(ngModel)]="editForm.date"/></td>
             <td><input class="inline-input" type="number" [(ngModel)]="editForm.quantity" min="0"/></td>
+            <!-- 🔥 FIX: Edit mode cost price is now editable (removed disabled, changed to number) -->
             <td>
               <input
-                class="inline-input cost-display"
-                type="text"
+                class="inline-input"
+                type="number"
                 [(ngModel)]="editForm.cost_price"
-                disabled
+                placeholder="0"
+                step="0.01"
               />
             </td>
             <td class="amount">Rs. {{ (editForm.quantity || 0) * (editForm.cost_price || 0) | number:'1.0-0' }}</td>

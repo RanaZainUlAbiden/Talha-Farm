@@ -58,7 +58,8 @@ export class LayoutComponent implements OnInit, OnDestroy {
   { label: 'Sales Orders',  icon: '📤', route: 'sales-orders'         },
   { label: 'Customers',     icon: '👥', route: 'customer-management'  },
   { label: 'Suppliers',     icon: '🏭', route: 'supplier-management'  },
-  { label: 'Account Ledger',icon: '📊', route: 'account-ledger'       }, // NEW
+  { label: 'Account Ledger',icon: '📊', route: 'account-ledger'       }, 
+  { label: 'Expense Ledger', icon: '💳', route: 'expense-ledger' },// NEW
   // { label: 'Income',        icon: '📈', route: 'income'               },
   { label: 'Report',        icon: '📄', route: 'distribution-report'  }
 ];

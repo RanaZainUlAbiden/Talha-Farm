@@ -13,21 +13,57 @@ import { ConfirmDialogComponent } from '../shared/components/confirm-dialog/conf
   styleUrl: './supplier-management.component.scss'
 })
 export class SupplierManagementComponent implements OnInit {
-  currentFarm: any = null; suppliers: any[] = []; showNewRow = false; editingId: number | null = null;
-  editForm: any = {}; showDeleteDialog = false; deletingId: number | null = null; isSaving = false; errorMessage = '';
+  currentFarm: any = null;
+  suppliers: any[] = [];
+  showNewRow = false;
+  editingId: number | null = null;
+  editForm: any = {};
+  showDeleteDialog = false;
+  deletingId: number | null = null;
+  isSaving = false;
+  errorMessage = '';
+  isLoading = false;
+  
   newRow = { supplier_name: '', phone: '', products_supplied: '' };
 
   constructor(private db: DatabaseService, private authService: AuthService, private cdr: ChangeDetectorRef) {}
-  ngOnInit() { this.currentFarm = this.authService.getCurrentFarm(); this.loadSuppliers(); }
-
-  async loadSuppliers() {
-    const r = await this.db.get('SELECT * FROM suppliers WHERE farm_id=? ORDER BY supplier_name ASC', [this.currentFarm.farm_id]);
-    this.suppliers = r.success ? r.data : []; this.cdr.detectChanges();
+  
+  ngOnInit() {
+    this.currentFarm = this.authService.getCurrentFarm();
+    this.loadSuppliers();
   }
-  addNewRow() { this.showNewRow = true; this.errorMessage = ''; this.newRow = { supplier_name: '', phone: '', products_supplied: '' }; }
-  cancelNewRow() { this.showNewRow = false; }
 
-  // Phone is optional, but if entered must be 7–15 digits (allow + - spaces).
+  // 🔥 FIX: Use getAllSuppliersWithBalance to get outstanding_balance
+  async loadSuppliers() {
+    this.isLoading = true;
+    this.errorMessage = '';
+    try {
+      const r = await this.db.getAllSuppliersWithBalance(this.currentFarm.farm_id);
+      this.suppliers = r.success ? r.data : [];
+      this.cdr.detectChanges();
+    } catch (err: any) {
+      this.errorMessage = 'Failed to load suppliers: ' + err.message;
+    } finally {
+      this.isLoading = false;
+      this.cdr.detectChanges();
+    }
+  }
+
+  // Total payable across all suppliers (sum of outstanding_balance)
+  getTotalPayable(): number {
+    return this.suppliers.reduce((sum, s) => sum + (s.outstanding_balance || 0), 0);
+  }
+
+  addNewRow() {
+    this.showNewRow = true;
+    this.errorMessage = '';
+    this.newRow = { supplier_name: '', phone: '', products_supplied: '' };
+  }
+  
+  cancelNewRow() {
+    this.showNewRow = false;
+  }
+
   isValidPhone(phone: string): boolean {
     if (!phone || !phone.trim()) return true;
     const digits = phone.replace(/[\s\-()+]/g, '');
@@ -37,23 +73,79 @@ export class SupplierManagementComponent implements OnInit {
   async saveNewRow() {
     if (!this.newRow.supplier_name.trim()) return;
     if (!this.isValidPhone(this.newRow.phone)) {
-      this.errorMessage = 'Enter a valid phone number (7–15 digits).'; this.cdr.detectChanges(); return;
+      this.errorMessage = 'Enter a valid phone number (7–15 digits).';
+      this.cdr.detectChanges();
+      return;
     }
-    this.isSaving = true; this.showNewRow = false; this.errorMessage = '';
-    await this.db.run('INSERT INTO suppliers (farm_id, supplier_name, phone, products_supplied) VALUES (?,?,?,?)', [this.currentFarm.farm_id, this.newRow.supplier_name, this.newRow.phone, this.newRow.products_supplied]);
-    this.isSaving = false; await this.loadSuppliers();
+    this.isSaving = true;
+    this.showNewRow = false;
+    this.errorMessage = '';
+    try {
+      await this.db.run(
+        'INSERT INTO suppliers (farm_id, supplier_name, phone, products_supplied) VALUES (?,?,?,?)',
+        [this.currentFarm.farm_id, this.newRow.supplier_name, this.newRow.phone, this.newRow.products_supplied]
+      );
+      await this.loadSuppliers();
+    } catch (err: any) {
+      this.errorMessage = 'Failed to save supplier: ' + err.message;
+    } finally {
+      this.isSaving = false;
+      this.cdr.detectChanges();
+    }
   }
-  startEdit(s: any) { this.editingId = s.supplier_id; this.errorMessage = ''; this.editForm = { supplier_name: s.supplier_name, phone: s.phone, products_supplied: s.products_supplied }; }
-  cancelEdit() { this.editingId = null; }
+
+  startEdit(s: any) {
+    this.editingId = s.supplier_id;
+    this.errorMessage = '';
+    this.editForm = {
+      supplier_name: s.supplier_name,
+      phone: s.phone,
+      products_supplied: s.products_supplied
+    };
+  }
+
+  cancelEdit() {
+    this.editingId = null;
+  }
+
   async saveEdit(id: number) {
     if (!this.isValidPhone(this.editForm.phone)) {
-      this.errorMessage = 'Enter a valid phone number (7–15 digits).'; this.cdr.detectChanges(); return;
+      this.errorMessage = 'Enter a valid phone number (7–15 digits).';
+      this.cdr.detectChanges();
+      return;
     }
     this.errorMessage = '';
-    await this.db.run('UPDATE suppliers SET supplier_name=?, phone=?, products_supplied=? WHERE supplier_id=?', [this.editForm.supplier_name, this.editForm.phone, this.editForm.products_supplied, id]);
-    this.editingId = null; await this.loadSuppliers();
+    try {
+      await this.db.run(
+        'UPDATE suppliers SET supplier_name=?, phone=?, products_supplied=? WHERE supplier_id=?',
+        [this.editForm.supplier_name, this.editForm.phone, this.editForm.products_supplied, id]
+      );
+      this.editingId = null;
+      await this.loadSuppliers();
+    } catch (err: any) {
+      this.errorMessage = 'Failed to update supplier: ' + err.message;
+      this.cdr.detectChanges();
+    }
   }
-  confirmDelete(id: number) { this.deletingId = id; this.showDeleteDialog = true; }
-  async onDeleteConfirmed() { await this.db.run('DELETE FROM suppliers WHERE supplier_id=?', [this.deletingId]); this.showDeleteDialog = false; await this.loadSuppliers(); }
-  onDeleteCancelled() { this.showDeleteDialog = false; }
+
+  confirmDelete(id: number) {
+    this.deletingId = id;
+    this.showDeleteDialog = true;
+  }
+
+  async onDeleteConfirmed() {
+    try {
+      await this.db.run('DELETE FROM suppliers WHERE supplier_id=?', [this.deletingId]);
+      this.showDeleteDialog = false;
+      await this.loadSuppliers();
+    } catch (err: any) {
+      this.errorMessage = 'Failed to delete supplier: ' + err.message;
+      this.showDeleteDialog = false;
+      this.cdr.detectChanges();
+    }
+  }
+
+  onDeleteCancelled() {
+    this.showDeleteDialog = false;
+  }
 }

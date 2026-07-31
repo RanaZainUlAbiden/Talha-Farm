@@ -4,6 +4,9 @@
       <button class="btn-back" (click)="goBack()" *ngIf="selectedSupplier">← Back to Suppliers</button>
       <h2>{{ selectedSupplier ? selectedSupplier.supplier_name + ' - Ledger' : 'Supplier Ledger' }}</h2>
       <p class="subtitle" *ngIf="!selectedSupplier">{{ currentFarm?.farm_name }}</p>
+      <p *ngIf="selectedSupplier" class="payable-badge">
+        Total Payable: Rs. {{ getSupplierBalance() | number:'1.0-0' }}
+      </p>
     </div>
     <div class="header-actions" *ngIf="selectedSupplier">
       <button class="btn-primary" (click)="openPaymentForm()">+ Make Payment</button>
@@ -56,6 +59,8 @@
             <th>Supplier Name</th>
             <th>Phone</th>
             <th>Products Supplied</th>
+            <!-- 🔥 NEW COLUMN: Total Payable -->
+            <th class="amount-header">Total Payable</th>
             <th>Actions</th>
           </tr>
         </thead>
@@ -64,12 +69,16 @@
             <td class="supplier-name">{{ s.supplier_name }}</td>
             <td>{{ s.phone || '—' }}</td>
             <td>{{ s.products_supplied || '—' }}</td>
+            <td class="amount" [class.outstanding]="s.outstanding_balance > 0">
+              Rs. {{ s.outstanding_balance | number:'1.0-0' }}
+            </td>
             <td>
               <button class="btn-view-ledger" (click)="selectSupplier(s)">View Ledger</button>
             </td>
           </tr>
           <tr *ngIf="filteredSuppliers.length === 0">
-            <td colspan="4" class="empty-row">
+            <!-- 🔥 Adjusted colspan to 5 -->
+            <td colspan="5" class="empty-row">
               {{ searchTerm ? 'No suppliers found matching "' + searchTerm + '"' : 'No suppliers found' }}
             </td>
           </tr>
@@ -90,7 +99,7 @@
         <span class="summary-value">Rs. {{ getTotalCredit() | number:'1.0-0' }}</span>
       </div>
       <div class="summary-item">
-        <span class="summary-label">Current Balance</span>
+        <span class="summary-label">Total Payable</span>
         <span class="summary-value" [class.outstanding]="getSupplierBalance() > 0">
           Rs. {{ getSupplierBalance() | number:'1.0-0' }}
         </span>
@@ -123,7 +132,7 @@
             </td>
           </tr>
           <tr *ngIf="ledgerEntries.length === 0">
-            <td colspan="6" class="empty-row">No transactions found</td>
+            <td colspan="7" class="empty-row">No transactions found</td>
           </tr>
         </tbody>
       </table>
@@ -138,7 +147,7 @@
           <input class="form-control" [value]="selectedSupplier.supplier_name" disabled/>
         </div>
         <div class="form-group">
-          <label>Outstanding Balance</label>
+          <label>Total Payable</label>
           <input class="form-control" [value]="'Rs. ' + (getSupplierBalance() | number:'1.0-0')" disabled/>
         </div>
         <div class="form-group">
