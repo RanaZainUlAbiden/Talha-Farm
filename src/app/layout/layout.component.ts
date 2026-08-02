@@ -53,7 +53,6 @@ export class LayoutComponent implements OnInit, OnDestroy {
   ];
 
   distributionMenu = [
-      { label: 'Batches',       icon: '📦', route: 'distribution-batch' },
   { label: 'Inventory',     icon: '📦', route: 'inventory'            },
   { label: 'Purchase',      icon: '📥', route: 'purchase-orders'      },
   { label: 'Sales Orders',  icon: '📤', route: 'sales-orders'         },

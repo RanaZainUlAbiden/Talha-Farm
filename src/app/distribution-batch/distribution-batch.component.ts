@@ -289,6 +289,6 @@ export class DistributionBatchComponent implements OnInit {
   }
 
   goBack() {
-    this.router.navigate(['/inventory']);
+   this.router.navigate(['/app/inventory']);
   }
 }

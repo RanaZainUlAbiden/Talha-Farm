@@ -1,8 +1,9 @@
-import { Component, OnInit, ChangeDetectorRef } from '@angular/core';
+import { Component, OnInit, ChangeDetectorRef, OnDestroy } from '@angular/core';
 import { CommonModule } from '@angular/common';
 import { FormsModule } from '@angular/forms';
 import { DatabaseService } from '../shared/services/database.service';
 import { AuthService } from '../shared/services/auth.service';
+import { FormStateService } from '../shared/services/form-state.service';
 import { ConfirmDialogComponent } from '../shared/components/confirm-dialog/confirm-dialog.component';
 import { DateOnlyPipe } from '../shared/pipes/date-format.pipe';
 import { PaginationComponent } from '../shared/components/pagination/pagination.component';
@@ -14,11 +15,12 @@ import { PaginationComponent } from '../shared/components/pagination/pagination.
   templateUrl: './purchase-orders.component.html',
   styleUrl: './purchase-orders.component.scss'
 })
-export class PurchaseOrdersComponent implements OnInit {
+export class PurchaseOrdersComponent implements OnInit, OnDestroy {
   currentFarm: any = null;
   products: any[] = [];
   suppliers: any[] = [];
   orders: any[] = [];
+  filteredOrders: any[] = [];
   pendingRows: any[] = [];
   editingId: number | null = null;
   editForm: any = {};
@@ -27,29 +29,164 @@ export class PurchaseOrdersComponent implements OnInit {
   isSaving = false;
   isSavingAll = false;
   errorMessage = '';
+  isLoading = true;
+  searchTerm: string = '';
 
   currentPage = 1;
-  pageSize = 20;
+  pageSize = 15; // Changed from 20 to 15
+
+  // ── STATE PERSISTENCY KEYS ────────────────────────────────
+  private readonly FORM_KEY = 'purchase_orders_form_state';
+  private saveTimeout: any = null;
 
   get paginatedOrders() {
     const start = (this.currentPage - 1) * this.pageSize;
-    return this.orders.slice(start, start + this.pageSize);
+    const dataToShow = this.searchTerm ? this.filteredOrders : this.orders;
+    return dataToShow.slice(start, start + this.pageSize);
+  }
+
+  get totalItems() {
+    return this.searchTerm ? this.filteredOrders.length : this.orders.length;
   }
 
   get hasPendingRows() { return this.pendingRows.length > 0; }
 
-  constructor(private db: DatabaseService, private authService: AuthService, private cdr: ChangeDetectorRef) {}
+  constructor(
+    private db: DatabaseService,
+    private authService: AuthService,
+    private cdr: ChangeDetectorRef,
+    private formState: FormStateService
+  ) {}
 
-  ngOnInit() { this.currentFarm = this.authService.getCurrentFarm(); this.loadData(); }
+  ngOnInit() {
+    this.currentFarm = this.authService.getCurrentFarm();
+    this.loadData();
+  }
+
+  ngOnDestroy() {
+    // Save state when component is destroyed
+    if (this.pendingRows.length > 0 && !this.isSavingAll) {
+      this.saveState();
+    }
+    if (this.saveTimeout) {
+      clearTimeout(this.saveTimeout);
+    }
+  }
+
+  // ── STATE PERSISTENCY METHODS ─────────────────────────────
+
+  private saveState(): void {
+    if (this.saveTimeout) {
+      clearTimeout(this.saveTimeout);
+    }
+    this.saveTimeout = setTimeout(() => {
+      if (this.pendingRows.length > 0) {
+        const state = {
+          pendingRows: this.pendingRows,
+          currentPage: this.currentPage,
+          searchTerm: this.searchTerm
+        };
+        this.formState.saveState(this.FORM_KEY, state);
+        console.log('💾 Purchase orders state auto-saved');
+      } else {
+        this.formState.clearState(this.FORM_KEY);
+      }
+    }, 500);
+  }
+
+  private restoreState(): void {
+    const state = this.formState.getState(this.FORM_KEY);
+    if (state && state.pendingRows && state.pendingRows.length > 0) {
+      console.log('📂 Restoring Purchase Orders form state:', state);
+      this.pendingRows = state.pendingRows;
+      if (state.currentPage) {
+        this.currentPage = state.currentPage;
+      }
+      if (state.searchTerm) {
+        this.searchTerm = state.searchTerm;
+        this.filterOrders();
+      }
+      this.cdr.detectChanges();
+    }
+  }
+
+  // ── AUTO-SAVE ──────────────────────────────────────────────
+
+  onFormChange(): void {
+    if (this.pendingRows.length > 0) {
+      this.saveState();
+    }
+  }
+
+  // ── SEARCH / FILTER ────────────────────────────────────────
+
+  filterOrders() {
+    if (!this.searchTerm.trim()) {
+      this.filteredOrders = [];
+      this.currentPage = 1;
+      this.cdr.detectChanges();
+      return;
+    }
+    
+    const term = this.searchTerm.toLowerCase().trim();
+    this.filteredOrders = this.orders.filter(o => {
+      // Get supplier name
+      const supplier = this.suppliers.find(s => s.supplier_id === o.supplier_id);
+      const supplierName = supplier ? supplier.supplier_name.toLowerCase() : '';
+      
+      // Also search by product name, bill number, or date if needed
+      const product = this.products.find(p => p.product_id === o.product_id);
+      const productName = product ? product.product_name.toLowerCase() : '';
+      
+      return supplierName.includes(term) || 
+             productName.includes(term) ||
+             o.notes?.toLowerCase().includes(term) ||
+             o.date?.includes(term);
+    });
+    
+    this.currentPage = 1;
+    this.cdr.detectChanges();
+    this.onFormChange();
+  }
+
+  clearSearch() {
+    this.searchTerm = '';
+    this.filteredOrders = [];
+    this.currentPage = 1;
+    this.cdr.detectChanges();
+    this.onFormChange();
+  }
 
   async loadData() {
-    const pr = await this.db.get('SELECT * FROM products WHERE farm_id=?', [this.currentFarm.farm_id]);
-    this.products = pr.success ? pr.data : [];
-    const sr = await this.db.get('SELECT * FROM suppliers WHERE farm_id=?', [this.currentFarm.farm_id]);
-    this.suppliers = sr.success ? sr.data : [];
-    const or = await this.db.get('SELECT * FROM purchase_orders WHERE farm_id=? ORDER BY date DESC', [this.currentFarm.farm_id]);
-    this.orders = or.success ? or.data : [];
-    this.cdr.detectChanges();
+    this.isLoading = true;
+    this.errorMessage = '';
+    
+    try {
+      const pr = await this.db.get('SELECT * FROM products WHERE farm_id=? ORDER BY product_name ASC', [this.currentFarm.farm_id]);
+      this.products = pr.success ? pr.data : [];
+      
+      const sr = await this.db.get('SELECT * FROM suppliers WHERE farm_id=? ORDER BY supplier_name ASC', [this.currentFarm.farm_id]);
+      this.suppliers = sr.success ? sr.data : [];
+      
+      const or = await this.db.get('SELECT * FROM purchase_orders WHERE farm_id=? ORDER BY date DESC', [this.currentFarm.farm_id]);
+      this.orders = or.success ? or.data : [];
+      
+      // 🔥 Restore state AFTER data is loaded
+      this.restoreState();
+      
+      // Apply search if there's a search term
+      if (this.searchTerm) {
+        this.filterOrders();
+      }
+      
+      this.cdr.detectChanges();
+    } catch (error: any) {
+      this.errorMessage = 'Failed to load data: ' + error.message;
+      console.error('Load error:', error);
+    } finally {
+      this.isLoading = false;
+      this.cdr.detectChanges();
+    }
   }
 
   getProductName(id: number) { return this.products.find(p => p.product_id === id)?.product_name || '—'; }
@@ -57,7 +194,7 @@ export class PurchaseOrdersComponent implements OnInit {
 
   makeNewRow() { 
     return { 
-      product_id: this.products[0]?.product_id, 
+      product_id: this.products[0]?.product_id || null, 
       supplier_id: null, 
       date: new Date().toISOString().split('T')[0], 
       quantity: null, 
@@ -70,25 +207,29 @@ export class PurchaseOrdersComponent implements OnInit {
   addPendingRow() { 
     if (!this.isSaving) {
       this.pendingRows.push(this.makeNewRow());
+      this.onFormChange();
+      this.cdr.detectChanges();
     }
   }
 
   addRowAfter(i: number) { 
-    this.pendingRows.splice(i + 1, 0, this.makeNewRow()); 
+    this.pendingRows.splice(i + 1, 0, this.makeNewRow());
+    this.onFormChange();
+    this.cdr.detectChanges();
   }
 
   removePendingRow(i: number) { 
-    this.pendingRows.splice(i, 1); 
+    this.pendingRows.splice(i, 1);
+    this.onFormChange();
+    this.cdr.detectChanges();
   }
 
-  // 🔥 FIX: Auto-fill cost price and unit when product is selected
   onProductSelect(row: any) {
     if (!row.product_id) {
       row.cost_price = null;
       row.unit = null;
       return;
     }
-    
     const product = this.products.find(p => p.product_id === row.product_id);
     if (product) {
       if (product.cost_price) {
@@ -98,13 +239,11 @@ export class PurchaseOrdersComponent implements OnInit {
         row.cost_price = 0;
         console.warn(`⚠️ No cost price found for ${product.product_name}`);
       }
-      
       if (product.unit) {
         row.unit = product.unit;
       }
-      
-      console.log(`📦 Product selected: ${product.product_name} | Cost: Rs. ${product.cost_price} | Unit: ${product.unit}`);
     }
+    this.onFormChange();
   }
 
   // ── BATCH OPERATIONS ─────────────────────────────────────
@@ -140,8 +279,6 @@ export class PurchaseOrdersComponent implements OnInit {
     }
   }
 
-  // 🔥 REMOVED syncCost() – no longer used
-
   // ── SUPPLIER LEDGER INTEGRATION ─────────────────────────
 
   async addToSupplierLedger(supplierId: number, purchaseId: number, amount: number, paymentType: string, notes: string) {
@@ -149,12 +286,9 @@ export class PurchaseOrdersComponent implements OnInit {
       console.warn('⚠️ No supplier ID provided, skipping ledger entry');
       return;
     }
-    
     const isPaid = paymentType?.toLowerCase() === 'cash';
     const credit = amount;
     const debit = isPaid ? amount : 0;
-    
-    console.log(`📝 Adding to supplier ledger: Supplier=${supplierId}, Purchase=${purchaseId}, Amount=${amount}, Type=${paymentType}, Debit=${debit}, Credit=${credit}`);
     
     try {
       const result = await this.db.addSupplierLedgerEntry({
@@ -166,7 +300,6 @@ export class PurchaseOrdersComponent implements OnInit {
         reference_type: 'purchase',
         reference_id: purchaseId
       });
-      
       console.log(`✅ Added ${amount} to supplier ${supplierId} ledger (${paymentType})`, result);
     } catch (error) {
       console.error('❌ Failed to add supplier ledger entry:', error);
@@ -176,7 +309,6 @@ export class PurchaseOrdersComponent implements OnInit {
 
   async removeFromSupplierLedger(purchaseId: number, supplierId: number) {
     if (!supplierId) return;
-    
     try {
       await this.db.run('DELETE FROM supplier_ledger WHERE reference_id = ? AND reference_type = ?', [purchaseId, 'purchase']);
       console.log(`✅ Removed purchase ${purchaseId} from supplier ${supplierId} ledger`);
@@ -189,7 +321,6 @@ export class PurchaseOrdersComponent implements OnInit {
     if (oldSupplierId) {
       await this.db.run('DELETE FROM supplier_ledger WHERE reference_id = ? AND reference_type = ?', [purchaseId, 'purchase']);
     }
-    
     if (supplierId) {
       const isPaid = paymentType?.toLowerCase() === 'cash';
       await this.db.addSupplierLedgerEntry({
@@ -202,7 +333,6 @@ export class PurchaseOrdersComponent implements OnInit {
         reference_id: purchaseId
       });
     }
-    
     console.log(`✅ Updated supplier ledger for purchase ${purchaseId}`);
   }
 
@@ -227,39 +357,29 @@ export class PurchaseOrdersComponent implements OnInit {
         const totalAmount = row.quantity * row.cost_price;
         const paymentType = row.payment_type || 'credit';
         
-        console.log(`📝 Saving purchase: Product=${row.product_id}, Supplier=${row.supplier_id}, Total=${totalAmount}, Payment=${paymentType}`);
-        
         const result = await this.db.run(
           'INSERT INTO purchase_orders (farm_id, supplier_id, product_id, date, quantity, cost_price, total_amount, payment_type, notes) VALUES (?,?,?,?,?,?,?,?,?)',
           [this.currentFarm.farm_id, row.supplier_id, row.product_id, row.date, row.quantity, row.cost_price, totalAmount, paymentType, row.notes]
         );
         
-        console.log('📝 Purchase save result:', result);
-        
         if (result.success) {
           const purchaseId = result.lastId;
-          
-          console.log(`📝 Purchase ID: ${purchaseId}`);
-          
           const isValidPurchaseId = typeof purchaseId === 'number' && purchaseId > 0;
           if (row.supplier_id && isValidPurchaseId) {
             await this.addToSupplierLedger(row.supplier_id, purchaseId, totalAmount, paymentType, row.notes);
-          } else {
-            console.warn(`⚠️ Skipping supplier ledger - supplier_id=${row.supplier_id}, purchaseId=${purchaseId}`);
           }
-          
-          // ✅ Update inventory using BATCHES – this does not affect product cost
           await this.updateInventoryWithBatch(row.product_id, row.quantity, row.cost_price);
-          
-          // ❌ REMOVED: await this.syncCost(row.product_id, row.cost_price);
-          // Product cost remains unchanged, only purchase order's cost_price is saved.
         } else {
           console.error('❌ Failed to save purchase:', result.error);
           this.errorMessage = 'Failed to save purchase: ' + result.error;
         }
       }
       
+      // Clear state on successful save
+      this.formState.clearState(this.FORM_KEY);
       this.pendingRows = [];
+      this.searchTerm = '';
+      this.filteredOrders = [];
       await this.loadData();
       
     } catch (error: any) {
@@ -267,10 +387,15 @@ export class PurchaseOrdersComponent implements OnInit {
       this.errorMessage = 'Error saving: ' + error.message;
     } finally {
       this.isSavingAll = false;
+      this.cdr.detectChanges();
     }
   }
 
-  cancelAllRows() { this.pendingRows = []; }
+  cancelAllRows() {
+    this.pendingRows = [];
+    this.formState.clearState(this.FORM_KEY);
+    this.cdr.detectChanges();
+  }
 
   startEdit(o: any) { 
     this.editingId = o.purchase_id; 
@@ -286,9 +411,13 @@ export class PurchaseOrdersComponent implements OnInit {
       old_quantity: o.quantity,
       old_supplier_id: o.supplier_id
     }; 
+    this.cdr.detectChanges();
   }
   
-  cancelEdit() { this.editingId = null; }
+  cancelEdit() { 
+    this.editingId = null; 
+    this.cdr.detectChanges();
+  }
 
   async saveEdit(id: number) {
     try {
@@ -336,14 +465,13 @@ export class PurchaseOrdersComponent implements OnInit {
         await this.deductFromBatches(this.editForm.product_id, Math.abs(diff));
       }
       
-      // ❌ REMOVED: await this.syncCost(this.editForm.product_id, this.editForm.cost_price);
-      
       this.editingId = null;
       await this.loadData();
       
     } catch (error: any) {
       console.error('❌ Error saving edit:', error);
       this.errorMessage = 'Error saving edit: ' + error.message;
+      this.cdr.detectChanges();
     }
   }
 
@@ -384,7 +512,11 @@ export class PurchaseOrdersComponent implements OnInit {
     }
   }
 
-  confirmDelete(id: number) { this.deletingId = id; this.showDeleteDialog = true; }
+  confirmDelete(id: number) { 
+    this.deletingId = id; 
+    this.showDeleteDialog = true; 
+    this.cdr.detectChanges();
+  }
 
   async onDeleteConfirmed() {
     try {
@@ -402,8 +534,12 @@ export class PurchaseOrdersComponent implements OnInit {
     } catch (error: any) {
       console.error('❌ Error deleting:', error);
       this.errorMessage = 'Error deleting: ' + error.message;
+      this.cdr.detectChanges();
     }
   }
   
-  onDeleteCancelled() { this.showDeleteDialog = false; }
+  onDeleteCancelled() { 
+    this.showDeleteDialog = false; 
+    this.cdr.detectChanges();
+  }
 }

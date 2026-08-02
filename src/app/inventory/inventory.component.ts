@@ -1,9 +1,10 @@
-import { Component, OnInit, ChangeDetectorRef, AfterViewInit } from '@angular/core';
+import { Component, OnInit, ChangeDetectorRef, AfterViewInit, OnDestroy } from '@angular/core';
 import { CommonModule } from '@angular/common';
 import { FormsModule } from '@angular/forms';
 import { Router } from '@angular/router';
 import { DatabaseService } from '../shared/services/database.service';
 import { AuthService } from '../shared/services/auth.service';
+import { FormStateService } from '../shared/services/form-state.service';
 import { ConfirmDialogComponent } from '../shared/components/confirm-dialog/confirm-dialog.component';
 import { PaginationComponent } from '../shared/components/pagination/pagination.component';
 
@@ -14,7 +15,7 @@ import { PaginationComponent } from '../shared/components/pagination/pagination.
   templateUrl: './inventory.component.html',
   styleUrl: './inventory.component.scss'
 })
-export class InventoryComponent implements OnInit, AfterViewInit {
+export class InventoryComponent implements OnInit, AfterViewInit, OnDestroy {
   currentFarm: any = null;
   products: any[] = [];
   filteredProducts: any[] = [];
@@ -42,6 +43,9 @@ export class InventoryComponent implements OnInit, AfterViewInit {
   currentPage = 1;
   pageSize = 20;
 
+  // ── STATE PERSISTENCY KEYS ────────────────────────────────
+  private readonly FORM_KEY = 'inventory_form_state';
+
   get paginatedProducts() {
     const start = (this.currentPage - 1) * this.pageSize;
     const dataToShow = this.searchTerm ? this.filteredProducts : this.products;
@@ -56,7 +60,8 @@ export class InventoryComponent implements OnInit, AfterViewInit {
     private db: DatabaseService,
     private authService: AuthService,
     private cdr: ChangeDetectorRef,
-    private router: Router
+    private router: Router,
+    private formState: FormStateService
   ) {}
 
   ngOnInit() { 
@@ -66,6 +71,54 @@ export class InventoryComponent implements OnInit, AfterViewInit {
 
   ngAfterViewInit() {
     this.cdr.detectChanges();
+  }
+
+  ngOnDestroy() {
+    // Save state when component is destroyed
+    if (this.showNewRow && !this.isSaving) {
+      this.saveState();
+    }
+  }
+
+  // ── STATE PERSISTENCY METHODS ─────────────────────────────
+
+  private saveState(): void {
+    if (this.showNewRow) {
+      const state = {
+        showNewRow: this.showNewRow,
+        newRow: this.newRow,
+        searchTerm: this.searchTerm,
+        currentPage: this.currentPage
+      };
+      this.formState.saveState(this.FORM_KEY, state);
+      console.log('💾 Inventory state auto-saved');
+    }
+  }
+
+  private restoreState(): void {
+    const state = this.formState.getState(this.FORM_KEY);
+    if (state && state.showNewRow) {
+      console.log('📂 Restoring Inventory form state:', state);
+      this.showNewRow = state.showNewRow;
+      if (state.newRow) {
+        this.newRow = { ...this.newRow, ...state.newRow };
+      }
+      if (state.searchTerm) {
+        this.searchTerm = state.searchTerm;
+      }
+      if (state.currentPage) {
+        this.currentPage = state.currentPage;
+      }
+      this.cdr.detectChanges();
+    }
+  }
+
+  // ── AUTO-SAVE ON INPUT CHANGE ─────────────────────────────
+
+  onFormChange(): void {
+    if (this.showNewRow) {
+      this.saveState();
+    }
   }
 
   filterProducts() {
@@ -78,11 +131,12 @@ export class InventoryComponent implements OnInit, AfterViewInit {
     const term = this.searchTerm.toLowerCase().trim();
     this.filteredProducts = this.products.filter(p => 
       p.product_name.toLowerCase().includes(term) ||
-      p.category.toLowerCase().includes(term) ||
+      (p.category && p.category.toLowerCase().includes(term)) ||
       (p.unit && p.unit.toLowerCase().includes(term))
     );
     this.currentPage = 1;
     this.cdr.detectChanges();
+    this.onFormChange();
   }
 
   clearSearch() {
@@ -90,6 +144,7 @@ export class InventoryComponent implements OnInit, AfterViewInit {
     this.filteredProducts = [];
     this.currentPage = 1;
     this.cdr.detectChanges();
+    this.onFormChange();
   }
 
   async loadProducts() {
@@ -98,14 +153,22 @@ export class InventoryComponent implements OnInit, AfterViewInit {
     try {
       const r = await this.db.get('SELECT * FROM products WHERE farm_id=? ORDER BY product_name ASC', [this.currentFarm.farm_id]);
       this.products = r.success ? r.data : [];
+      
       await this.db.updateBatchStatuses();
+      
       for (const product of this.products) {
         await this.loadBatchDataForProduct(product);
       }
+      
+      // 🔥 Restore state AFTER products are loaded
+      this.restoreState();
+      
       if (this.searchTerm) this.filterProducts();
       this.cdr.detectChanges();
+      
     } catch (error: any) {
       this.errorMessage = 'Failed to load products: ' + error.message;
+      console.error('Load error:', error);
     } finally {
       this.isLoading = false;
       this.cdr.detectChanges();
@@ -120,7 +183,6 @@ export class InventoryComponent implements OnInit, AfterViewInit {
       const batches = batchesResult.success && batchesResult.data ? batchesResult.data : [];
       const batchCount = batches.length;
 
-      // Find earliest expiry date
       if (batches.length > 0) {
         const sorted = [...batches].sort((a: any, b: any) => (a.expiry_date || '').localeCompare(b.expiry_date || ''));
         product.earliest_expiry = sorted[0]?.expiry_date ? sorted[0].expiry_date : null;
@@ -131,7 +193,11 @@ export class InventoryComponent implements OnInit, AfterViewInit {
       product.calculated_stock = totalStock;
       product.has_expiring_batches = hasExpiring;
       product.batch_count = batchCount;
+      
+      console.log(`📊 Product ${product.product_name}: Stock=${totalStock}, Batches=${batchCount}`);
+      
     } catch (error) {
+      console.error(`Failed to load batch data for product ${product.product_id}:`, error);
       product.calculated_stock = 0;
       product.has_expiring_batches = false;
       product.batch_count = 0;
@@ -148,15 +214,36 @@ export class InventoryComponent implements OnInit, AfterViewInit {
     return { text: '✅ OK', class: 'stock-ok' };
   }
 
-  getStockDisplay(product: any): number { return product.calculated_stock || 0; }
-  getBatchCount(product: any): number { return product.batch_count || 0; }
-  isLowStock(product: any): boolean { const s = product.calculated_stock || 0; const m = product.min_stock_alert || 0; return m > 0 && s <= m; }
-  isExpiring(product: any): boolean { return product.has_expiring_batches || false; }
+  getStockDisplay(product: any): number { 
+    return product.calculated_stock || 0; 
+  }
+  
+  getBatchCount(product: any): number { 
+    return product.batch_count || 0; 
+  }
+  
+  isLowStock(product: any): boolean { 
+    const s = product.calculated_stock || 0; 
+    const m = product.min_stock_alert || 0; 
+    return m > 0 && s <= m; 
+  }
+  
+  isExpiring(product: any): boolean { 
+    return product.has_expiring_batches || false; 
+  }
 
   openBatchManagement(productId: number) {
-    if (!productId) { this.errorMessage = 'Invalid product ID'; return; }
+    if (!productId) { 
+      this.errorMessage = 'Invalid product ID'; 
+      return; 
+    }
     const product = this.products.find(p => p.product_id === productId);
-    if (!product) { this.errorMessage = 'Product not found'; return; }
+    if (!product) { 
+      this.errorMessage = 'Product not found'; 
+      return; 
+    }
+    // Save state before navigating
+    this.saveState();
     const fullPath = `/app/distribution-batch/${productId}`;
     this.router.navigateByUrl(fullPath).catch(() => {
       this.router.navigate(['app', 'distribution-batch', productId]);
@@ -165,54 +252,107 @@ export class InventoryComponent implements OnInit, AfterViewInit {
 
   addNewRow() { 
     this.showNewRow = true; 
-    this.newRow = { product_name: '', category: 'medicine', unit: '', current_stock: 0, expiry_date: '', min_stock_alert: 0, cost_price: 0, selling_price: 0 }; 
+    this.newRow = { 
+      product_name: '', 
+      category: 'medicine', 
+      unit: '', 
+      current_stock: 0, 
+      expiry_date: '', 
+      min_stock_alert: 0, 
+      cost_price: 0, 
+      selling_price: 0 
+    }; 
     this.cdr.detectChanges();
+    this.saveState();
   }
 
-  cancelNewRow() { this.showNewRow = false; this.cdr.detectChanges(); }
+  cancelNewRow() { 
+    this.showNewRow = false; 
+    this.cdr.detectChanges();
+    this.formState.clearState(this.FORM_KEY);
+  }
 
   async saveNewRow() {
-    if (!this.newRow.product_name.trim()) { this.errorMessage = 'Product name is required'; return; }
-    this.isSaving = true; this.errorMessage = ''; this.showNewRow = false;
+    if (!this.newRow.product_name.trim()) { 
+      this.errorMessage = 'Product name is required'; 
+      return; 
+    }
+    
+    this.isSaving = true; 
+    this.errorMessage = ''; 
+    this.showNewRow = false;
+    
     try {
       const result = await this.db.run(
         'INSERT INTO products (farm_id, product_name, category, unit, current_stock, min_stock_alert, cost_price, selling_price) VALUES (?,?,?,?,?,?,?,?)',
         [this.currentFarm.farm_id, this.newRow.product_name, this.newRow.category, this.newRow.unit, 0, this.newRow.min_stock_alert, this.newRow.cost_price, this.newRow.selling_price]
       );
+      
       if (result.success) {
         const pr = await this.db.get('SELECT last_insert_rowid() as id', []);
-        const productId = pr.success && pr.data?.[0] ? pr.data[0].id : null;
+        const productId = pr.success && pr.data && pr.data.length > 0 ? pr.data[0].id : null;
+        
         if (productId) {
           const stockToAdd = this.newRow.current_stock > 0 ? this.newRow.current_stock : 0;
+          
           if (stockToAdd > 0) {
             const today = new Date().toISOString().split('T')[0];
-            const oneYearLater = new Date(); oneYearLater.setFullYear(oneYearLater.getFullYear() + 1);
+            const oneYearLater = new Date(); 
+            oneYearLater.setFullYear(oneYearLater.getFullYear() + 1);
             const expiryDate = this.newRow.expiry_date || oneYearLater.toISOString().split('T')[0];
-            await this.db.addBatch({ product_id: productId, farm_id: this.currentFarm.farm_id, manufacturing_date: today, expiry_date: expiryDate, quantity: stockToAdd, purchase_price: this.newRow.cost_price });
+            
+            await this.db.addBatch({ 
+              product_id: productId, 
+              farm_id: this.currentFarm.farm_id, 
+              manufacturing_date: today, 
+              expiry_date: expiryDate, 
+              quantity: stockToAdd, 
+              purchase_price: this.newRow.cost_price 
+            });
+            
+            console.log(`✅ Added ${stockToAdd} units to product ${this.newRow.product_name} as batch`);
           }
         }
+        
+        // 🔥 Clear state on successful save
+        this.formState.clearState(this.FORM_KEY);
         await this.loadProducts();
       } else {
         this.errorMessage = 'Failed to save: ' + (result.error || 'Unknown error');
       }
     } catch (error: any) {
       this.errorMessage = 'Failed to save: ' + error.message;
+      console.error('Save error:', error);
     } finally {
-      this.isSaving = false; this.cdr.detectChanges();
+      this.isSaving = false; 
+      this.cdr.detectChanges();
     }
   }
 
   startEdit(p: any) { 
     this.editingId = p.product_id; 
-    this.editForm = { product_name: p.product_name, category: p.category, unit: p.unit, min_stock_alert: p.min_stock_alert, cost_price: p.cost_price, selling_price: p.selling_price }; 
+    this.editForm = { 
+      product_name: p.product_name, 
+      category: p.category, 
+      unit: p.unit, 
+      min_stock_alert: p.min_stock_alert, 
+      cost_price: p.cost_price, 
+      selling_price: p.selling_price 
+    }; 
     this.cdr.detectChanges();
   }
 
-  cancelEdit() { this.editingId = null; this.cdr.detectChanges(); }
+  cancelEdit() { 
+    this.editingId = null; 
+    this.cdr.detectChanges(); 
+  }
 
   async saveEdit(id: number) {
     try {
-      await this.db.run('UPDATE products SET product_name=?, category=?, unit=?, min_stock_alert=?, cost_price=?, selling_price=? WHERE product_id=?', [this.editForm.product_name, this.editForm.category, this.editForm.unit, this.editForm.min_stock_alert, this.editForm.cost_price, this.editForm.selling_price, id]);
+      await this.db.run(
+        'UPDATE products SET product_name=?, category=?, unit=?, min_stock_alert=?, cost_price=?, selling_price=? WHERE product_id=?',
+        [this.editForm.product_name, this.editForm.category, this.editForm.unit, this.editForm.min_stock_alert, this.editForm.cost_price, this.editForm.selling_price, id]
+      );
       this.editingId = null;
       await this.loadProducts();
     } catch (error: any) {
@@ -221,13 +361,18 @@ export class InventoryComponent implements OnInit, AfterViewInit {
     }
   }
 
-  confirmDelete(id: number) { this.deletingId = id; this.showDeleteDialog = true; this.cdr.detectChanges(); }
+  confirmDelete(id: number) { 
+    this.deletingId = id; 
+    this.showDeleteDialog = true; 
+    this.cdr.detectChanges(); 
+  }
 
   async onDeleteConfirmed() {
     try {
       await this.db.run('DELETE FROM product_batches WHERE product_id = ?', [this.deletingId]);
       await this.db.run('DELETE FROM products WHERE product_id=?', [this.deletingId]);
-      this.showDeleteDialog = false; this.deletingId = null;
+      this.showDeleteDialog = false; 
+      this.deletingId = null;
       await this.loadProducts();
     } catch (error: any) {
       this.errorMessage = 'Failed to delete: ' + error.message;
@@ -235,5 +380,8 @@ export class InventoryComponent implements OnInit, AfterViewInit {
     }
   }
 
-  onDeleteCancelled() { this.showDeleteDialog = false; this.cdr.detectChanges(); }
+  onDeleteCancelled() { 
+    this.showDeleteDialog = false; 
+    this.cdr.detectChanges(); 
+  }
 }

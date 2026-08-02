@@ -151,14 +151,33 @@ export class DatabaseService {
     }
   }
 
+  // 🔥 FIXED: getTotalStock - robust status checking includes NULL/empty status
   async getTotalStock(productId: number): Promise<number> {
     const result = await this.get(
       `SELECT COALESCE(SUM(quantity), 0) as total 
        FROM product_batches 
-       WHERE product_id = ? AND status IN ('active', 'expiring') AND quantity > 0`,
+       WHERE product_id = ? 
+         AND (status = 'active' OR status = 'expiring' OR status IS NULL OR status = '')
+         AND quantity > 0`,
       [productId]
     );
     return result.success && result.data && result.data.length > 0 ? result.data[0].total : 0;
+  }
+
+  // 🔥 NEW: Debug method to check batch status
+  async debugGetTotalStock(productId: number): Promise<any> {
+    return this.get(
+      `SELECT 
+        batch_id,
+        batch_code,
+        quantity,
+        status,
+        expiry_date,
+        julianday(expiry_date) - julianday('now') as days_until_expiry
+       FROM product_batches 
+       WHERE product_id = ?`,
+      [productId]
+    );
   }
 
   async getExpiringBatches(farmId: number, monthsThreshold: number = 3): Promise<any> {
@@ -172,7 +191,7 @@ export class DatabaseService {
       FROM product_batches b
       INNER JOIN products p ON b.product_id = p.product_id
       WHERE b.farm_id = ? 
-        AND b.status IN ('active', 'expiring')
+        AND (b.status = 'active' OR b.status = 'expiring' OR b.status IS NULL OR b.status = '')
         AND b.quantity > 0
         AND julianday(b.expiry_date) - julianday('now') <= (? * 30.44)
         AND julianday(b.expiry_date) - julianday('now') > 0
@@ -186,7 +205,7 @@ export class DatabaseService {
       `SELECT COUNT(*) as count
        FROM product_batches
        WHERE product_id = ?
-         AND status IN ('active', 'expiring')
+         AND (status = 'active' OR status = 'expiring' OR status IS NULL OR status = '')
          AND quantity > 0
          AND julianday(expiry_date) - julianday('now') <= (? * 30.44)
          AND julianday(expiry_date) - julianday('now') > 0`,
@@ -239,16 +258,16 @@ export class DatabaseService {
   async updateBatchStatuses(): Promise<any> {
     return this.run(`
       UPDATE product_batches SET status = 'expired' 
-      WHERE expiry_date < date('now') AND status IN ('active', 'expiring');
+      WHERE expiry_date < date('now') AND (status IN ('active', 'expiring') OR status IS NULL OR status = '');
       
       UPDATE product_batches SET status = 'depleted' 
-      WHERE quantity <= 0 AND status IN ('active', 'expiring');
+      WHERE quantity <= 0 AND (status IN ('active', 'expiring') OR status IS NULL OR status = '');
       
       UPDATE product_batches SET status = 'expiring' 
       WHERE expiry_date >= date('now') 
         AND expiry_date <= date('now', '+3 months')
         AND quantity > 0
-        AND status = 'active';
+        AND (status = 'active' OR status IS NULL OR status = '');
     `, []);
   }
 
@@ -695,6 +714,50 @@ export class DatabaseService {
        WHERE farm_id = ?
        GROUP BY category
        ORDER BY total DESC`,
+      [farmId]
+    );
+  }
+
+  // 🔥 NEW: Force update batch statuses for a specific product
+  async forceUpdateBatchStatuses(productId: number): Promise<any> {
+    return this.run(`
+      UPDATE product_batches 
+      SET status = 'expired' 
+      WHERE product_id = ? AND expiry_date < date('now') 
+        AND (status IN ('active', 'expiring') OR status IS NULL OR status = '');
+      
+      UPDATE product_batches 
+      SET status = 'depleted' 
+      WHERE product_id = ? AND quantity <= 0 
+        AND (status IN ('active', 'expiring') OR status IS NULL OR status = '');
+      
+      UPDATE product_batches 
+      SET status = 'expiring' 
+      WHERE product_id = ? 
+        AND expiry_date >= date('now') 
+        AND expiry_date <= date('now', '+3 months')
+        AND quantity > 0
+        AND (status = 'active' OR status IS NULL OR status = '');
+    `, [productId, productId, productId]);
+  }
+
+  // 🔥 NEW: Get all batches with their calculated status
+  async getAllBatchesWithStatus(farmId: number): Promise<any> {
+    return this.get(
+      `SELECT 
+        b.*,
+        p.product_name,
+        CASE 
+          WHEN b.status = 'expired' THEN 'expired'
+          WHEN julianday(b.expiry_date) - julianday('now') <= 90 AND b.quantity > 0 THEN 'expiring'
+          WHEN b.quantity <= 0 THEN 'depleted'
+          WHEN b.status IS NULL OR b.status = '' THEN 'active'
+          ELSE b.status
+        END as calculated_status
+      FROM product_batches b
+      INNER JOIN products p ON b.product_id = p.product_id
+      WHERE b.farm_id = ?
+      ORDER BY p.product_name ASC, b.expiry_date ASC`,
       [farmId]
     );
   }

@@ -3,17 +3,44 @@
   <ng-container *ngIf="viewMode === 'list'">
     <div class="module-container">
       <div class="module-header">
-        <div><h3>Sales Orders</h3><p class="subtitle">{{ currentFarm?.farm_name }}</p></div>
-        <button class="btn-primary" (click)="onCreateNewBill()">+ New Bill</button>
+        <div>
+          <h3>Sales Orders</h3>
+          <p class="subtitle">{{ currentFarm?.farm_name }}</p>
+        </div>
+        <button class="btn-primary" (click)="onCreateNewBill()" [disabled]="isLoading">+ New Bill</button>
       </div>
-      <div class="qbar"><div class="qbar-field">
-        <span>🔍</span><input class="qbar-input" type="text" placeholder="Search bill number or customer..." [(ngModel)]="billSearchTerm" (input)="onBillSearch()"/>
-      </div></div>
+      
+      <!-- LOADING STATE -->
+      <div class="loading-state" *ngIf="isLoading">
+        <div class="spinner"></div>
+        <p>Loading sales orders...</p>
+      </div>
+      
+      <div class="qbar" *ngIf="!isLoading">
+        <div class="qbar-field">
+          <span>🔍</span>
+          <input 
+            class="qbar-input" 
+            type="text" 
+            placeholder="Search bill number or customer..." 
+            [(ngModel)]="billSearchTerm" 
+            (input)="onBillSearch()"
+          />
+        </div>
+      </div>
+      
       <div class="error-message" *ngIf="errorMessage">{{ errorMessage }}</div>
-      <div class="empty-state" *ngIf="filteredBills.length === 0"><p>No bills yet. Click "New Bill" to create one.</p></div>
-      <div class="bill-list" *ngIf="filteredBills.length > 0">
+      
+      <div class="empty-state" *ngIf="!isLoading && filteredBills.length === 0">
+        <p>No bills yet. Click "New Bill" to create one.</p>
+      </div>
+      
+      <div class="bill-list" *ngIf="!isLoading && filteredBills.length > 0">
         <div class="bill-item" *ngFor="let bill of paginatedBills" (click)="selectBill(bill)">
-          <div class="bill-left"><span class="bill-num">{{ bill.bill_number }}</span><span class="bill-cust">{{ bill.customer_name || 'Walk-in' }}</span></div>
+          <div class="bill-left">
+            <span class="bill-num">{{ bill.bill_number }}</span>
+            <span class="bill-cust">{{ bill.customer_name || 'Walk-in' }}</span>
+          </div>
           <div class="bill-right">
             <span class="bill-date">{{ bill.bill_date | dateOnly }}</span>
             <span class="bill-amt">Rs. {{ bill.total_amount | number:'1.0-0' }}</span>
@@ -27,7 +54,14 @@
           </div>
         </div>
       </div>
-      <app-pagination *ngIf="filteredBills.length > 0" [currentPage]="currentPage" [totalItems]="filteredBills.length" [pageSize]="pageSize" (pageChange)="currentPage = $event"></app-pagination>
+      
+      <app-pagination 
+        *ngIf="!isLoading && filteredBills.length > 0" 
+        [currentPage]="currentPage" 
+        [totalItems]="filteredBills.length" 
+        [pageSize]="pageSize" 
+        (pageChange)="currentPage = $event"
+      ></app-pagination>
     </div>
   </ng-container>
 
@@ -40,34 +74,66 @@
           <button class="back-btn" (click)="backToList()">← Back</button>
           <h3>{{ isEditMode ? 'Edit Bill' : 'New Bill' }}</h3>
         </div>
+        
         <div class="error-message" *ngIf="products.length === 0" style="margin-bottom:8px;">
           No products in inventory yet. Add products in the Inventory page before creating a bill.
         </div>
-        <div class="psearch-wrap"><div class="psf">
-          <span>🔍</span><input class="psf-input" type="text" placeholder="Search & add product..." [(ngModel)]="productSearchTerm" (input)="onProductSearch()" autocomplete="off"/>
-        </div>
-        <div class="pdrop" *ngIf="showProductDropdown">
-          <div class="pd-row" *ngFor="let p of productOptions" (click)="selectProductOption(p)">
-            <span class="pd-name">{{ p.product_name }}</span>
-            <span class="pd-price">Rs. {{ p.selling_price | number:'1.0-0' }}</span>
-            <span class="pd-stock">{{ p.calculated_stock || 0 }} left</span>
+        
+        <div class="psearch-wrap">
+          <div class="psf">
+            <span>🔍</span>
+            <input 
+              class="psf-input" 
+              type="text" 
+              placeholder="Search & add product..." 
+              [(ngModel)]="productSearchTerm" 
+              (input)="onProductSearch()" 
+              autocomplete="off"
+            />
           </div>
-          <div class="pdrop-empty" *ngIf="productOptions.length === 0">No products found</div>
-        </div></div>
+          <div class="pdrop" *ngIf="showProductDropdown">
+            <div class="pd-row" *ngFor="let p of productOptions" (click)="selectProductOption(p)">
+              <span class="pd-name">{{ p.product_name }}</span>
+              <span class="pd-price">Rs. {{ p.selling_price | number:'1.0-0' }}</span>
+              <span class="pd-stock">{{ p.calculated_stock || 0 }} left</span>
+            </div>
+            <div class="pdrop-empty" *ngIf="productOptions.length === 0">No products found</div>
+          </div>
+        </div>
+        
         <div class="cart-scroll">
           <table class="cart-tbl" *ngIf="gridItems.length > 0">
-            <thead><tr><th>Product</th><th>Qty</th><th>Price</th><th>Total</th><th></th></tr></thead>
+            <thead>
+              <tr>
+                <th>Product</th>
+                <th>Qty</th>
+                <th>Price</th>
+                <th>Total</th>
+                <th></th>
+              </tr>
+            </thead>
             <tbody>
               <tr *ngFor="let item of gridItems">
                 <td>{{ item.productName }}</td>
-                <td><div class="stepper"><button class="st-btn" (click)="item.quantity = item.quantity > 1 ? item.quantity - 1 : 1; recalcItem(item)">−</button><input class="st-input" type="number" [(ngModel)]="item.quantity" (input)="recalcItem(item)"/><button class="st-btn" (click)="item.quantity = item.quantity + 1; recalcItem(item)">+</button></div></td>
-                <td><input class="price-input" type="number" [(ngModel)]="item.unitPrice" (input)="recalcItem(item)"/></td>
+                <td>
+                  <div class="stepper">
+                    <button class="st-btn" (click)="item.quantity = item.quantity > 1 ? item.quantity - 1 : 1; recalcItem(item)">−</button>
+                    <input class="st-input" type="number" [(ngModel)]="item.quantity" (input)="recalcItem(item)"/>
+                    <button class="st-btn" (click)="item.quantity = item.quantity + 1; recalcItem(item)">+</button>
+                  </div>
+                </td>
+                <td>
+                  <input class="price-input" type="number" [(ngModel)]="item.unitPrice" (input)="recalcItem(item)"/>
+                </td>
                 <td class="mono">Rs. {{ item.totalPrice | number:'1.0-0' }}</td>
                 <td><button class="rm-btn" (click)="removeItem(item)">✕</button></td>
               </tr>
             </tbody>
           </table>
-          <div class="empty-cart" *ngIf="gridItems.length === 0"><p>Cart is empty</p><span>Search a product above to add</span></div>
+          <div class="empty-cart" *ngIf="gridItems.length === 0">
+            <p>Cart is empty</p>
+            <span>Search a product above to add</span>
+          </div>
         </div>
       </div>
 
@@ -92,12 +158,12 @@
           <!-- Internal Transfer -->
           <div *ngIf="customerType==='internal'" style="margin-top:8px">
             <label style="font-size:12px;color:#888;display:block;margin-bottom:4px">Target Module</label>
-            <select class="inline-input" [(ngModel)]="internalTargetModule" (change)="loadInternalTargets()" style="margin-bottom:8px">
+            <select class="inline-input" [(ngModel)]="internalTargetModule" (change)="loadInternalTargets(); onFormChange()" style="margin-bottom:8px">
               <option value="broiler">🐔 Broiler</option>
               <option value="layer">🥚 Layer</option>
             </select>
             <label style="font-size:12px;color:#888;display:block;margin-bottom:4px">Target Flock/Batch</label>
-            <select class="inline-input" [(ngModel)]="internalTargetFlockId">
+            <select class="inline-input" [(ngModel)]="internalTargetFlockId" (change)="onFormChange()">
               <option [ngValue]="null">Select Flock/Batch</option>
               <option *ngFor="let f of internalFlocks" [ngValue]="f.flock_id || f.batch_id">{{ f.flock_name || f.batch_name }}</option>
             </select>
@@ -109,8 +175,8 @@
         <div class="rblock" *ngIf="customerType === 'regular' && selectedCustomerId">
           <p class="rblock-title">Payment Method</p>
           <div class="payment-methods">
-            <button class="pm-opt" [class.active]="paymentMethod === 'cash'" (click)="paymentMethod = 'cash'">💰 Cash</button>
-            <button *ngIf="customerHasBank" class="pm-opt bank" [class.active]="paymentMethod === 'bank'" (click)="paymentMethod = 'bank'">🏦 Bank (Rs. {{ customerBankBalance | number:'1.0-0' }})</button>
+            <button class="pm-opt" [class.active]="paymentMethod === 'cash'" (click)="paymentMethod = 'cash'; onFormChange()">💰 Cash</button>
+            <button *ngIf="customerHasBank" class="pm-opt bank" [class.active]="paymentMethod === 'bank'" (click)="paymentMethod = 'bank'; onFormChange()">🏦 Bank (Rs. {{ customerBankBalance | number:'1.0-0' }})</button>
             <button *ngIf="!customerHasBank" class="pm-opt create-bank" (click)="createBankAccount()">➕ Create Bank Account</button>
           </div>
         </div>
@@ -141,14 +207,19 @@
         <div class="rblock" *ngIf="customerType !== 'internal'">
           <p class="rblock-title">Payment</p>
           <label class="paid-lbl">Amount Received</label>
-          <div class="paid-field"><span>Rs.</span><input class="paid-input" type="number" [(ngModel)]="paidAmount" (input)="onPaidAmountChange()" placeholder="0"/></div>
+          <div class="paid-field">
+            <span>Rs.</span>
+            <input class="paid-input" type="number" [(ngModel)]="paidAmount" (input)="onPaidAmountChange()" placeholder="0"/>
+          </div>
           <div class="change-row" *ngIf="paidAmount > cartSubtotal">Change: <strong>Rs. {{ paidAmount - cartSubtotal | number:'1.0-0' }}</strong></div>
           <div class="change-row remaining" *ngIf="paidAmount < cartSubtotal">Remaining: <strong>Rs. {{ cartSubtotal - paidAmount | number:'1.0-0' }}</strong></div>
           <div class="change-row exact-ok" *ngIf="paidAmount === cartSubtotal && cartSubtotal > 0">Exact amount!</div>
         </div>
 
         <div class="rblock r-actions">
-          <button class="btn-create" (click)="saveBill()" [disabled]="isSubmitting || gridItems.length === 0">{{ isSubmitting ? 'Saving...' : (isEditMode ? 'Update Bill' : (customerType === 'internal' ? 'Transfer to Farm' : 'Save Bill')) }}</button>
+          <button class="btn-create" (click)="saveBill()" [disabled]="isSubmitting || gridItems.length === 0">
+            {{ isSubmitting ? 'Saving...' : (isEditMode ? 'Update Bill' : (customerType === 'internal' ? 'Transfer to Farm' : 'Save Bill')) }}
+          </button>
           <button class="btn-print" (click)="saveAndPrint()" [disabled]="isSubmitting || gridItems.length === 0 || customerType === 'internal'" style="margin-top:8px">🖨️ Save & Print</button>
           <button class="btn-cancel-edit" (click)="backToList()" style="margin-top:8px;width:100%">Cancel</button>
         </div>
@@ -165,4 +236,5 @@
   cancelText="Cancel"
   type="danger"
   (confirmed)="onDeleteConfirmed()"
-  (cancelled)="onDeleteCancelled()"/>
+  (cancelled)="onDeleteCancelled()"
+/>
