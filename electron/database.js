@@ -271,6 +271,7 @@ async function initializeDatabase() {
   createTables(db)
 
   const alterStatements = [
+    `ALTER TABLE customers ADD COLUMN bank_id INTEGER`,
     `ALTER TABLE sales ADD COLUMN payment_type TEXT DEFAULT 'cash'`,
     `ALTER TABLE expenses ADD COLUMN payment_type TEXT DEFAULT 'cash'`,
     `ALTER TABLE sales ADD COLUMN driver_name TEXT DEFAULT ''`,

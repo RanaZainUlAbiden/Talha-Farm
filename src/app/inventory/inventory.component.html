@@ -11,18 +11,10 @@
   <div class="search-container">
     <div class="search-box">
       <span class="search-icon">🔍</span>
-      <input 
-        type="text" 
-        class="search-input" 
-        [(ngModel)]="searchTerm" 
-        (input)="filterProducts()" 
-        placeholder="Search by product name, category, or unit..."
-      />
+      <input type="text" class="search-input" [(ngModel)]="searchTerm" (input)="filterProducts()" placeholder="Search products..."/>
       <button class="search-clear" *ngIf="searchTerm" (click)="clearSearch()">✕</button>
     </div>
-    <span class="search-results" *ngIf="searchTerm">
-      Found {{ filteredProducts.length }} result(s)
-    </span>
+    <span class="search-results" *ngIf="searchTerm">Found {{ filteredProducts.length }} result(s)</span>
   </div>
 
   <div class="error-message" *ngIf="errorMessage">{{ errorMessage }}</div>
@@ -50,9 +42,8 @@
       <thead>
         <tr>
           <th>Product Name</th>
-          <th>Category</th>
-          <th>Unit</th>
           <th>Stock</th>
+          <th>Expiry</th>
           <th>Min Alert</th>
           <th>Cost Price</th>
           <th>Sell Price</th>
@@ -65,22 +56,14 @@
         <tr *ngIf="showNewRow" class="new-row">
           <td><input class="inline-input" type="text" [(ngModel)]="newRow.product_name" placeholder="Product name"/></td>
           <td>
-            <select class="inline-input" [(ngModel)]="newRow.category">
-              <option value="medicine">Medicine</option>
-              <option value="feed">Feed</option>
-              <option value="equipment">Equipment</option>
-              <option value="other">Other</option>
-            </select>
-          </td>
-          <td><input class="inline-input" type="text" [(ngModel)]="newRow.unit" placeholder="e.g. Bag, Bottle"/></td>
-          <td>
             <input class="inline-input" type="number" [(ngModel)]="newRow.current_stock" placeholder="Initial stock"/>
-            <span style="font-size: 10px; color: #999; display: block;">Will create a batch</span>
+            <span style="font-size: 10px; color: #999; display: block;">Creates a batch</span>
           </td>
+          <td><input class="inline-input" type="date" [(ngModel)]="newRow.expiry_date" title="Batch expiry date"/></td>
           <td><input class="inline-input" type="number" [(ngModel)]="newRow.min_stock_alert" placeholder="Alert at"/></td>
           <td><input class="inline-input" type="number" [(ngModel)]="newRow.cost_price" placeholder="0"/></td>
           <td><input class="inline-input" type="number" [(ngModel)]="newRow.selling_price" placeholder="0"/></td>
-          <td><span style="font-size: 11px; color: #999;">Auto-batch created</span></td>
+          <td><span style="font-size: 11px; color: #999;">Auto-batch</span></td>
           <td class="actions">
             <button class="btn-save" [disabled]="isSaving" (click)="saveNewRow()">Save</button>
             <button class="btn-cancel-edit" (click)="cancelNewRow()">Cancel</button>
@@ -95,22 +78,13 @@
           
           <ng-container *ngIf="editingId !== p.product_id">
             <td class="product-name">{{ p.product_name }}</td>
-            <td><span class="category-badge">{{ p.category }}</span></td>
-            <td>{{ p.unit || '—' }}</td>
-            <td [class.low-stock-text]="isLowStock(p)">
-              {{ getStockDisplay(p) | number }}
-            </td>
-            <td>
-              <span [class]="getMinAlert(p).class">
-                {{ getMinAlert(p).text }}
-              </span>
-            </td>
+            <td [class.low-stock-text]="isLowStock(p)">{{ getStockDisplay(p) | number }}</td>
+            <td [class.expiry-text]="isExpiring(p)">{{ p.earliest_expiry || '—' }}</td>
+            <td><span [class]="getMinAlert(p).class">{{ getMinAlert(p).text }}</span></td>
             <td>Rs. {{ p.cost_price | number:'1.0-2' }}</td>
             <td>Rs. {{ p.selling_price | number:'1.0-2' }}</td>
             <td>
-              <button class="btn-batches" (click)="openBatchManagement(p.product_id)">
-                📦 {{ getBatchCount(p) }} Batches
-              </button>
+              <button class="btn-batches" (click)="openBatchManagement(p.product_id)">📦 {{ getBatchCount(p) }}</button>
             </td>
             <td class="actions">
               <button class="btn-edit" (click)="startEdit(p)">Edit</button>
@@ -122,25 +96,14 @@
           <ng-container *ngIf="editingId === p.product_id">
             <td><input class="inline-input" type="text" [(ngModel)]="editForm.product_name"/></td>
             <td>
-              <select class="inline-input" [(ngModel)]="editForm.category">
-                <option value="medicine">Medicine</option>
-                <option value="feed">Feed</option>
-                <option value="equipment">Equipment</option>
-                <option value="other">Other</option>
-              </select>
+              <span style="font-size: 12px; color: #888;">{{ getStockDisplay(p) | number }} (from batches)</span>
             </td>
-            <td><input class="inline-input" type="text" [(ngModel)]="editForm.unit"/></td>
-            <td>
-              <input class="inline-input" type="number" [(ngModel)]="editForm.current_stock" disabled/>
-              <span style="font-size: 10px; color: #999; display: block;">Stock from batches (read-only)</span>
-            </td>
+            <td><span style="font-size: 12px; color: #888;">See batches</span></td>
             <td><input class="inline-input" type="number" [(ngModel)]="editForm.min_stock_alert"/></td>
             <td><input class="inline-input" type="number" [(ngModel)]="editForm.cost_price"/></td>
             <td><input class="inline-input" type="number" [(ngModel)]="editForm.selling_price"/></td>
             <td>
-              <button class="btn-batches" (click)="openBatchManagement(p.product_id)" style="font-size: 11px;">
-                Manage Batches
-              </button>
+              <button class="btn-batches" (click)="openBatchManagement(p.product_id)" style="font-size: 11px;">Manage Batches</button>
             </td>
             <td class="actions">
               <button class="btn-save" (click)="saveEdit(p.product_id)">Save</button>
@@ -150,21 +113,8 @@
         </tr>
       </tbody>
     </table>
-    <app-pagination 
-      [currentPage]="currentPage" 
-      [totalItems]="totalItems" 
-      [pageSize]="pageSize" 
-      (pageChange)="currentPage = $event">
-    </app-pagination>
+    <app-pagination [currentPage]="currentPage" [totalItems]="totalItems" [pageSize]="pageSize" (pageChange)="currentPage = $event"></app-pagination>
   </div>
 </div>
 
-<app-confirm-dialog 
-  *ngIf="showDeleteDialog" 
-  title="Delete Product" 
-  message="Are you sure you want to delete this product? All associated batches will also be deleted." 
-  confirmText="Delete" 
-  cancelText="Cancel" 
-  type="danger" 
-  (confirmed)="onDeleteConfirmed()" 
-  (cancelled)="onDeleteCancelled()"/>
+<app-confirm-dialog *ngIf="showDeleteDialog" title="Delete Product" message="Are you sure you want to delete this product? All associated batches will also be deleted." confirmText="Delete" cancelText="Cancel" type="danger" (confirmed)="onDeleteConfirmed()" (cancelled)="onDeleteCancelled()"/>

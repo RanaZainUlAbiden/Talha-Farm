@@ -17,9 +17,8 @@
           <div class="bill-right">
             <span class="bill-date">{{ bill.bill_date | dateOnly }}</span>
             <span class="bill-amt">Rs. {{ bill.total_amount | number:'1.0-0' }}</span>
-            <!-- 🔥 FIX: Added Payment Method Badge -->
-            <span class="payment-badge" [class.bank]="bill.payment_type === 'bank'" [class.cash]="bill.payment_type === 'cash' || !bill.payment_type">
-              {{ bill.payment_type === 'bank' ? '🏦 Bank' : '💰 Cash' }}
+            <span class="payment-badge" [class.bank]="bill.payment_type === 'bank'" [class.cash]="bill.payment_type === 'cash' || !bill.payment_type" [class.internal]="bill.payment_type === 'internal'">
+              {{ bill.payment_type === 'bank' ? '🏦 Bank' : bill.payment_type === 'internal' ? '🏠 Internal' : '💰 Cash' }}
             </span>
             <span class="bill-status" [class.paid]="bill.amount_paid >= bill.total_amount" [class.unpaid]="bill.amount_paid < bill.total_amount">
               {{ bill.amount_paid >= bill.total_amount ? 'Paid' : 'Unpaid' }}
@@ -51,7 +50,6 @@
           <div class="pd-row" *ngFor="let p of productOptions" (click)="selectProductOption(p)">
             <span class="pd-name">{{ p.product_name }}</span>
             <span class="pd-price">Rs. {{ p.selling_price | number:'1.0-0' }}</span>
-            <!-- 🔥 FIX: Use calculated_stock for accurate stock display -->
             <span class="pd-stock">{{ p.calculated_stock || 0 }} left</span>
           </div>
           <div class="pdrop-empty" *ngIf="productOptions.length === 0">No products found</div>
@@ -78,9 +76,11 @@
         <div class="rblock">
           <p class="rblock-title">Customer</p>
           <div class="ctype-row">
-            <button class="ct-opt" [class.ct-on]="customerType==='walkin'" (click)="customerType='walkin'; selectedCustomer=null; paidAmount=cartSubtotal; paymentMethod='cash'">Walk-in</button>
-            <button class="ct-opt" [class.ct-on]="customerType==='regular'" (click)="customerType='regular'">Regular</button>
+            <button class="ct-opt" [class.ct-on]="customerType==='walkin'" (click)="onCustomerTypeChange('walkin')">Walk-in</button>
+            <button class="ct-opt" [class.ct-on]="customerType==='regular'" (click)="onCustomerTypeChange('regular')">Regular</button>
+            <button class="ct-opt" [class.ct-on]="customerType==='internal'" (click)="onCustomerTypeChange('internal')">🏠 Own Farm</button>
           </div>
+          
           <div *ngIf="customerType==='regular'" style="margin-top:8px">
             <select class="inline-input" [(ngModel)]="selectedCustomerId" (change)="onCustomerSelect()">
               <option [ngValue]="null">Select Customer</option>
@@ -88,46 +88,35 @@
             </select>
           </div>
           <div *ngIf="customerType==='walkin'" class="walkin-badge">Walk-in customer</div>
+          
+          <!-- Internal Transfer -->
+          <div *ngIf="customerType==='internal'" style="margin-top:8px">
+            <label style="font-size:12px;color:#888;display:block;margin-bottom:4px">Target Module</label>
+            <select class="inline-input" [(ngModel)]="internalTargetModule" (change)="loadInternalTargets()" style="margin-bottom:8px">
+              <option value="broiler">🐔 Broiler</option>
+              <option value="layer">🥚 Layer</option>
+            </select>
+            <label style="font-size:12px;color:#888;display:block;margin-bottom:4px">Target Flock/Batch</label>
+            <select class="inline-input" [(ngModel)]="internalTargetFlockId">
+              <option [ngValue]="null">Select Flock/Batch</option>
+              <option *ngFor="let f of internalFlocks" [ngValue]="f.flock_id || f.batch_id">{{ f.flock_name || f.batch_name }}</option>
+            </select>
+            <div class="walkin-badge" style="margin-top:8px;background:#e8f5e9;color:#1a5c38;">🏠 Internal transfer — expense auto-created</div>
+          </div>
         </div>
 
-        <!-- ========== PAYMENT METHOD ========== -->
+        <!-- Payment Method (hidden for internal) -->
         <div class="rblock" *ngIf="customerType === 'regular' && selectedCustomerId">
           <p class="rblock-title">Payment Method</p>
           <div class="payment-methods">
-            <button 
-              class="pm-opt" 
-              [class.active]="paymentMethod === 'cash'" 
-              (click)="paymentMethod = 'cash'">
-              💰 Cash
-            </button>
-            
-            <button 
-              *ngIf="customerHasBank" 
-              class="pm-opt bank" 
-              [class.active]="paymentMethod === 'bank'" 
-              (click)="paymentMethod = 'bank'">
-              🏦 Bank (Rs. {{ customerBankBalance | number:'1.0-0' }})
-            </button>
-            
-            <button 
-              *ngIf="!customerHasBank" 
-              class="pm-opt create-bank" 
-              (click)="createBankAccount()">
-              ➕ Create Bank Account
-            </button>
-          </div>
-          <div *ngIf="paymentMethod === 'bank' && customerHasBank" class="bank-info">
-            <span>💰 Balance: <strong>Rs. {{ customerBankBalance | number:'1.0-0' }}</strong></span>
-            <span *ngIf="customerBankBalance < 0" style="color: #e53935; font-size: 12px; margin-left: 8px;">
-              (Trust/Overdraft)
-            </span>
-          </div>
-          <div *ngIf="!customerHasBank && selectedCustomerId" class="bank-info warning">
-            ⚠️ No bank account found. Please create one to pay via bank.
+            <button class="pm-opt" [class.active]="paymentMethod === 'cash'" (click)="paymentMethod = 'cash'">💰 Cash</button>
+            <button *ngIf="customerHasBank" class="pm-opt bank" [class.active]="paymentMethod === 'bank'" (click)="paymentMethod = 'bank'">🏦 Bank (Rs. {{ customerBankBalance | number:'1.0-0' }})</button>
+            <button *ngIf="!customerHasBank" class="pm-opt create-bank" (click)="createBankAccount()">➕ Create Bank Account</button>
           </div>
         </div>
 
-        <div class="rblock">
+        <!-- Order Summary (hidden for internal) -->
+        <div class="rblock" *ngIf="customerType !== 'internal'">
           <p class="rblock-title">Order Summary</p>
           <div class="sum-rows">
             <div class="sum-row"><span>Items</span><span>{{ gridItems.length }}</span></div>
@@ -136,7 +125,20 @@
           </div>
         </div>
 
-        <div class="rblock">
+        <!-- Internal Transfer Summary -->
+        <div class="rblock" *ngIf="customerType === 'internal'">
+          <p class="rblock-title">Internal Transfer</p>
+          <div class="sum-rows">
+            <div class="sum-row"><span>Items</span><span>{{ gridItems.length }}</span></div>
+            <div class="sum-row"><span>Total Value</span><span class="mono">Rs. {{ cartSubtotal | number:'1.0-0' }}</span></div>
+            <div class="sum-row" style="color:#1a5c38;font-size:12px;margin-top:4px">
+              <span>✅ Expense auto-created in {{ internalTargetModule === 'broiler' ? 'Broiler' : 'Layer' }} module</span>
+            </div>
+          </div>
+        </div>
+
+        <!-- Payment (hidden for internal) -->
+        <div class="rblock" *ngIf="customerType !== 'internal'">
           <p class="rblock-title">Payment</p>
           <label class="paid-lbl">Amount Received</label>
           <div class="paid-field"><span>Rs.</span><input class="paid-input" type="number" [(ngModel)]="paidAmount" (input)="onPaidAmountChange()" placeholder="0"/></div>
@@ -146,8 +148,8 @@
         </div>
 
         <div class="rblock r-actions">
-          <button class="btn-create" (click)="saveBill()" [disabled]="isSubmitting || gridItems.length === 0">{{ isSubmitting ? 'Saving...' : (isEditMode ? 'Update Bill' : 'Save Bill') }}</button>
-          <button class="btn-print" (click)="saveAndPrint()" [disabled]="isSubmitting || gridItems.length === 0" style="margin-top:8px">🖨️ Save & Print</button>
+          <button class="btn-create" (click)="saveBill()" [disabled]="isSubmitting || gridItems.length === 0">{{ isSubmitting ? 'Saving...' : (isEditMode ? 'Update Bill' : (customerType === 'internal' ? 'Transfer to Farm' : 'Save Bill')) }}</button>
+          <button class="btn-print" (click)="saveAndPrint()" [disabled]="isSubmitting || gridItems.length === 0 || customerType === 'internal'" style="margin-top:8px">🖨️ Save & Print</button>
           <button class="btn-cancel-edit" (click)="backToList()" style="margin-top:8px;width:100%">Cancel</button>
         </div>
       </div>

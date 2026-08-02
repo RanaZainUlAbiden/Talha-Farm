@@ -147,6 +147,10 @@ export const routes: Routes = [
         loadComponent: () => import('./inventory/inventory.component').then(m => m.InventoryComponent)
       },
       {
+  path: 'distribution-batch',
+  loadComponent: () => import('./distribution-batch/distribution-batch.component').then(m => m.DistributionBatchComponent)
+},
+      {
         path: 'distribution-batch/:productId',
         loadComponent: () => import('./distribution-batch/distribution-batch.component').then(m => m.DistributionBatchComponent)
       },
