@@ -325,3 +325,145 @@ app-layout .sidebar.collapsed {
     border-bottom-color: #ffd54f;
   }
 }
+
+// ── LICENSE STATUS BAR ─────────────────────────────────────
+
+.license-status-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 8px 16px;
+  background: #f8f9fa;
+  border-bottom: 1px solid #e8e8e8;
+  margin: 0 0 8px 0;
+  border-radius: 0;
+  transition: all 0.3s ease;
+
+  .license-status {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-size: 12px;
+    font-weight: 500;
+
+    .status-icon {
+      font-size: 14px;
+    }
+
+    .status-text {
+      color: #555;
+    }
+
+    &.active {
+      .status-text {
+        color: #1a5c38;
+      }
+    }
+
+    &.expired {
+      .status-text {
+        color: #b91c1c;
+        animation: pulse-warning 1.5s ease-in-out infinite;
+      }
+    }
+  }
+
+  .license-activate {
+    .btn-activate-small {
+      padding: 3px 12px;
+      background: #1a5c38;
+      color: white;
+      border: none;
+      border-radius: 12px;
+      font-size: 11px;
+      font-weight: 600;
+      cursor: pointer;
+      transition: all 0.3s ease;
+
+      &:hover {
+        background: #2e7d32;
+        transform: scale(1.05);
+      }
+    }
+  }
+}
+
+// ── LICENSE STATUS COLLAPSED ──────────────────────────────
+
+.license-status-collapsed {
+  display: flex;
+  justify-content: center;
+  padding: 8px 0;
+  cursor: default;
+
+  .status-icon-small {
+    font-size: 16px;
+  }
+}
+
+// ── LICENSE INDICATOR IN HEADER ───────────────────────────
+
+.license-indicator {
+  font-size: 12px;
+  padding: 4px 12px;
+  border-radius: 12px;
+  font-weight: 500;
+  background: #e8f5e9;
+  color: #1a5c38;
+
+  &.expired {
+    background: #fef2f2;
+    color: #b91c1c;
+    animation: pulse-warning 1.5s ease-in-out infinite;
+  }
+
+  &.active {
+    background: #e8f5e9;
+    color: #1a5c38;
+  }
+}
+
+// ── HEADER RIGHT ────────────────────────────────────────────
+
+.header-right {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+// ── PULSE ANIMATION ────────────────────────────────────────
+
+@keyframes pulse-warning {
+  0%, 100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.6;
+  }
+}
+
+// ── RESPONSIVE ──────────────────────────────────────────────
+
+@media (max-width: 768px) {
+  .license-status-bar {
+    flex-direction: column;
+    gap: 4px;
+    padding: 6px 12px;
+
+    .license-status {
+      font-size: 11px;
+    }
+
+    .license-activate {
+      .btn-activate-small {
+        font-size: 10px;
+        padding: 2px 10px;
+      }
+    }
+  }
+
+  .license-indicator {
+    font-size: 10px;
+    padding: 2px 8px;
+  }
+}

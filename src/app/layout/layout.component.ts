@@ -7,6 +7,7 @@ import { Router, RouterOutlet } from '@angular/router';
 import { AuthService } from '../shared/services/auth.service';
 import { FlockService } from '../shared/services/flock.service';
 import { DatabaseService } from '../shared/services/database.service';
+import { LicenseService } from '../shared/services/license.service';
 import { Subscription } from 'rxjs';
 import { PendingStateService } from '../shared/services/pending-state.service';
 
@@ -28,6 +29,9 @@ export class LayoutComponent implements OnInit, OnDestroy {
   activeRoute = 'flock-health';
   activeBusinessTab: string = 'broiler';
   private savedBusinessType: string = 'broiler';
+  licenseStatus: string = '';
+  showLicenseWarning: boolean = false;
+  private licenseCheckInterval: any = null;
 
   private subs = new Subscription();
 
@@ -53,16 +57,15 @@ export class LayoutComponent implements OnInit, OnDestroy {
   ];
 
   distributionMenu = [
-  { label: 'Inventory',     icon: '📦', route: 'inventory'            },
-  { label: 'Purchase',      icon: '📥', route: 'purchase-orders'      },
-  { label: 'Sales Orders',  icon: '📤', route: 'sales-orders'         },
-  { label: 'Customers',     icon: '👥', route: 'customer-management'  },
-  { label: 'Suppliers',     icon: '🏭', route: 'supplier-management'  },
-  { label: 'Account Ledger',icon: '📊', route: 'account-ledger'       }, 
-  { label: 'Expense Ledger', icon: '💳', route: 'expense-ledger' },// NEW
-  // { label: 'Income',        icon: '📈', route: 'income'               },
-  { label: 'Report',        icon: '📄', route: 'distribution-report'  }
-];
+    { label: 'Inventory',     icon: '📦', route: 'inventory'            },
+    { label: 'Purchase',      icon: '📥', route: 'purchase-orders'      },
+    { label: 'Sales Orders',  icon: '📤', route: 'sales-orders'         },
+    { label: 'Customers',     icon: '👥', route: 'customer-management'  },
+    { label: 'Suppliers',     icon: '🏭', route: 'supplier-management'  },
+    { label: 'Account Ledger',icon: '📊', route: 'account-ledger'       }, 
+    { label: 'Expense Ledger', icon: '💳', route: 'expense-ledger'      },
+    { label: 'Report',        icon: '📄', route: 'distribution-report'  }
+  ];
 
   allMenu = [
     { label: 'Expenses',      icon: '💰', route: 'expenses'         },
@@ -122,10 +125,14 @@ export class LayoutComponent implements OnInit, OnDestroy {
     private db: DatabaseService,
     private router: Router,
     private cdr: ChangeDetectorRef,
-    private pendingState: PendingStateService
+    private pendingState: PendingStateService,
+    public licenseService: LicenseService // Made public for template access
   ) {}
 
   ngOnInit() {
+    // 🔥 Check license first
+    this.checkLicense();
+
     this.currentFarm = this.authService.getCurrentFarm();
     if (!this.currentFarm) {
       this.router.navigate(['/login']);
@@ -154,8 +161,6 @@ export class LayoutComponent implements OnInit, OnDestroy {
       })
     );
 
-    // Refresh the batch selector / "Create First Batch" prompt whenever
-    // batches are added, edited or removed in batch-management.
     this.subs.add(
       this.flockService.batchesChanged$.subscribe(() => {
         if (this.isLayerMode) this.loadBatches();
@@ -166,10 +171,46 @@ export class LayoutComponent implements OnInit, OnDestroy {
 
     const currentUrl = this.router.url.split('/').pop();
     if (currentUrl) this.activeRoute = currentUrl;
+
+    // Check license status periodically (every minute)
+    this.licenseCheckInterval = setInterval(() => {
+      this.checkLicense();
+    }, 60000);
   }
 
   ngOnDestroy() {
     this.subs.unsubscribe();
+    if (this.licenseCheckInterval) {
+      clearInterval(this.licenseCheckInterval);
+    }
+  }
+
+  /**
+   * 🔥 Check if license is valid
+   */
+  private checkLicense(): void {
+    const status = this.licenseService.getStatus();
+    
+    // If not activated and trial expired, redirect to activation
+    if (!status.activated && status.trialExpired) {
+      this.router.navigate(['/activation']);
+      return;
+    }
+
+    // Update license status display
+    this.licenseStatus = this.licenseService.getTrialStatusMessage();
+    
+    // Show warning if trial is about to expire (1 day left)
+    this.showLicenseWarning = !status.activated && status.daysRemaining <= 1 && status.daysRemaining > 0;
+    
+    this.cdr.detectChanges();
+  }
+
+  /**
+   * Navigate to activation page
+   */
+  navigateToActivation(): void {
+    this.router.navigate(['/activation']);
   }
 
   loadActiveBusinessData() {
@@ -223,8 +264,6 @@ export class LayoutComponent implements OnInit, OnDestroy {
   }
 
   selectBatch(batch: any) {
-    // Persist the batch through FlockService (shaped like a flock) so that
-    // flock-scoped pages (Income, etc.) also see the active batch.
     const batchAsFlock = { ...batch, flock_name: batch.batch_name, flock_id: batch.batch_id, batch_id: batch.batch_id };
     this.currentFlock = batchAsFlock;
     this.flockService.setCurrentFlock(batchAsFlock);

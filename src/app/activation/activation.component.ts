@@ -2,7 +2,7 @@ import { Component, OnInit } from '@angular/core';
 import { CommonModule } from '@angular/common';
 import { FormsModule } from '@angular/forms';
 import { Router } from '@angular/router';
-import { DatabaseService } from '../shared/services/database.service';
+import { LicenseService } from '../shared/services/license.service';
 
 @Component({
   selector: 'app-activation',
@@ -12,75 +12,114 @@ import { DatabaseService } from '../shared/services/database.service';
   styleUrl: './activation.component.scss'
 })
 export class ActivationComponent implements OnInit {
-  machineId: string = '';
-  activationCode: string = '';
+  activationKey: string = '';
+  isLoading: boolean = false;
   errorMessage: string = '';
-  isChecking: boolean = false;
+  isExpired: boolean = false;
+  expirationDate: string = '';
+  daysRemaining: number = 0;
+  isTrialStarted: boolean = false;
+  isActivated: boolean = false;
+  
+  // Demo keys (in production, these would be validated against a server)
+  private readonly DEMO_KEYS = [
+    'DEMO-7DAY-TRIAL-2024', 
+    'FARM-PRO-2024', 
+    'POULTRY-MANAGER-2024',
+    'PERMANENT-LICENSE-2024'
+  ];
 
   constructor(
-    private db: DatabaseService,
-    private router: Router
+    private router: Router,
+    private licenseService: LicenseService
   ) {}
 
-  async ngOnInit() {
-    this.machineId = await (window as any).electronAPI.getMachineId();
-    const result = await this.db.get(
-      `SELECT * FROM activation WHERE is_active = 1`, []
-    );
-    if (result.success && result.data.length > 0) {
-      const saved = result.data[0];
-      if (this.verifyCode(saved.machine_id, saved.activation_code)) {
-        this.router.navigate(['/splash']);
-        return;
-      }
-    }
-  }
-
-  private SECRET = 'SNG@PoultryFarm#2024!DevInfantary';
-
-  private hashCode(str: string): string {
-    let hash = 0;
-    for (let i = 0; i < str.length; i++) {
-      const char = str.charCodeAt(i);
-      hash = ((hash << 5) - hash) + char;
-      hash = hash & hash;
-    }
-    const hex = Math.abs(hash).toString(16).toUpperCase();
-    return hex.padStart(8, '0');
-  }
-
-  private verifyCode(machineId: string, code: string): boolean {
-    const combined = machineId + this.SECRET;
-    const expected = this.hashCode(combined);
-    const formatted = `SNG-${expected.slice(0,4)}-${expected.slice(4,8)}`;
-    return code.toUpperCase() === formatted;
-  }
-
-  copyMachineId() {
-    navigator.clipboard.writeText(this.machineId);
-  }
-
-  async activate() {
-    this.errorMessage = '';
-    if (!this.activationCode.trim()) {
-      this.errorMessage = 'Please enter activation code';
+  ngOnInit() {
+    // Check if already activated
+    if (this.licenseService.isActivated()) {
+      this.isActivated = true;
+      this.router.navigate(['/login']);
       return;
     }
 
-    this.isChecking = true;
-
-    if (this.verifyCode(this.machineId, this.activationCode.trim())) {
-      await this.db.run(
-        `INSERT OR REPLACE INTO activation
-          (machine_id, activation_code, is_active)
-         VALUES (?, ?, 1)`,
-        [this.machineId, this.activationCode.trim().toUpperCase()]
-      );
-      this.router.navigate(['/splash']);
+    // Check trial status
+    const status = this.licenseService.getStatus();
+    
+    if (status.trialStarted) {
+      this.isTrialStarted = true;
+      this.daysRemaining = status.daysRemaining;
+      this.expirationDate = status.expiryDate || '';
+      
+      if (status.trialExpired) {
+        this.isExpired = true;
+        this.expirationDate = status.expiryDate || '';
+      }
     } else {
-      this.errorMessage = 'Invalid activation code. Please contact your provider.';
+      this.daysRemaining = 7;
+    }
+  }
+
+  async activate() {
+    if (!this.activationKey.trim()) {
+      this.errorMessage = 'Please enter an activation key';
+      return;
     }
 
-    this.isChecking = false;
+    this.isLoading = true;
+    this.errorMessage = '';
+
+    try {
+      // Simulate network delay
+      await new Promise(resolve => setTimeout(resolve, 1000));
+      
+      // Validate against demo keys (in production, call your server API)
+      const isValid = this.DEMO_KEYS.some(key => 
+        key.toLowerCase() === this.activationKey.trim().toLowerCase()
+      );
+      
+      if (isValid) {
+        this.licenseService.activate();
+        this.isActivated = true;
+        
+        // Show success message before navigating
+        this.errorMessage = ''; // Clear any errors
+        
+        // Navigate to login after a brief delay
+        setTimeout(() => {
+          this.router.navigate(['/login']);
+        }, 500);
+      } else {
+        this.errorMessage = '❌ Invalid activation key. Please contact support.';
+      }
+    } catch (error: any) {
+      this.errorMessage = '❌ Activation failed: ' + error.message;
+    } finally {
+      this.isLoading = false;
+    }
+  }
+
+  startTrial() {
+    if (this.isTrialStarted) {
+      // If trial already started, just navigate
+      this.router.navigate(['/login']);
+      return;
+    }
+    
+    this.licenseService.startTrial();
+    this.isTrialStarted = true;
+    this.daysRemaining = 7;
+    this.expirationDate = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString().split('T')[0];
+    
+    // Navigate to login after a brief delay
+    setTimeout(() => {
+      this.router.navigate(['/login']);
+    }, 300);
+  }
+
+  /**
+   * Get today's date for display
+   */
+  getTodayDate(): string {
+    return new Date().toISOString().split('T')[0];
   }
 }

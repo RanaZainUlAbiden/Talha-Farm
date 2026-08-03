@@ -1,7 +1,7 @@
 {
   "name": "poultry-farm",
   "version": "1.0.0",
-  "description": "Poultry Farm Management System",
+  "description": "Professional Poultry Farm Management System",
   "author": "DevInfantary",
   "main": "electron/main.js",
   "scripts": {
@@ -10,8 +10,11 @@
     "build": "ng build",
     "electron": "ng build && electron .",
     "electron:dev": "electron .",
-    "test": "ng test",
-    "dist": "ng build && electron-builder build --win"
+    "electron:build:win": "npm run build && electron-builder --win --x64",
+    "electron:build:win:ia32": "npm run build && electron-builder --win --ia32",
+    "electron:build:win:both": "npm run build && electron-builder --win --x64 --ia32",
+    "dist": "ng build && electron-builder build --win",
+    "postinstall": "electron-builder install-app-deps"
   },
   "private": true,
   "dependencies": {
@@ -23,6 +26,7 @@
     "@angular/platform-browser": "^19.2.0",
     "@angular/platform-browser-dynamic": "^19.2.0",
     "@angular/router": "^19.2.0",
+    "electron-updater": "^6.1.7",
     "jspdf": "^4.2.1",
     "jspdf-autotable": "^5.0.8",
     "node-machine-id": "^1.1.12",
@@ -34,9 +38,17 @@
   "build": {
     "appId": "com.devinfantary.poultry-farm",
     "productName": "Talha Farm",
+    "directories": {
+      "output": "release"
+    },
     "win": {
       "target": "nsis",
-      "icon": "public/favicon.ico"
+      "icon": "public/favicon.ico",
+      "publisherName": "DevInfantary",
+      "certificateFile": "",
+      "certificatePassword": "",
+      "legalTrademarks": "Talha Farm is a trademark of DevInfantary",
+      "rfc3161TimeStampServer": "http://timestamp.comodoca.com/rfc3161"
     },
     "nsis": {
       "oneClick": false,
@@ -45,18 +57,31 @@
       "installerHeaderIcon": "public/favicon.ico",
       "createDesktopShortcut": true,
       "createStartMenuShortcut": true,
-      "shortcutName": "Talha Farm"
+      "shortcutName": "Talha Farm",
+      "uninstallDisplayName": "Talha Farm Management System",
+      "license": "LICENSE.txt",
+      "perMachine": true,
+      "installerHeader": "public/installer-header.bmp",
+      "installerSidebar": "public/installer-sidebar.bmp"
     },
     "files": [
       "dist/**/*",
       "electron/**/*",
-      "public/**/*"
+      "public/**/*",
+      "!node_modules/**/*",
+      "node_modules/sql.js/dist/sql-wasm.wasm",
+      "node_modules/electron-updater/**/*"
     ],
     "extraResources": [
       {
         "from": "node_modules/sql.js/dist/sql-wasm.wasm",
-        "to": "sql-wasm.wasm"
+        "to": "sql-wasm.wasm",
+        "filter": ["**/*"]
       }
+    ],
+    "asar": true,
+    "asarUnpack": [
+      "node_modules/sql.js/dist/sql-wasm.wasm"
     ]
   },
   "devDependencies": {

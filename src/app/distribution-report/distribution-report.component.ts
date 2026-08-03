@@ -19,15 +19,23 @@ export class DistributionReportComponent implements OnInit {
   sales: any[] = [];
   customers: any[] = [];
   isGenerating = false;
+  isLoading = true;
+  errorMessage = '';
 
   // ── CALCULATIONS ──────────────────────────────────────────
 
   /**
-   * 🔥 FIX: Inventory Value = Total Purchases - Total Sales
-   * This is the correct accounting formula
+   * 🔥 FIX: Inventory Value calculated from actual batch stock
+   * Each product's value = (current_stock from batches) * (cost_price)
    */
   get totalInventoryValue(): number {
-    return this.totalPurchases - this.totalSales;
+    let total = 0;
+    for (const product of this.products) {
+      const stock = product.calculated_stock || 0;
+      const costPrice = product.cost_price || 0;
+      total += stock * costPrice;
+    }
+    return total;
   }
 
   get totalPurchases(): number {
@@ -42,7 +50,19 @@ export class DistributionReportComponent implements OnInit {
     return this.sales.reduce((sum: number, s: any) => sum + (s.amount_paid || 0), 0);
   }
 
+  /**
+   * 🔥 FIX: Unpaid Sales = Total Sales - Total Paid Sales
+   * This is the correct accounting formula
+   */
   get totalUnpaidSales(): number {
+    return this.totalSales - this.totalPaidSales;
+  }
+
+  /**
+   * Alternative: Unpaid Sales from customer outstanding balances
+   * This should match the calculation above
+   */
+  get totalOutstandingBalance(): number {
     return this.customers.reduce((sum: number, c: any) => sum + (c.outstanding_balance || 0), 0);
   }
 
@@ -56,6 +76,23 @@ export class DistributionReportComponent implements OnInit {
 
   get totalSalesCount(): number {
     return this.sales.length;
+  }
+
+  /**
+   * Get product stock from batches
+   */
+  getProductStock(productId: number): number {
+    const product = this.products.find(p => p.product_id === productId);
+    return product?.calculated_stock || 0;
+  }
+
+  /**
+   * Get product inventory value
+   */
+  getProductValue(product: any): number {
+    const stock = product.calculated_stock || 0;
+    const costPrice = product.cost_price || 0;
+    return stock * costPrice;
   }
 
   constructor(
@@ -72,44 +109,72 @@ export class DistributionReportComponent implements OnInit {
   // ── LOAD DATA ─────────────────────────────────────────────
 
   async loadData() {
-    // Load products
-    const pr = await this.db.get('SELECT * FROM products WHERE farm_id=?', [this.currentFarm.farm_id]);
-    this.products = pr.success ? pr.data : [];
+    this.isLoading = true;
+    this.errorMessage = '';
 
-    // Load purchases
-    const pu = await this.db.get(
-      `SELECT po.*, p.product_name, s.supplier_name 
-       FROM purchase_orders po 
-       LEFT JOIN products p ON po.product_id = p.product_id 
-       LEFT JOIN suppliers s ON po.supplier_id = s.supplier_id 
-       WHERE po.farm_id = ? 
-       ORDER BY po.date DESC`,
-      [this.currentFarm.farm_id]
-    );
-    this.purchases = pu.success ? pu.data : [];
+    try {
+      // Load products
+      const pr = await this.db.get('SELECT * FROM products WHERE farm_id=?', [this.currentFarm.farm_id]);
+      this.products = pr.success ? pr.data : [];
 
-    // Load sales bills
-    const sa = await this.db.get(
-      `SELECT * FROM bills WHERE farm_id = ? ORDER BY bill_date DESC, bill_id DESC`,
-      [this.currentFarm.farm_id]
-    );
-    this.sales = sa.success ? sa.data : [];
+      // 🔥 Calculate stock for each product from batches
+      for (const product of this.products) {
+        const totalStock = await this.db.getTotalStock(product.product_id);
+        product.calculated_stock = totalStock;
+        
+        // Also get batch count for display
+        const batchesResult = await this.db.getBatchesByProduct(product.product_id, this.currentFarm.farm_id);
+        const batches = batchesResult.success && batchesResult.data ? batchesResult.data : [];
+        product.batch_count = batches.length;
+        
+        // Check for expiring batches
+        const hasExpiring = await this.db.hasExpiringBatches(product.product_id);
+        product.has_expiring = hasExpiring;
+      }
 
-    // Load customers
-    const customersResult = await this.db.getAllCustomersWithBalance(this.currentFarm.farm_id);
-    this.customers = customersResult.success ? customersResult.data : [];
+      // Load purchases
+      const pu = await this.db.get(
+        `SELECT po.*, p.product_name, s.supplier_name 
+         FROM purchase_orders po 
+         LEFT JOIN products p ON po.product_id = p.product_id 
+         LEFT JOIN suppliers s ON po.supplier_id = s.supplier_id 
+         WHERE po.farm_id = ? 
+         ORDER BY po.date DESC`,
+        [this.currentFarm.farm_id]
+      );
+      this.purchases = pu.success ? pu.data : [];
 
-    // Determine bill paid status
-    for (const bill of this.sales) {
-      bill.is_paid = (bill.amount_paid || 0) >= (bill.total_amount || 0);
+      // Load sales bills
+      const sa = await this.db.get(
+        `SELECT * FROM bills WHERE farm_id = ? ORDER BY bill_date DESC, bill_id DESC`,
+        [this.currentFarm.farm_id]
+      );
+      this.sales = sa.success ? sa.data : [];
+
+      // Load customers
+      const customersResult = await this.db.getAllCustomersWithBalance(this.currentFarm.farm_id);
+      this.customers = customersResult.success ? customersResult.data : [];
+
+      // Determine bill paid status
+      for (const bill of this.sales) {
+        bill.is_paid = (bill.amount_paid || 0) >= (bill.total_amount || 0);
+      }
+
+      console.log('📊 Distribution Report Data:');
+      console.log(`Total Products: ${this.totalProducts}`);
+      console.log(`Total Purchases: Rs. ${this.totalPurchases.toLocaleString()}`);
+      console.log(`Total Sales: Rs. ${this.totalSales.toLocaleString()}`);
+      console.log(`Total Paid Sales: Rs. ${this.totalPaidSales.toLocaleString()}`);
+      console.log(`Total Unpaid Sales: Rs. ${this.totalUnpaidSales.toLocaleString()}`);
+      console.log(`Inventory Value: Rs. ${this.totalInventoryValue.toLocaleString()}`);
+
+    } catch (error: any) {
+      this.errorMessage = 'Failed to load data: ' + error.message;
+      console.error('Load error:', error);
+    } finally {
+      this.isLoading = false;
+      this.cdr.detectChanges();
     }
-
-    console.log('📊 Distribution Report Data:');
-    console.log(`Total Purchases: Rs. ${this.totalPurchases.toLocaleString()}`);
-    console.log(`Total Sales: Rs. ${this.totalSales.toLocaleString()}`);
-    console.log(`Inventory Value: Rs. ${this.totalInventoryValue.toLocaleString()}`);
-
-    this.cdr.detectChanges();
   }
 
   isBillPaid(bill: any): boolean {
@@ -195,11 +260,11 @@ export class DistributionReportComponent implements OnInit {
         ['Total Products', String(this.totalProducts)],
         ['Total Purchase Orders', String(this.totalPurchasesCount)],
         ['Total Sales Bills', String(this.totalSalesCount)],
-        ['Inventory Value (Purchases - Sales)', 'Rs. ' + this.totalInventoryValue.toLocaleString()],
+        ['Inventory Value (Stock × Cost)', 'Rs. ' + this.totalInventoryValue.toLocaleString()],
         ['Total Purchases', 'Rs. ' + this.totalPurchases.toLocaleString()],
         ['Total Sales', 'Rs. ' + this.totalSales.toLocaleString()],
         ['Total Paid Sales', 'Rs. ' + this.totalPaidSales.toLocaleString()],
-        ['Total Unpaid Sales', 'Rs. ' + this.totalUnpaidSales.toLocaleString()]
+        ['Total Unpaid Sales (Sales - Paid)', 'Rs. ' + this.totalUnpaidSales.toLocaleString()]
       ];
 
       doc.setFont('helvetica', 'normal');
@@ -216,34 +281,43 @@ export class DistributionReportComponent implements OnInit {
 
       if (this.products.length > 0) {
         doc.addPage();
-        this.addPageHeader(doc, farmName, today, 'INVENTORY DETAIL');
+        this.addPageHeader(doc, farmName, today, 'INVENTORY DETAIL (Current Stock from Batches)');
         
-        const inventoryBody = this.products.map(p => [
+        // Sort products by stock value (highest first)
+        const sortedProducts = [...this.products].sort((a, b) => {
+          const valA = (a.calculated_stock || 0) * (a.cost_price || 0);
+          const valB = (b.calculated_stock || 0) * (b.cost_price || 0);
+          return valB - valA;
+        });
+
+        const inventoryBody = sortedProducts.map(p => [
           p.product_name,
           p.category || '—',
           String(p.unit || '—'),
-          String(p.current_stock || 0),
+          String(p.calculated_stock || 0),
+          String(p.batch_count || 0),
           'Rs. ' + (p.cost_price || 0).toLocaleString(),
           'Rs. ' + (p.selling_price || 0).toLocaleString(),
-          'Rs. ' + ((p.current_stock || 0) * (p.cost_price || 0)).toLocaleString()
+          'Rs. ' + ((p.calculated_stock || 0) * (p.cost_price || 0)).toLocaleString()
         ]);
 
         autoTable(doc, {
           startY: 35,
-          head: [['Product', 'Category', 'Unit', 'Stock', 'Cost', 'Sell', 'Value']],
-          body: inventoryBody.length > 0 ? inventoryBody : [['No products found', '', '', '', '', '', '']],
+          head: [['Product', 'Category', 'Unit', 'Stock', 'Batches', 'Cost', 'Sell', 'Value']],
+          body: inventoryBody.length > 0 ? inventoryBody : [['No products found', '', '', '', '', '', '', '']],
           theme: 'striped',
-          headStyles: { fontStyle: 'bold', fontSize: 8, fillColor: [26, 92, 56], textColor: [255, 255, 255] },
-          bodyStyles: { fontSize: 8, textColor: B },
+          headStyles: { fontStyle: 'bold', fontSize: 7, fillColor: [26, 92, 56], textColor: [255, 255, 255] },
+          bodyStyles: { fontSize: 7, textColor: B },
           margin: { left: margin, right: margin },
           columnStyles: {
-            0: { cellWidth: 35 },
-            1: { cellWidth: 25 },
-            2: { cellWidth: 20 },
-            3: { cellWidth: 20, halign: 'right' },
-            4: { cellWidth: 25, halign: 'right' },
-            5: { cellWidth: 25, halign: 'right' },
-            6: { cellWidth: 30, halign: 'right' }
+            0: { cellWidth: 28 },
+            1: { cellWidth: 20 },
+            2: { cellWidth: 15 },
+            3: { cellWidth: 18, halign: 'right' },
+            4: { cellWidth: 18, halign: 'right' },
+            5: { cellWidth: 20, halign: 'right' },
+            6: { cellWidth: 20, halign: 'right' },
+            7: { cellWidth: 25, halign: 'right' }
           }
         });
 
@@ -252,6 +326,10 @@ export class DistributionReportComponent implements OnInit {
         doc.setFontSize(9);
         doc.setTextColor(...B);
         doc.text(`Total Inventory Value: Rs. ${this.totalInventoryValue.toLocaleString()}`, margin, finalY);
+        doc.setFont('helvetica', 'normal');
+        doc.setFontSize(7);
+        doc.setTextColor(...G);
+        doc.text('* Inventory value calculated as: Current Stock × Cost Price', margin, finalY + 5);
       }
 
       // ── PURCHASES ──────────────────────────────────────────

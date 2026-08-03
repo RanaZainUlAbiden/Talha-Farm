@@ -1,47 +1,91 @@
 <div class="activation-container">
   <div class="activation-card">
-
     <div class="logo-section">
-      <img src="logo.jpeg" alt="S&G" class="activation-logo"/>
-      <h1>S&G Protien Farm</h1>
-      <p>Software Activation</p>
+      <h1>🐔 Farm Management System</h1>
+      <p class="subtitle">Professional Poultry Farm Management Software</p>
     </div>
 
-    <div class="machine-id-section">
-      <div class="section-label">Your Machine ID</div>
-      <div class="machine-id-box">
-        <span class="machine-id-text">{{ machineId }}</span>
-        <button class="copy-btn" (click)="copyMachineId()"
-          title="Copy to clipboard">
-          📋 Copy
+    <!-- Expired State -->
+    <div class="expired-state" *ngIf="isExpired">
+      <div class="expired-icon">⛔</div>
+      <h2>License Expired</h2>
+      <p class="expired-message">
+        Your trial period has ended. Please contact your provider to renew your license.
+      </p>
+      <div class="expiry-info">
+        <p>Expired on: <strong>{{ expirationDate }}</strong></p>
+      </div>
+      <div class="contact-info">
+        <p>📞 Contact: <strong>0302 6938217</strong></p>
+        <p>📧 Email: <strong>support&#64;devinfantary.com</strong></p>
+        <p>🌐 Website: <strong>www.devinfantary.com</strong></p>
+      </div>
+      <button class="btn-contact" onclick="window.location.href='mailto:support@devinfantary.com'">
+        📧 Contact Support
+      </button>
+    </div>
+
+    <!-- Activation Form -->
+    <div class="activation-form" *ngIf="!isExpired">
+      <!-- Trial Info -->
+      <div class="trial-info" *ngIf="!isTrialStarted || daysRemaining > 0">
+        <div class="trial-badge" *ngIf="!isTrialStarted">🚀 Free Trial</div>
+        <div class="trial-badge trial-active" *ngIf="isTrialStarted && daysRemaining > 0">⏳ Trial Active</div>
+        
+        <p class="trial-text" *ngIf="!isTrialStarted">
+          Start your <strong>7-day</strong> free trial. No credit card required.
+        </p>
+        <p class="trial-text" *ngIf="isTrialStarted && daysRemaining > 0">
+          You have <strong>{{ daysRemaining }}</strong> day{{ daysRemaining > 1 ? 's' : '' }} remaining in your trial.
+          Enter your activation key below to continue using the software.
+        </p>
+        
+        <p class="trial-expiry" *ngIf="isTrialStarted && daysRemaining > 0">
+          Expires: <strong>{{ expirationDate }}</strong>
+        </p>
+      </div>
+
+      <!-- Activation Input -->
+      <div class="form-group">
+        <label for="activationKey">Activation Key</label>
+        <input
+          id="activationKey"
+          type="text"
+          class="form-control"
+          [(ngModel)]="activationKey"
+          placeholder="Enter your activation key"
+          [disabled]="isLoading"
+        />
+      </div>
+
+      <div class="error-message" *ngIf="errorMessage">
+        {{ errorMessage }}
+      </div>
+
+      <div class="button-group">
+        <button class="btn-activate" (click)="activate()" [disabled]="isLoading">
+          {{ isLoading ? '⏳ Activating...' : '🔑 Activate' }}
+        </button>
+        <button class="btn-trial" (click)="startTrial()" [disabled]="isLoading || isTrialStarted">
+          {{ isTrialStarted ? '✅ Trial Started' : '🆓 Start 7-Day Trial' }}
         </button>
       </div>
-      <p class="hint">
-        Send this Machine ID to your software provider
-        to receive your activation code.
-      </p>
+
+      <!-- Demo Key -->
+      <div class="demo-key">
+        <p>Demo Key: <code>DEMO-7DAY-TRIAL-2024</code></p>
+      </div>
+
+      <!-- Support -->
+      <div class="contact-support">
+        <p>Need help? Contact support:</p>
+        <p>📞 0302 6938217 | 📧 support&#64;devinfantary.com</p>
+      </div>
     </div>
 
-    <div class="form-group">
-      <label>Activation Code</label>
-      <input type="text" [(ngModel)]="activationCode"
-        placeholder="e.g. SNG-XXXX-XXXX"
-        (keyup.enter)="activate()"
-        style="text-transform: uppercase"/>
+    <div class="footer">
+      <p>© 2024 DevInfantry. All rights reserved.</p>
+      <p class="version">Version 1.0.0</p>
     </div>
-
-    <div class="error-message" *ngIf="errorMessage">
-      {{ errorMessage }}
-    </div>
-
-    <button class="activate-btn" (click)="activate()"
-      [disabled]="isChecking">
-      {{ isChecking ? 'Verifying...' : 'Activate Software' }}
-    </button>
-
-    <div class="contact-info">
-      <p>Need help? Contact DevInfantary</p>
-    </div>
-
   </div>
 </div>

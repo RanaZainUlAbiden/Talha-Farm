@@ -14,6 +14,17 @@
       <div class="collapse-icon expanded" *ngIf="sidebarCollapsed">›</div>
     </div>
 
+    <!-- License Status Warning -->
+    <div class="license-status-bar" *ngIf="!sidebarCollapsed">
+      <div class="license-status" [class.expired]="showLicenseWarning" [class.active]="!showLicenseWarning && licenseService.isActivated()">
+        <span class="status-icon">{{ licenseService.isActivated() ? '✅' : (showLicenseWarning ? '⚠️' : '🚀') }}</span>
+        <span class="status-text">{{ licenseStatus }}</span>
+      </div>
+      <div class="license-activate" *ngIf="showLicenseWarning">
+        <button class="btn-activate-small" (click)="navigateToActivation()">Activate Now</button>
+      </div>
+    </div>
+
     <div class="flock-selector" *ngIf="!sidebarCollapsed && !isDistributionMode">
       <div class="flock-label">{{ isLayerMode ? 'Active Batch' : 'Active Flock' }}</div>
       <div class="flock-dropdown-trigger"
@@ -52,6 +63,11 @@
     </nav>
 
     <div class="sidebar-footer">
+      <!-- License Status in Footer (Collapsed Mode) -->
+      <div class="license-status-collapsed" *ngIf="sidebarCollapsed" [title]="licenseStatus">
+        <span class="status-icon-small">{{ licenseService.isActivated() ? '✅' : (showLicenseWarning ? '⚠️' : '🚀') }}</span>
+      </div>
+      
       <div class="nav-item logout" (click)="logout()"
         [title]="sidebarCollapsed ? 'Logout' : ''">
         <span class="nav-icon">🚪</span>
@@ -71,6 +87,12 @@
         <h2>{{ currentFarm?.farm_name }}</h2>
         <span class="flock-badge" *ngIf="currentFlock && !isDistributionMode">
           {{ currentFlock.flock_name || currentFlock.batch_name }}
+        </span>
+      </div>
+      <div class="header-right">
+        <!-- License indicator in header -->
+        <span class="license-indicator" [class.expired]="showLicenseWarning" [class.active]="!showLicenseWarning && licenseService.isActivated()">
+          {{ licenseService.isActivated() ? '✅ Licensed' : (showLicenseWarning ? '⚠️ Expiring Soon' : '🚀 Trial') }}
         </span>
       </div>
     </div>
