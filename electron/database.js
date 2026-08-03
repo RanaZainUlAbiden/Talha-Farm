@@ -826,17 +826,48 @@ function addSupplierLedgerEntry(entry) {
   }
 }
 
-function addBankLedgerEntry(entry) {
-  const { bank_id, transaction_date, description, debit = 0, credit = 0, reference_type, reference_id, transaction_number } = entry;
-  // ...
-  const stmt = db.prepare(`
-    INSERT INTO bank_ledger 
-    (bank_id, transaction_date, description, debit, credit, balance, reference_type, reference_id, transaction_number)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-  `);
-  stmt.run([bank_id, transaction_date, description, debit, credit, newBalance, reference_type || null, reference_id || null, transaction_number || null]);
-}
+// ── BANK LEDGER ENTRY ──────────────────────────────────────
 
+function addBankLedgerEntry(entry) {
+  try {
+    const { bank_id, transaction_date, description, debit = 0, credit = 0, reference_type, reference_id, transaction_number } = entry;
+    
+    // Get current balance
+    let currentBalance = 0;
+    try {
+      const stmt = db.prepare(`
+        SELECT COALESCE(SUM(debit - credit), 0) as balance 
+        FROM bank_ledger 
+        WHERE bank_id = ?
+      `);
+      stmt.bind([bank_id]);
+      const result = stmt.getAsObject();
+      stmt.free();
+      currentBalance = result.balance || 0;
+    } catch (e) {
+      console.error('Error getting bank balance:', e.message);
+    }
+    
+    const newBalance = currentBalance + debit - credit;
+    
+    // Insert ledger entry
+    const stmt = db.prepare(`
+      INSERT INTO bank_ledger 
+      (bank_id, transaction_date, description, debit, credit, balance, reference_type, reference_id, transaction_number)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `);
+    stmt.run([bank_id, transaction_date, description, debit, credit, newBalance, reference_type || null, reference_id || null, transaction_number || null]);
+    stmt.free();
+    
+    // 🔥 CRITICAL: Update the bank account current balance
+    db.run(`UPDATE bank_accounts SET current_balance = ? WHERE bank_id = ?`, [newBalance, bank_id]);
+    
+    return { success: true };
+  } catch (err) {
+    console.error('Error adding bank ledger entry:', err);
+    return { success: false, error: err.message };
+  }
+}
 function updateCustomerOutstandingBalance(customerId) {
   try {
     const stmt = db.prepare(`

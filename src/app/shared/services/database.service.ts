@@ -557,39 +557,49 @@ export class DatabaseService {
       [bankId, bankId]
     );
   }
+// ── BANK LEDGER ENTRY ──────────────────────────────────────
 
-  async addBankLedgerEntry(entry: {
-    bank_id: number;
-    transaction_date: string;
-    description: string;
-    debit?: number;
-    credit?: number;
-    reference_type?: string;
-    reference_id?: number | null;
-    transaction_number?: string;
-  }): Promise<any> {
-    const { bank_id, transaction_date, description, debit = 0, credit = 0, reference_type, reference_id, transaction_number } = entry;
-    
-    const result = await this.run(
-      `INSERT INTO bank_ledger 
-       (bank_id, transaction_date, description, debit, credit, balance, reference_type, reference_id, transaction_number)
-       VALUES (?, ?, ?, ?, ?, 
-         (SELECT COALESCE(SUM(debit - credit), 0) FROM bank_ledger WHERE bank_id = ?) + ? - ?,
-         ?, ?, ?)`,
-      [bank_id, transaction_date, description, debit, credit, bank_id, debit, credit, reference_type || null, reference_id || null, transaction_number || null]
+async addBankLedgerEntry(entry: {
+  bank_id: number;
+  transaction_date: string;
+  description: string;
+  debit?: number;
+  credit?: number;
+  reference_type?: string;
+  reference_id?: number | null;
+  transaction_number?: string;
+}): Promise<any> {
+  const { bank_id, transaction_date, description, debit = 0, credit = 0, reference_type, reference_id, transaction_number } = entry;
+  
+  // Get current balance
+  const balanceResult = await this.get(
+    'SELECT COALESCE(SUM(debit - credit), 0) as balance FROM bank_ledger WHERE bank_id = ?',
+    [bank_id]
+  );
+  const currentBalance = balanceResult.success && balanceResult.data && balanceResult.data.length > 0 
+    ? balanceResult.data[0].balance || 0 
+    : 0;
+  
+  const newBalance = currentBalance + debit - credit;
+  
+  // Insert ledger entry
+  const result = await this.run(
+    `INSERT INTO bank_ledger 
+     (bank_id, transaction_date, description, debit, credit, balance, reference_type, reference_id, transaction_number)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    [bank_id, transaction_date, description, debit, credit, newBalance, reference_type || null, reference_id || null, transaction_number || null]
+  );
+  
+  // 🔥 CRITICAL: Update the bank account current balance
+  if (result.success) {
+    await this.run(
+      'UPDATE bank_accounts SET current_balance = ? WHERE bank_id = ?',
+      [newBalance, bank_id]
     );
-    
-    if (result.success) {
-      await this.run(
-        `UPDATE bank_accounts SET current_balance = 
-          (SELECT COALESCE(SUM(debit - credit), 0) FROM bank_ledger WHERE bank_id = ?)
-         WHERE bank_id = ?`,
-        [bank_id, bank_id]
-      );
-    }
-    
-    return result;
   }
+  
+  return result;
+}
 
   // ── CUSTOMER BANK ACCOUNT METHODS ──────────────────────────
 

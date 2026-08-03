@@ -382,3 +382,308 @@
     flex-wrap: wrap;
   }
 }
+
+// ── SEARCH BAR (UPDATED) ──────────────────────────────────────
+
+.qbar {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin: 16px 0 20px 0;
+  flex-wrap: wrap;
+  
+  .qbar-field {
+    display: flex;
+    align-items: center;
+    flex: 1;
+    min-width: 200px;
+    background: white;
+    border: 1.5px solid #e0e0e0;
+    border-radius: 10px;
+    padding: 0 14px;
+    transition: all 0.3s ease;
+    position: relative;
+    
+    &:focus-within {
+      border-color: #1a5c38;
+      box-shadow: 0 0 0 4px rgba(26, 92, 56, 0.1);
+    }
+    
+    span {
+      color: #999;
+      font-size: 15px;
+      margin-right: 10px;
+    }
+    
+    .qbar-input {
+      flex: 1;
+      border: none;
+      outline: none;
+      padding: 11px 8px;
+      font-size: 14px;
+      background: transparent;
+      min-width: 100px;
+      
+      &::placeholder {
+        color: #aaa;
+      }
+    }
+    
+    // ── SEARCH CLEAR BUTTON ──────────────────────────────────────
+    
+    .search-clear-btn {
+      background: none;
+      border: none;
+      color: #999;
+      cursor: pointer;
+      font-size: 16px;
+      padding: 4px 8px;
+      border-radius: 6px;
+      transition: all 0.2s ease;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      width: 28px;
+      height: 28px;
+      
+      &:hover {
+        background: #f5f5f5;
+        color: #333;
+        transform: scale(1.1);
+      }
+      
+      &:active {
+        transform: scale(0.9);
+      }
+    }
+  }
+  
+  // ── SEARCH RESULTS COUNT ──────────────────────────────────────
+  
+  .search-results {
+    font-size: 13px;
+    color: #666;
+    white-space: nowrap;
+    padding: 4px 16px;
+    background: #f0faf4;
+    border-radius: 20px;
+    font-weight: 500;
+    color: #1a5c38;
+    border: 1px solid #c8e6c9;
+  }
+}
+
+// ── EMPTY STATE WITH SEARCH ────────────────────────────────────
+
+.empty-state {
+  text-align: center;
+  padding: 60px 20px;
+  color: #aaa;
+  background: white;
+  border-radius: 12px;
+  border: 1px dashed #e0e0e0;
+  
+  p {
+    margin-bottom: 16px;
+    font-size: 15px;
+    color: #888;
+  }
+  
+  .btn-secondary {
+    padding: 8px 24px;
+    border: 1px solid #ddd;
+    border-radius: 8px;
+    background: white;
+    color: #555;
+    cursor: pointer;
+    transition: all 0.3s ease;
+    font-size: 13px;
+    
+    &:hover {
+      background: #f5f5f5;
+      border-color: #bbb;
+      transform: translateY(-2px);
+    }
+  }
+}
+
+// ── BILL LIST ───────────────────────────────────────────────────
+
+.bill-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-top: 12px;
+}
+
+.bill-item {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 14px 18px;
+  background: white;
+  border-radius: 10px;
+  border: 1px solid #e8e8e8;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  
+  &:hover {
+    background: #f8faf8;
+    border-color: #c8e6c9;
+    transform: translateX(4px);
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.06);
+  }
+  
+  .bill-left {
+    display: flex;
+    align-items: center;
+    gap: 14px;
+    flex-wrap: wrap;
+    
+    .bill-num {
+      font-weight: 600;
+      color: #1a1a2e;
+      font-size: 14px;
+      font-family: monospace;
+      background: #f0faf4;
+      padding: 2px 10px;
+      border-radius: 4px;
+    }
+    
+    .bill-cust {
+      color: #555;
+      font-size: 14px;
+    }
+  }
+  
+  .bill-right {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    flex-wrap: wrap;
+    
+    .bill-date {
+      font-size: 12px;
+      color: #888;
+    }
+    
+    .bill-amt {
+      font-weight: 600;
+      color: #1a5c38;
+      font-size: 14px;
+    }
+    
+    .bill-status {
+      padding: 2px 10px;
+      border-radius: 12px;
+      font-size: 11px;
+      font-weight: 500;
+      
+      &.paid {
+        background: #e8f5e9;
+        color: #1a5c38;
+      }
+      
+      &.unpaid {
+        background: #fff3e0;
+        color: #e65100;
+      }
+    }
+    
+    .bill-delete {
+      background: none;
+      border: none;
+      color: #ccc;
+      cursor: pointer;
+      font-size: 14px;
+      padding: 4px 8px;
+      border-radius: 4px;
+      transition: all 0.2s ease;
+      
+      &:hover {
+        color: #e53935;
+        background: #ffebee;
+      }
+    }
+  }
+}
+
+// ── RESPONSIVE FOR SEARCH BAR ──────────────────────────────────
+
+@media (max-width: 768px) {
+  .qbar {
+    flex-direction: column;
+    align-items: stretch;
+    
+    .qbar-field {
+      min-width: unset;
+    }
+    
+    .search-results {
+      text-align: center;
+      padding: 4px 12px;
+      font-size: 12px;
+    }
+  }
+  
+  .bill-item {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 10px;
+    
+    .bill-right {
+      width: 100%;
+      justify-content: flex-start;
+      flex-wrap: wrap;
+    }
+  }
+}
+
+@media (max-width: 480px) {
+  .qbar {
+    .qbar-field {
+      padding: 0 10px;
+      
+      .qbar-input {
+        padding: 9px 6px;
+        font-size: 13px;
+      }
+      
+      .search-clear-btn {
+        width: 24px;
+        height: 24px;
+        font-size: 14px;
+      }
+    }
+    
+    .search-results {
+      font-size: 11px;
+      padding: 3px 10px;
+    }
+  }
+  
+  .bill-item {
+    padding: 10px 14px;
+    
+    .bill-left {
+      gap: 10px;
+      
+      .bill-num {
+        font-size: 12px;
+        padding: 2px 8px;
+      }
+      
+      .bill-cust {
+        font-size: 13px;
+      }
+    }
+    
+    .bill-right {
+      gap: 8px;
+      
+      .bill-amt {
+        font-size: 13px;
+      }
+    }
+  }
+}

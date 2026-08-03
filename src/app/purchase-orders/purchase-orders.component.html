@@ -9,7 +9,8 @@
         <button class="btn-secondary" (click)="cancelAllRows()">Cancel All</button>
         <button class="btn-primary" (click)="saveAllRows()" [disabled]="isSavingAll">{{ isSavingAll ? 'Saving...' : 'Save All' }}</button>
       </ng-container>
-      <button class="btn123" (click)="addPendingRow()" *ngIf="products.length > 0">+ Add Row</button>
+      <!-- ✅ FIXED: Changed class from btn123 to btn-add -->
+      <button class="btn-add" (click)="addPendingRow()" *ngIf="products.length > 0">+ Add Row</button>
     </div>
   </div>
 

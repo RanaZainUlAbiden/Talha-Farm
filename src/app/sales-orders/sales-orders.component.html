@@ -16,6 +16,7 @@
         <p>Loading sales orders...</p>
       </div>
       
+      <!-- SEARCH BAR - UPDATED -->
       <div class="qbar" *ngIf="!isLoading">
         <div class="qbar-field">
           <span>🔍</span>
@@ -25,14 +26,24 @@
             placeholder="Search bill number or customer..." 
             [(ngModel)]="billSearchTerm" 
             (input)="onBillSearch()"
+            (keydown.enter)="onBillSearch()"
           />
+          <button class="search-clear-btn" *ngIf="billSearchTerm" (click)="clearSearch()">✕</button>
         </div>
+        <span class="search-results" *ngIf="billSearchTerm && filteredBills.length > 0">
+          Found {{ filteredBills.length }} result(s)
+        </span>
       </div>
       
       <div class="error-message" *ngIf="errorMessage">{{ errorMessage }}</div>
       
-      <div class="empty-state" *ngIf="!isLoading && filteredBills.length === 0">
+      <div class="empty-state" *ngIf="!isLoading && filteredBills.length === 0 && !billSearchTerm">
         <p>No bills yet. Click "New Bill" to create one.</p>
+      </div>
+      
+      <div class="empty-state" *ngIf="!isLoading && filteredBills.length === 0 && billSearchTerm">
+        <p>No bills found matching "{{ billSearchTerm }}"</p>
+        <button class="btn-secondary" (click)="clearSearch()">Clear Search</button>
       </div>
       
       <div class="bill-list" *ngIf="!isLoading && filteredBills.length > 0">
@@ -50,7 +61,14 @@
             <span class="bill-status" [class.paid]="bill.amount_paid >= bill.total_amount" [class.unpaid]="bill.amount_paid < bill.total_amount">
               {{ bill.amount_paid >= bill.total_amount ? 'Paid' : 'Unpaid' }}
             </span>
-            <button class="bill-delete" (click)="confirmDeleteBill($event, bill.bill_id)">Delete</button>
+          <!-- In the bill list -->
+<button 
+  class="bill-delete" 
+  (click)="confirmDeleteBill($event, bill.bill_id)"
+  type="button"
+>
+  Delete
+</button>
           </div>
         </div>
       </div>

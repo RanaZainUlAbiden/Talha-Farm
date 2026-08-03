@@ -81,7 +81,6 @@ export class SalesOrdersComponent implements OnInit, OnDestroy {
   }
 
   ngOnDestroy() {
-    // Save state when component is destroyed and not in list view
     if (this.viewMode !== 'list' && !this.isSubmitting) {
       this.saveState();
     }
@@ -119,7 +118,6 @@ export class SalesOrdersComponent implements OnInit, OnDestroy {
         this.formState.saveState(this.FORM_KEY, state);
         console.log('💾 Sales orders state auto-saved');
       } else {
-        // Clear state when in list view
         this.formState.clearState(this.FORM_KEY);
       }
     }, 500);
@@ -146,7 +144,6 @@ export class SalesOrdersComponent implements OnInit, OnDestroy {
       this.currentPage = state.currentPage || 1;
       this.billSearchTerm = state.billSearchTerm || '';
       
-      // Load dependent data
       if (this.customerType === 'internal') {
         this.loadInternalTargets();
       }
@@ -154,9 +151,13 @@ export class SalesOrdersComponent implements OnInit, OnDestroy {
         this.checkCustomerBank(this.selectedCustomerId);
       }
       
-      // If in edit mode, load bill items
       if (this.isEditMode && this.editingBillId) {
         this.loadBillItemsForEdit(this.editingBillId);
+      }
+      
+      // Apply search if there's a search term
+      if (this.billSearchTerm) {
+        this.applySearch();
       }
       
       this.cdr.detectChanges();
@@ -181,8 +182,6 @@ export class SalesOrdersComponent implements OnInit, OnDestroy {
     }
   }
 
-  // ── AUTO-SAVE ──────────────────────────────────────────────
-
   onFormChange(): void {
     if (this.viewMode !== 'list') {
       this.saveState();
@@ -206,10 +205,7 @@ export class SalesOrdersComponent implements OnInit, OnDestroy {
       this.customers = cr.success ? cr.data : [];
       
       await this.loadBills();
-      
-      // 🔥 Restore state AFTER data is loaded
       this.restoreState();
-      
       this.cdr.detectChanges();
     } catch (error: any) {
       this.errorMessage = 'Failed to load data: ' + error.message;
@@ -224,17 +220,71 @@ export class SalesOrdersComponent implements OnInit, OnDestroy {
     const br = await this.db.get('SELECT * FROM bills WHERE farm_id=? ORDER BY bill_date DESC', [this.currentFarm.farm_id]);
     this.allBills = br.success ? br.data : [];
     this.filteredBills = [...this.allBills];
+    
+    // If there's a search term, apply it
+    if (this.billSearchTerm) {
+      this.applySearch();
+    }
   }
 
+  // ── SEARCH METHODS (FIXED) ─────────────────────────────────
+
+  /**
+   * 🔥 FIXED: Real-time search with proper filtering
+   * Triggered on input change and Enter key
+   */
   onBillSearch() {
-    const term = this.billSearchTerm.toLowerCase().trim();
-    this.filteredBills = term ? this.allBills.filter(b => 
-      b.bill_number.toLowerCase().includes(term) || 
-      (b.customer_name || '').toLowerCase().includes(term)
-    ) : [...this.allBills];
+    // Use setTimeout to ensure the model is updated
+    setTimeout(() => {
+      this.applySearch();
+    }, 0);
+  }
+
+  /**
+   * Apply the search filter to bills
+   */
+  private applySearch() {
+    const term = this.billSearchTerm?.toLowerCase().trim() || '';
+    
+    if (!term) {
+      this.filteredBills = [...this.allBills];
+      this.currentPage = 1;
+      this.cdr.detectChanges();
+      this.onFormChange();
+      return;
+    }
+    
+    this.filteredBills = this.allBills.filter(bill => {
+      const billNumber = (bill.bill_number || '').toLowerCase();
+      const customerName = (bill.customer_name || '').toLowerCase();
+      const customerId = bill.customer_id ? String(bill.customer_id) : '';
+      const billId = bill.bill_id ? String(bill.bill_id) : '';
+      
+      return billNumber.includes(term) || 
+             customerName.includes(term) ||
+             customerId.includes(term) ||
+             billId.includes(term);
+    });
+    
     this.currentPage = 1;
+    this.cdr.detectChanges();
+    this.onFormChange();
+    
+    console.log(`🔍 Search term: "${term}", Found: ${this.filteredBills.length} bills`);
+  }
+
+  /**
+   * 🔥 NEW: Clear search and reset results
+   */
+  clearSearch() {
+    this.billSearchTerm = '';
+    this.filteredBills = [...this.allBills];
+    this.currentPage = 1;
+    this.cdr.detectChanges();
     this.onFormChange();
   }
+
+  // ── END SEARCH METHODS ─────────────────────────────────────
 
   onCreateNewBill() {
     this.resetForm();
@@ -504,6 +554,7 @@ export class SalesOrdersComponent implements OnInit, OnDestroy {
   async addToCustomerLedger(customerId: number, billId: number, totalAmount: number, paidAmount: number, billNumber: string) {
     if (!customerId) return;
     
+    // Add bill entry (debit = total amount)
     await this.db.addCustomerLedgerEntry({ 
       customer_id: customerId, 
       transaction_date: new Date().toISOString().split('T')[0], 
@@ -514,6 +565,7 @@ export class SalesOrdersComponent implements OnInit, OnDestroy {
       reference_id: billId 
     });
     
+    // Add payment entry (credit = paid amount) ONLY if paidAmount > 0
     if (paidAmount > 0) {
       await this.db.addCustomerLedgerEntry({ 
         customer_id: customerId, 
@@ -622,20 +674,64 @@ export class SalesOrdersComponent implements OnInit, OnDestroy {
     let savedBillId: number | null = null;
 
     try {
+      // ── CALCULATE PAYMENTS ────────────────────────────────────
+      
+      let effectivePaid = 0;
+      let bankDeductAmount = 0;
+      let paymentType = 'cash';
+      
+      if (this.customerType === 'internal') {
+        effectivePaid = 0;
+        paymentType = 'internal';
+      } else if (this.paymentMethod === 'bank' && this.selectedCustomerId) {
+        paymentType = 'bank';
+        
+        if (this.paidAmount > 0) {
+          bankDeductAmount = this.paidAmount;
+          effectivePaid = this.paidAmount;
+          
+          const deductResult = await this.db.deductCustomerBank(
+            this.selectedCustomerId, 
+            bankDeductAmount, 
+            `Payment - Bill #${billNumber || 'EDIT'}`
+          );
+          
+          if (!deductResult.success) {
+            this.errorMessage = 'Bank payment failed: ' + (deductResult.error || 'Unknown error');
+            this.isSubmitting = false;
+            this.cdr.detectChanges();
+            return null;
+          }
+        } else {
+          effectivePaid = 0;
+          bankDeductAmount = 0;
+        }
+      } else {
+        effectivePaid = this.paidAmount || 0;
+        paymentType = 'cash';
+      }
+
+      console.log('📊 Payment Details:', {
+        totalAmount,
+        paidAmount: this.paidAmount,
+        effectivePaid,
+        bankDeductAmount,
+        paymentMethod: this.paymentMethod,
+        paymentType,
+        customerId: this.selectedCustomerId
+      });
+
+      // ── SAVE OR UPDATE BILL ───────────────────────────────────
+
       if (this.isEditMode && this.editingBillId) {
         savedBillId = this.editingBillId;
         const oldBill = this.allBills.find(b => b.bill_id === this.editingBillId);
         if (oldBill?.customer_id) await this.removeFromCustomerLedger(this.editingBillId, oldBill.customer_id);
         await this.restoreBillStock(this.editingBillId);
         
-        const effectivePaid = this.customerType === 'internal' ? 0 : 
-                             (this.paymentMethod === 'bank' ? totalAmount : this.paidAmount);
-        
         await this.db.run(
           'UPDATE bills SET customer_id=?, customer_name=?, subtotal=?, total_amount=?, amount_paid=?, payment_type=? WHERE bill_id=?',
-          [this.selectedCustomerId, customerName, totalAmount, totalAmount, effectivePaid, 
-           this.customerType === 'internal' ? 'internal' : (this.paymentMethod === 'bank' ? 'bank' : 'cash'), 
-           this.editingBillId]
+          [this.selectedCustomerId, customerName, totalAmount, totalAmount, effectivePaid, paymentType, this.editingBillId]
         );
         
         await this.db.run('DELETE FROM bill_items WHERE bill_id=?', [this.editingBillId]);
@@ -651,14 +747,10 @@ export class SalesOrdersComponent implements OnInit, OnDestroy {
           await this.addToCustomerLedger(this.selectedCustomerId, this.editingBillId, totalAmount, effectivePaid, billNumber);
         }
       } else {
-        const effectivePaid = this.customerType === 'internal' ? 0 : 
-                             (this.paymentMethod === 'bank' ? totalAmount : this.paidAmount);
-        
         await this.db.run(
           'INSERT INTO bills (farm_id, bill_number, customer_id, customer_name, bill_date, subtotal, total_amount, amount_paid, payment_type) VALUES (?,?,?,?,?,?,?,?,?)',
           [this.currentFarm.farm_id, billNumber, this.selectedCustomerId, customerName, 
-           new Date().toISOString().split('T')[0], totalAmount, totalAmount, effectivePaid, 
-           this.customerType === 'internal' ? 'internal' : (this.paymentMethod === 'bank' ? 'bank' : 'cash')]
+           new Date().toISOString().split('T')[0], totalAmount, totalAmount, effectivePaid, paymentType]
         );
         
         const lastBill = await this.db.get('SELECT MAX(bill_id) as bid FROM bills WHERE farm_id=?', [this.currentFarm.farm_id]);
@@ -679,6 +771,8 @@ export class SalesOrdersComponent implements OnInit, OnDestroy {
         }
       }
 
+      // ── INTERNAL TRANSFER ──────────────────────────────────────
+      
       if (this.customerType === 'internal' && savedBillId && this.internalTargetFlockId) {
         for (const item of this.gridItems) {
           const desc = item.productName + ' × ' + item.quantity;
@@ -695,49 +789,75 @@ export class SalesOrdersComponent implements OnInit, OnDestroy {
         }
       }
 
-      // 🔥 Clear state on successful save
+      // ── CLEANUP ─────────────────────────────────────────────────
+      
       this.formState.clearState(this.FORM_KEY);
       this.resetForm(); 
       this.viewMode = 'list'; 
       await this.loadBills(); 
       await this.loadData();
+      
     } catch (error: any) { 
       this.errorMessage = 'Error saving: ' + error.message; 
+      console.error('Save error:', error);
     } finally { 
       this.isSubmitting = false; 
       this.cdr.detectChanges(); 
     }
     return savedBillId;
   }
+// ── DELETE METHODS (FIXED) ────────────────────────────────────
 
-  confirmDeleteBill(event: Event, billId: number) { 
-    event.stopPropagation(); 
-    this.deletingBillId = billId; 
-    this.showDeleteDialog = true; 
-  }
+/**
+ * 🔥 FIXED: Delete button click handler
+ * Prevents event bubbling and immediately shows the dialog
+ */
+confirmDeleteBill(event: Event, billId: number) { 
+  // Stop event from bubbling to parent (bill-item)
+  event.stopPropagation();
+  event.preventDefault();
+  
+  console.log('🗑️ Delete clicked for bill:', billId);
+  
+  // Set the delete ID and show dialog
+  this.deletingBillId = billId;
+  this.showDeleteDialog = true;
+  
+  // Force change detection
+  this.cdr.detectChanges();
+}
 
-  async onDeleteConfirmed() {
-    if (!this.deletingBillId) return;
-    try {
-      const bill = this.allBills.find(b => b.bill_id === this.deletingBillId);
-      if (bill?.customer_id) await this.removeFromCustomerLedger(this.deletingBillId, bill.customer_id);
-      await this.db.run('DELETE FROM internal_transfers WHERE bill_id=?', [this.deletingBillId]);
-      await this.restoreBillStock(this.deletingBillId);
-      await this.db.run('DELETE FROM bill_items WHERE bill_id=?', [this.deletingBillId]);
-      await this.db.run('DELETE FROM bills WHERE bill_id=?', [this.deletingBillId]);
-      this.showDeleteDialog = false; 
-      this.deletingBillId = null; 
-      await this.loadData();
-    } catch (error: any) { 
-      this.errorMessage = 'Error deleting: ' + error.message; 
+async onDeleteConfirmed() {
+  if (!this.deletingBillId) return;
+  
+  console.log('✅ Delete confirmed for bill:', this.deletingBillId);
+  
+  try {
+    const bill = this.allBills.find(b => b.bill_id === this.deletingBillId);
+    if (bill?.customer_id) {
+      await this.removeFromCustomerLedger(this.deletingBillId, bill.customer_id);
     }
-  }
-
-  onDeleteCancelled() { 
+    await this.db.run('DELETE FROM internal_transfers WHERE bill_id=?', [this.deletingBillId]);
+    await this.restoreBillStock(this.deletingBillId);
+    await this.db.run('DELETE FROM bill_items WHERE bill_id=?', [this.deletingBillId]);
+    await this.db.run('DELETE FROM bills WHERE bill_id=?', [this.deletingBillId]);
+    
     this.showDeleteDialog = false; 
     this.deletingBillId = null; 
+    await this.loadData();
+  } catch (error: any) { 
+    this.errorMessage = 'Error deleting: ' + error.message; 
+    console.error('Delete error:', error);
+    this.showDeleteDialog = false;
+    this.cdr.detectChanges();
   }
+}
 
+onDeleteCancelled() { 
+  this.showDeleteDialog = false; 
+  this.deletingBillId = null; 
+  this.cdr.detectChanges();
+}
   async saveAndPrint() { 
     const billId = await this.saveBill(); 
     if (billId == null) return; 
