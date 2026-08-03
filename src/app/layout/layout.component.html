@@ -16,8 +16,8 @@
 
     <!-- License Status Warning -->
     <div class="license-status-bar" *ngIf="!sidebarCollapsed">
-      <div class="license-status" [class.expired]="showLicenseWarning" [class.active]="!showLicenseWarning && licenseService.isActivated()">
-        <span class="status-icon">{{ licenseService.isActivated() ? '✅' : (showLicenseWarning ? '⚠️' : '🚀') }}</span>
+      <div class="license-status" [class.expired]="showLicenseWarning" [class.active]="!showLicenseWarning && isLicenseActivated">
+        <span class="status-icon">{{ isLicenseActivated ? '✅' : (showLicenseWarning ? '⚠️' : '🚀') }}</span>
         <span class="status-text">{{ licenseStatus }}</span>
       </div>
       <div class="license-activate" *ngIf="showLicenseWarning">
@@ -65,7 +65,7 @@
     <div class="sidebar-footer">
       <!-- License Status in Footer (Collapsed Mode) -->
       <div class="license-status-collapsed" *ngIf="sidebarCollapsed" [title]="licenseStatus">
-        <span class="status-icon-small">{{ licenseService.isActivated() ? '✅' : (showLicenseWarning ? '⚠️' : '🚀') }}</span>
+        <span class="status-icon-small">{{ isLicenseActivated ? '✅' : (showLicenseWarning ? '⚠️' : '🚀') }}</span>
       </div>
       
       <div class="nav-item logout" (click)="logout()"
@@ -91,8 +91,8 @@
       </div>
       <div class="header-right">
         <!-- License indicator in header -->
-        <span class="license-indicator" [class.expired]="showLicenseWarning" [class.active]="!showLicenseWarning && licenseService.isActivated()">
-          {{ licenseService.isActivated() ? '✅ Licensed' : (showLicenseWarning ? '⚠️ Expiring Soon' : '🚀 Trial') }}
+        <span class="license-indicator" [class.expired]="showLicenseWarning" [class.active]="!showLicenseWarning && isLicenseActivated">
+          {{ isLicenseActivated ? '✅ Licensed' : (showLicenseWarning ? '⚠️ Expiring Soon' : '🚀 Trial') }}
         </span>
       </div>
     </div>

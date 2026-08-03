@@ -20,36 +20,43 @@ export class ActivationComponent implements OnInit {
   daysRemaining: number = 0;
   isTrialStarted: boolean = false;
   isActivated: boolean = false;
-  
-  // Demo keys (in production, these would be validated against a server)
-  private readonly DEMO_KEYS = [
-    'DEMO-7DAY-TRIAL-2024', 
-    'FARM-PRO-2024', 
-    'POULTRY-MANAGER-2024',
-    'PERMANENT-LICENSE-2024'
-  ];
+  isClockTampered: boolean = false;
+  machineId: string = '';
 
   constructor(
     private router: Router,
     private licenseService: LicenseService
   ) {}
 
-  ngOnInit() {
+  async ngOnInit() {
+    this.licenseService.updateLastLaunchDate();
+
+    try {
+      this.machineId = await (window as any).electronAPI.getMachineId();
+    } catch (e) {
+      this.machineId = 'Unable to detect';
+    }
+
+    const status = await this.licenseService.getStatus();
+
+    if (status.clockTampered) {
+      this.isClockTampered = true;
+      return;
+    }
+
     // Check if already activated
-    if (this.licenseService.isActivated()) {
+    if (status.activated) {
       this.isActivated = true;
       this.router.navigate(['/login']);
       return;
     }
 
     // Check trial status
-    const status = this.licenseService.getStatus();
-    
     if (status.trialStarted) {
       this.isTrialStarted = true;
       this.daysRemaining = status.daysRemaining;
       this.expirationDate = status.expiryDate || '';
-      
+
       if (status.trialExpired) {
         this.isExpired = true;
         this.expirationDate = status.expiryDate || '';
@@ -58,6 +65,12 @@ export class ActivationComponent implements OnInit {
       this.daysRemaining = 7;
     }
   }
+
+copyMachineId() {
+  navigator.clipboard.writeText(this.machineId).then(() => {
+    // Brief visual feedback - could add a toast later
+  });
+}
 
   async activate() {
     if (!this.activationKey.trim()) {
@@ -69,21 +82,13 @@ export class ActivationComponent implements OnInit {
     this.errorMessage = '';
 
     try {
-      // Simulate network delay
-      await new Promise(resolve => setTimeout(resolve, 1000));
-      
-      // Validate against demo keys (in production, call your server API)
-      const isValid = this.DEMO_KEYS.some(key => 
-        key.toLowerCase() === this.activationKey.trim().toLowerCase()
-      );
-      
+      // Validate against machine ID using hash
+      const isValid = await this.licenseService.validateActivationKey(this.activationKey);
+
       if (isValid) {
-        this.licenseService.activate();
+        this.licenseService.activate(this.activationKey);
         this.isActivated = true;
-        
-        // Show success message before navigating
-        this.errorMessage = ''; // Clear any errors
-        
+
         // Navigate to login after a brief delay
         setTimeout(() => {
           this.router.navigate(['/login']);
@@ -100,25 +105,20 @@ export class ActivationComponent implements OnInit {
 
   startTrial() {
     if (this.isTrialStarted) {
-      // If trial already started, just navigate
       this.router.navigate(['/login']);
       return;
     }
-    
+
     this.licenseService.startTrial();
     this.isTrialStarted = true;
     this.daysRemaining = 7;
     this.expirationDate = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString().split('T')[0];
-    
-    // Navigate to login after a brief delay
+
     setTimeout(() => {
       this.router.navigate(['/login']);
     }, 300);
   }
 
-  /**
-   * Get today's date for display
-   */
   getTodayDate(): string {
     return new Date().toISOString().split('T')[0];
   }

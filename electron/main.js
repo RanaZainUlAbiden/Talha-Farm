@@ -5,11 +5,8 @@ const { autoUpdater } = require('electron-updater')
 const { initializeDatabase, runQuery, getQuery } = require('./database')
 
 // Windows specific optimizations
-app.disableHardwareAcceleration()
 app.commandLine.appendSwitch('disable-background-timer-throttling')
-app.commandLine.appendSwitch('disable-gpu')
 app.commandLine.appendSwitch('high-dpi-support', '1')
-app.commandLine.appendSwitch('force-device-scale-factor', '1')
 
 // Set app name for Windows
 app.setAppUserModelId('com.devinfantary.poultry-farm')
@@ -18,7 +15,6 @@ let mainWindow
 let isQuitting = false
 
 async function createWindow() {
-  // ✅ SAFE: Wrap database init with error handling
   let dbResult;
   try {
     dbResult = await initializeDatabase()
@@ -36,7 +32,6 @@ async function createWindow() {
     return
   }
 
-  // ✅ If database was recovered, notify user
   if (dbResult && dbResult.recovered) {
     dialog.showMessageBox({
       type: 'warning',
@@ -68,11 +63,9 @@ async function createWindow() {
     title: 'Talha Protein Farm'
   })
 
-  // Load the Angular app
   const indexPath = path.join(__dirname, '../dist/Poultry-Farm/browser/index.html')
   mainWindow.loadFile(indexPath)
 
-  // Remove default menu
   mainWindow.setMenu(null)
 
   mainWindow.once('ready-to-show', () => {
@@ -80,7 +73,6 @@ async function createWindow() {
     mainWindow.focus()
     mainWindow.maximize()
     
-    // Check for updates in production
     if (process.env.NODE_ENV === 'production') {
       autoUpdater.checkForUpdatesAndNotify()
     }
@@ -108,7 +100,6 @@ async function createWindow() {
     mainWindow = null
   })
 
-  // Handle external links
   mainWindow.webContents.setWindowOpenHandler(({ url }) => {
     shell.openExternal(url)
     return { action: 'deny' }
@@ -145,6 +136,162 @@ ipcMain.handle('db-get', async (event, sql, params) => {
 ipcMain.handle('get-machine-id', async () => {
   return machineIdSync()
 })
+
+// ═══════════════ LICENSE IPC HANDLERS ═══════════════
+
+const LICENSE_SECRET = 'SNG@PoultryFarm#2024!DevInfantary';
+
+function licenseHashCode(str) {
+  let hash = 0;
+  for (let i = 0; i < str.length; i++) {
+    const char = str.charCodeAt(i);
+    hash = ((hash << 5) - hash) + char;
+    hash = hash & hash;
+  }
+  const hex = Math.abs(hash).toString(16).toUpperCase();
+  return hex.padStart(8, '0');
+}
+
+function generateExpectedCode(machineId) {
+  const combined = machineId + LICENSE_SECRET;
+  const hash = licenseHashCode(combined);
+  return `DIP-${hash.slice(0, 4)}-${hash.slice(4, 8)}`;
+}
+
+ipcMain.handle('license-get', async () => {
+  const machineId = machineIdSync();
+  return getQuery('SELECT * FROM activation WHERE machine_id = ?', [machineId]);
+});
+
+ipcMain.handle('license-start-trial', async (event, machineId, date) => {
+  return runQuery(
+    'INSERT OR REPLACE INTO activation (machine_id, activation_code, trial_start_date, last_launch_date, is_permanent, is_active) VALUES (?, ?, ?, ?, 0, 1)',
+    [machineId, '', date, date]
+  );
+});
+
+ipcMain.handle('license-activate', async (event, machineId, code) => {
+  const expectedCode = generateExpectedCode(machineId);
+  if (code.trim().toUpperCase() !== expectedCode) {
+    return { success: false, error: 'Invalid activation code' };
+  }
+  const now = new Date().toISOString();
+  return runQuery(
+    'INSERT OR REPLACE INTO activation (machine_id, activation_code, trial_start_date, last_launch_date, is_permanent, is_active, activated_at) VALUES (?, ?, ?, ?, 0, 1, ?)',
+    [machineId, code, now, now, now]
+  );
+});
+
+ipcMain.handle('license-update-launch', async (event, machineId, date) => {
+  return runQuery('UPDATE activation SET last_launch_date = ? WHERE machine_id = ?', [date, machineId]);
+});
+
+ipcMain.handle('license-status', async () => {
+  const machineId = machineIdSync();
+  const result = await getQuery('SELECT * FROM activation WHERE machine_id = ?', [machineId]);
+  const row = result.success && result.data.length > 0 ? result.data[0] : null;
+
+  if (!row) {
+    return { 
+      activated: false, 
+      trialStarted: false, 
+      trialExpired: false, 
+      daysRemaining: 7, 
+      clockTampered: false, 
+      licenseDaysRemaining: 0 
+    };
+  }
+
+  const now = new Date();
+  const trialStart = row.trial_start_date ? new Date(row.trial_start_date) : null;
+  const lastLaunch = row.last_launch_date ? new Date(row.last_launch_date) : null;
+  const activatedAt = row.activated_at ? new Date(row.activated_at) : null;
+
+  // ═══════════════ 🔒 CLOCK TAMPER DETECTION ═══════════════
+  let clockTampered = false;
+
+  if (lastLaunch) {
+    const lastLaunchTime = lastLaunch.getTime();
+    const nowTime = now.getTime();
+    const hoursSinceLastLaunch = (nowTime - lastLaunchTime) / (1000 * 60 * 60);
+
+    // 1️⃣ BACKWARD: System clock set to a time before last launch
+    if (nowTime < lastLaunchTime) {
+      clockTampered = true;
+    }
+
+    // 2️⃣ FORWARD JUMP: More than 48 hours since last launch (suspicious)
+    //    Normal usage would have daily launches. A gap > 2 days suggests
+    //    the user changed the system date forward.
+    if (hoursSinceLastLaunch > 48) {
+      clockTampered = true;
+    }
+  }
+
+  // 3️⃣ FUTURE DATE CHECK: System date is more than 8 days ahead of activation/trial
+  //    Even if they trickle-change the date 1 day at a time (avoiding the 48hr check),
+  //    they can't go beyond 7 days from activation.
+  if (!clockTampered) {
+    const referenceDate = activatedAt || trialStart;
+    if (referenceDate) {
+      const daysSinceReference = (now.getTime() - referenceDate.getTime()) / (1000 * 60 * 60 * 24);
+      if (daysSinceReference > 8) {
+        clockTampered = true;
+      }
+    }
+  }
+
+  // If clock tampered → deactivate license and lock out
+  if (clockTampered) {
+    await runQuery('UPDATE activation SET is_active = 0 WHERE machine_id = ?', [machineId]);
+    return { 
+      activated: false, 
+      trialStarted: true, 
+      trialExpired: true, 
+      daysRemaining: 0, 
+      clockTampered: true, 
+      licenseDaysRemaining: 0 
+    };
+  }
+
+  // ═══════════════ CHECK ACTIVATION ═══════════════
+  let activated = row.is_active === 1 && row.activation_code && row.activation_code.length > 0;
+  let licenseDaysRemaining = 0;
+
+  if (activated && activatedAt) {
+    const expiryDate = new Date(activatedAt);
+    expiryDate.setDate(expiryDate.getDate() + 7); // 7-day license
+    const diffTime = expiryDate.getTime() - now.getTime();
+    licenseDaysRemaining = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
+    if (licenseDaysRemaining <= 0) {
+      activated = false;
+      licenseDaysRemaining = 0;
+      await runQuery('UPDATE activation SET is_active = 0 WHERE machine_id = ?', [machineId]);
+    }
+  }
+
+  // ═══════════════ CHECK TRIAL ═══════════════
+  let trialExpired = false;
+  let daysRemaining = 7;
+  let trialStarted = false;
+
+  if (trialStart) {
+    trialStarted = true;
+    const diffTime = now.getTime() - trialStart.getTime();
+    const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
+    daysRemaining = 7 - diffDays;
+    trialExpired = diffDays > 7;
+  }
+
+  return {
+    activated,
+    trialStarted,
+    trialExpired,
+    daysRemaining: daysRemaining > 0 ? daysRemaining : 0,
+    clockTampered: false,
+    licenseDaysRemaining: licenseDaysRemaining > 0 ? licenseDaysRemaining : 0
+  };
+});
 
 // ── AUTO UPDATER ────────────────────────────────────────────
 

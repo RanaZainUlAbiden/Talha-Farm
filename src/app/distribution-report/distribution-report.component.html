@@ -1,17 +1,31 @@
 <div class="module-container">
+
   <div class="module-header">
     <div>
       <h3>📊 Distribution Report</h3>
       <p class="subtitle">{{ currentFarm?.farm_name }}</p>
     </div>
-    <button class="btn-generate" (click)="generatePDF()" [disabled]="isGenerating">
-      {{ isGenerating ? '⏳ Generating...' : '📄 Generate PDF Report' }}
-    </button>
+    <div class="header-actions">
+      <button class="btn-generate" (click)="generatePDF()" [disabled]="isGenerating">
+        {{ isGenerating ? 'Generating...' : '📄 Generate PDF Report' }}
+      </button>
+    </div>
+  </div>
+
+  <!-- Date Filter -->
+  <div class="filter-bar" *ngIf="!isLoading">
+    <div class="filter-group">
+      <label>From:</label>
+      <input type="date" [(ngModel)]="dateFrom">
+      <label>To:</label>
+      <input type="date" [(ngModel)]="dateTo">
+      <button class="btn-primary" (click)="applyDateFilter()">Apply</button>
+      <button class="btn-secondary" (click)="clearDateFilter()">Clear</button>
+    </div>
   </div>
 
   <!-- Loading State -->
-  <div class="loading-state" *ngIf="isLoading">
-    <div class="spinner"></div>
+  <div class="empty-state" *ngIf="isLoading">
     <p>Loading report data...</p>
   </div>
 
@@ -26,7 +40,6 @@
       <div class="card-icon">💰</div>
       <div class="card-label">Inventory Value</div>
       <div class="card-value">Rs. {{ totalInventoryValue | number:'1.0-0' }}</div>
-      <div class="card-hint">Stock × Cost Price</div>
     </div>
     <div class="summary-card purchases">
       <div class="card-icon">📥</div>
@@ -40,33 +53,58 @@
     </div>
   </div>
 
-  <!-- Second Row: Sales Stats -->
-  <div class="summary-grid" style="margin-top:16px;" *ngIf="!isLoading">
-    <div class="summary-card paid">
-      <div class="card-icon">✅</div>
-      <div class="card-label">Paid Sales</div>
-      <div class="card-value paid">Rs. {{ totalPaidSales | number:'1.0-0' }}</div>
+  <!-- Section Selector -->
+  <div class="sections-panel" *ngIf="!isLoading">
+    <div class="sections-panel-header">
+      <span class="sections-title">📋 Sections to Include in PDF</span>
+      <div class="sections-bulk">
+        <button class="bulk-btn" (click)="sections.inventory=true; sections.purchases=true; sections.sales=true; sections.summary=true; savePreferences()">All</button>
+        <button class="bulk-btn" (click)="sections.inventory=false; sections.purchases=false; sections.sales=false; sections.summary=false; savePreferences()">None</button>
+      </div>
     </div>
-    <div class="summary-card unpaid">
-      <div class="card-icon">⏳</div>
-      <div class="card-label">Unpaid Sales</div>
-      <div class="card-value unpaid">Rs. {{ totalUnpaidSales | number:'1.0-0' }}</div>
-    </div>
-    <div class="summary-card purchases-count">
-      <div class="card-icon">📋</div>
-      <div class="card-label">Purchase Orders</div>
-      <div class="card-value">{{ totalPurchasesCount }}</div>
-    </div>
-    <div class="summary-card sales-count">
-      <div class="card-icon">🧾</div>
-      <div class="card-label">Sales Bills</div>
-      <div class="card-value">{{ totalSalesCount }}</div>
+
+    <div class="sections-grid">
+      <label class="section-checkbox" [class.checked]="sections.summary">
+        <input type="checkbox" [(ngModel)]="sections.summary" (change)="savePreferences()" />
+        <span class="checkbox-icon">📊</span>
+        <span class="checkbox-info">
+          <span class="checkbox-label">Summary</span>
+          <span class="checkbox-meta">{{ totalProducts }} products, {{ totalSalesCount }} bills</span>
+        </span>
+      </label>
+
+      <label class="section-checkbox" [class.checked]="sections.inventory">
+        <input type="checkbox" [(ngModel)]="sections.inventory" (change)="savePreferences()" />
+        <span class="checkbox-icon">📦</span>
+        <span class="checkbox-info">
+          <span class="checkbox-label">Inventory</span>
+          <span class="checkbox-meta">{{ products.length }} products — Rs. {{ totalInventoryValue | number:'1.0-0' }}</span>
+        </span>
+      </label>
+
+      <label class="section-checkbox" [class.checked]="sections.purchases">
+        <input type="checkbox" [(ngModel)]="sections.purchases" (change)="savePreferences()" />
+        <span class="checkbox-icon">📥</span>
+        <span class="checkbox-info">
+          <span class="checkbox-label">Purchases</span>
+          <span class="checkbox-meta">{{ totalPurchasesCount }} orders — Rs. {{ totalPurchases | number:'1.0-0' }}</span>
+        </span>
+      </label>
+
+      <label class="section-checkbox" [class.checked]="sections.sales">
+        <input type="checkbox" [(ngModel)]="sections.sales" (change)="savePreferences()" />
+        <span class="checkbox-icon">📤</span>
+        <span class="checkbox-info">
+          <span class="checkbox-label">Sales Bills</span>
+          <span class="checkbox-meta">{{ totalSalesCount }} bills — Rs. {{ totalSales | number:'1.0-0' }}</span>
+        </span>
+      </label>
     </div>
   </div>
 
   <!-- Inventory Table -->
-  <div class="table-card" style="margin-top:20px;" *ngIf="!isLoading">
-    <h4>📦 Inventory (Current Stock from Batches)</h4>
+  <div class="table-card" *ngIf="!isLoading && sections.inventory">
+    <h4>📦 Inventory (Current Stock)</h4>
     <div class="empty-state" *ngIf="products.length === 0">
       <p>No products in inventory.</p>
     </div>
@@ -85,10 +123,10 @@
       </thead>
       <tbody>
         <tr *ngFor="let p of products">
-          <td>{{ p.product_name }}</td>
+          <td class="product-name">{{ p.product_name }}</td>
           <td>{{ p.category || '—' }}</td>
           <td>{{ p.unit || '—' }}</td>
-          <td class="stock">{{ p.calculated_stock || 0 | number }}</td>
+          <td>{{ p.calculated_stock || 0 | number }}</td>
           <td>{{ p.batch_count || 0 }}</td>
           <td>Rs. {{ p.cost_price | number:'1.0-0' }}</td>
           <td>Rs. {{ p.selling_price | number:'1.0-0' }}</td>
@@ -100,16 +138,15 @@
         </tr>
       </tbody>
     </table>
-    <div class="table-hint">* Inventory value = Current Stock × Cost Price</div>
   </div>
 
   <!-- Purchases Table -->
-  <div class="table-card" style="margin-top:20px;" *ngIf="!isLoading">
+  <div class="table-card" *ngIf="!isLoading && sections.purchases">
     <h4>📥 Purchases</h4>
-    <div class="empty-state" *ngIf="purchases.length === 0">
+    <div class="empty-state" *ngIf="filteredPurchases.length === 0">
       <p>No purchase orders yet.</p>
     </div>
-    <table *ngIf="purchases.length > 0">
+    <table *ngIf="filteredPurchases.length > 0">
       <thead>
         <tr>
           <th>Date</th>
@@ -122,9 +159,9 @@
         </tr>
       </thead>
       <tbody>
-        <tr *ngFor="let p of purchases">
+        <tr *ngFor="let p of filteredPurchases">
           <td>{{ p.date | date:'dd-MM-yyyy' }}</td>
-          <td>{{ p.product_name || '—' }}</td>
+          <td class="product-name">{{ p.product_name || '—' }}</td>
           <td>{{ p.supplier_name || '—' }}</td>
           <td>{{ p.quantity }}</td>
           <td>Rs. {{ p.cost_price | number:'1.0-0' }}</td>
@@ -145,12 +182,12 @@
   </div>
 
   <!-- Sales Table -->
-  <div class="table-card" style="margin-top:20px;" *ngIf="!isLoading">
+  <div class="table-card" *ngIf="!isLoading && sections.sales">
     <h4>📤 Sales Bills</h4>
-    <div class="empty-state" *ngIf="sales.length === 0">
+    <div class="empty-state" *ngIf="filteredSales.length === 0">
       <p>No sales bills yet.</p>
     </div>
-    <table *ngIf="sales.length > 0">
+    <table *ngIf="filteredSales.length > 0">
       <thead>
         <tr>
           <th>Date</th>
@@ -162,7 +199,7 @@
         </tr>
       </thead>
       <tbody>
-        <tr *ngFor="let s of sales">
+        <tr *ngFor="let s of filteredSales">
           <td>{{ s.bill_date | date:'dd-MM-yyyy' }}</td>
           <td class="bill-number">{{ s.bill_number }}</td>
           <td>{{ s.customer_name || 'Walk-in' }}</td>
@@ -183,4 +220,9 @@
       </tbody>
     </table>
   </div>
+
+  <div class="generate-hint" *ngIf="!isLoading">
+    Selections are saved automatically. Click "Generate PDF Report" to download.
+  </div>
+
 </div>

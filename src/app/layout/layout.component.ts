@@ -31,6 +31,7 @@ export class LayoutComponent implements OnInit, OnDestroy {
   private savedBusinessType: string = 'broiler';
   licenseStatus: string = '';
   showLicenseWarning: boolean = false;
+  isLicenseActivated: boolean = false;
   private licenseCheckInterval: any = null;
 
   private subs = new Subscription();
@@ -188,24 +189,30 @@ export class LayoutComponent implements OnInit, OnDestroy {
   /**
    * 🔥 Check if license is valid
    */
-  private checkLicense(): void {
-    const status = this.licenseService.getStatus();
+  private async checkLicense(): Promise<void> {
+    const status = await this.licenseService.getStatus();
     
-    // If not activated and trial expired, redirect to activation
+    this.isLicenseActivated = status.activated;
+    
     if (!status.activated && status.trialExpired) {
       this.router.navigate(['/activation']);
       return;
     }
 
-    // Update license status display
-    this.licenseStatus = this.licenseService.getTrialStatusMessage();
-    
-    // Show warning if trial is about to expire (1 day left)
-    this.showLicenseWarning = !status.activated && status.daysRemaining <= 1 && status.daysRemaining > 0;
+    // Show license expiry days if activated, otherwise trial days
+    if (status.activated) {
+      const daysLeft = await this.licenseService.getLicenseDaysRemaining();
+      this.licenseStatus = `✅ Licensed - ${daysLeft} day${daysLeft !== 1 ? 's' : ''} left`;
+      this.showLicenseWarning = daysLeft <= 1;
+    } else {
+      this.licenseStatus = await this.licenseService.getTrialStatusMessage();
+      this.showLicenseWarning = !status.activated && status.daysRemaining <= 1 && status.daysRemaining > 0;
+    }
     
     this.cdr.detectChanges();
   }
 
+   
   /**
    * Navigate to activation page
    */

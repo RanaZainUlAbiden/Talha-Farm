@@ -1,5 +1,6 @@
 import { Component, OnInit, ChangeDetectorRef } from '@angular/core';
 import { CommonModule } from '@angular/common';
+import { FormsModule } from '@angular/forms';
 import { DatabaseService } from '../shared/services/database.service';
 import { AuthService } from '../shared/services/auth.service';
 import { jsPDF } from 'jspdf';
@@ -8,7 +9,7 @@ import autoTable from 'jspdf-autotable';
 @Component({
   selector: 'app-distribution-report',
   standalone: true,
-  imports: [CommonModule],
+  imports: [CommonModule, FormsModule],
   templateUrl: './distribution-report.component.html',
   styleUrl: './distribution-report.component.scss'
 })
@@ -21,6 +22,17 @@ export class DistributionReportComponent implements OnInit {
   isGenerating = false;
   isLoading = true;
   errorMessage = '';
+
+  // Features
+  sections = {
+    inventory: true,
+    purchases: true,
+    sales: true,
+    summary: true
+  };
+  
+  dateFrom: string = '';
+  dateTo: string = '';
 
   // ── CALCULATIONS ──────────────────────────────────────────
 
@@ -38,16 +50,44 @@ export class DistributionReportComponent implements OnInit {
     return total;
   }
 
+  get filteredPurchases(): any[] {
+    if (!this.dateFrom && !this.dateTo) return this.purchases;
+    return this.purchases.filter((p: any) => {
+      const date = p.date ? new Date(p.date).setHours(0,0,0,0) : null;
+      if (!date) return false;
+      const from = this.dateFrom ? new Date(this.dateFrom).setHours(0,0,0,0) : null;
+      const to = this.dateTo ? new Date(this.dateTo).setHours(0,0,0,0) : null;
+      if (from && to) return date >= from && date <= to;
+      if (from) return date >= from;
+      if (to) return date <= to;
+      return true;
+    });
+  }
+
+  get filteredSales(): any[] {
+    if (!this.dateFrom && !this.dateTo) return this.sales;
+    return this.sales.filter((s: any) => {
+      const date = s.bill_date ? new Date(s.bill_date).setHours(0,0,0,0) : null;
+      if (!date) return false;
+      const from = this.dateFrom ? new Date(this.dateFrom).setHours(0,0,0,0) : null;
+      const to = this.dateTo ? new Date(this.dateTo).setHours(0,0,0,0) : null;
+      if (from && to) return date >= from && date <= to;
+      if (from) return date >= from;
+      if (to) return date <= to;
+      return true;
+    });
+  }
+
   get totalPurchases(): number {
-    return this.purchases.reduce((sum: number, p: any) => sum + (p.total_amount || 0), 0);
+    return this.filteredPurchases.reduce((sum: number, p: any) => sum + (p.total_amount || 0), 0);
   }
 
   get totalSales(): number {
-    return this.sales.reduce((sum: number, s: any) => sum + (s.total_amount || 0), 0);
+    return this.filteredSales.reduce((sum: number, s: any) => sum + (s.total_amount || 0), 0);
   }
 
   get totalPaidSales(): number {
-    return this.sales.reduce((sum: number, s: any) => sum + (s.amount_paid || 0), 0);
+    return this.filteredSales.reduce((sum: number, s: any) => sum + (s.amount_paid || 0), 0);
   }
 
   /**
@@ -71,11 +111,11 @@ export class DistributionReportComponent implements OnInit {
   }
 
   get totalPurchasesCount(): number {
-    return this.purchases.length;
+    return this.filteredPurchases.length;
   }
 
   get totalSalesCount(): number {
-    return this.sales.length;
+    return this.filteredSales.length;
   }
 
   /**
@@ -103,7 +143,33 @@ export class DistributionReportComponent implements OnInit {
 
   ngOnInit() {
     this.currentFarm = this.authService.getCurrentFarm();
+    this.loadPreferences();
     this.loadData();
+  }
+
+  loadPreferences() {
+    const saved = localStorage.getItem('distReportPrefs');
+    if (saved) {
+      try {
+        this.sections = JSON.parse(saved);
+      } catch (e) {
+        console.error('Error parsing preferences', e);
+      }
+    }
+  }
+
+  savePreferences() {
+    localStorage.setItem('distReportPrefs', JSON.stringify(this.sections));
+  }
+
+  applyDateFilter() {
+    this.cdr.detectChanges();
+  }
+
+  clearDateFilter() {
+    this.dateFrom = '';
+    this.dateTo = '';
+    this.cdr.detectChanges();
   }
 
   // ── LOAD DATA ─────────────────────────────────────────────
@@ -250,36 +316,38 @@ export class DistributionReportComponent implements OnInit {
 
       // ── SUMMARY SECTION ────────────────────────────────────
 
-      doc.setFont('helvetica', 'bold');
-      doc.setFontSize(14);
-      doc.setTextColor(...B);
-      doc.text('SUMMARY', margin, y);
-      y += 8;
-
-      const summaryData = [
-        ['Total Products', String(this.totalProducts)],
-        ['Total Purchase Orders', String(this.totalPurchasesCount)],
-        ['Total Sales Bills', String(this.totalSalesCount)],
-        ['Inventory Value (Stock × Cost)', 'Rs. ' + this.totalInventoryValue.toLocaleString()],
-        ['Total Purchases', 'Rs. ' + this.totalPurchases.toLocaleString()],
-        ['Total Sales', 'Rs. ' + this.totalSales.toLocaleString()],
-        ['Total Paid Sales', 'Rs. ' + this.totalPaidSales.toLocaleString()],
-        ['Total Unpaid Sales (Sales - Paid)', 'Rs. ' + this.totalUnpaidSales.toLocaleString()]
-      ];
-
-      doc.setFont('helvetica', 'normal');
-      doc.setFontSize(10);
-      for (const [label, value] of summaryData) {
-        doc.setTextColor(...G);
-        doc.text(label + ':', margin + 6, y);
+      if (this.sections.summary) {
+        doc.setFont('helvetica', 'bold');
+        doc.setFontSize(14);
         doc.setTextColor(...B);
-        doc.text(value, margin + 80, y);
-        y += 6;
+        doc.text('SUMMARY', margin, y);
+        y += 8;
+
+        const summaryData = [
+          ['Total Products', String(this.totalProducts)],
+          ['Total Purchase Orders', String(this.totalPurchasesCount)],
+          ['Total Sales Bills', String(this.totalSalesCount)],
+          ['Inventory Value (Stock × Cost)', 'Rs. ' + this.totalInventoryValue.toLocaleString()],
+          ['Total Purchases', 'Rs. ' + this.totalPurchases.toLocaleString()],
+          ['Total Sales', 'Rs. ' + this.totalSales.toLocaleString()],
+          ['Total Paid Sales', 'Rs. ' + this.totalPaidSales.toLocaleString()],
+          ['Total Unpaid Sales (Sales - Paid)', 'Rs. ' + this.totalUnpaidSales.toLocaleString()]
+        ];
+
+        doc.setFont('helvetica', 'normal');
+        doc.setFontSize(10);
+        for (const [label, value] of summaryData) {
+          doc.setTextColor(...G);
+          doc.text(label + ':', margin + 6, y);
+          doc.setTextColor(...B);
+          doc.text(value, margin + 80, y);
+          y += 6;
+        }
       }
 
       // ── INVENTORY TABLE ────────────────────────────────────
 
-      if (this.products.length > 0) {
+      if (this.sections.inventory && this.products.length > 0) {
         doc.addPage();
         this.addPageHeader(doc, farmName, today, 'INVENTORY DETAIL (Current Stock from Batches)');
         
@@ -334,11 +402,11 @@ export class DistributionReportComponent implements OnInit {
 
       // ── PURCHASES ──────────────────────────────────────────
 
-      if (this.purchases.length > 0) {
+      if (this.sections.purchases && this.filteredPurchases.length > 0) {
         doc.addPage();
         this.addPageHeader(doc, farmName, today, 'PURCHASE ORDERS');
         
-        const purchaseBody = this.purchases.map(p => [
+        const purchaseBody = this.filteredPurchases.map(p => [
           formatDate(p.date),
           p.product_name || '—',
           p.supplier_name || '—',
@@ -376,11 +444,11 @@ export class DistributionReportComponent implements OnInit {
 
       // ── SALES ──────────────────────────────────────────────
 
-      if (this.sales.length > 0) {
+      if (this.sections.sales && this.filteredSales.length > 0) {
         doc.addPage();
         this.addPageHeader(doc, farmName, today, 'SALES BILLS');
         
-        const salesBody = this.sales.map(s => {
+        const salesBody = this.filteredSales.map(s => {
           const isPaid = this.isBillPaid(s);
           return [
             formatDate(s.bill_date),

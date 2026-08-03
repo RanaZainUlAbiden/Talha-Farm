@@ -4,142 +4,87 @@ import { Injectable } from '@angular/core';
   providedIn: 'root'
 })
 export class LicenseService {
-  private readonly LICENSE_KEY = 'farm_license_activated';
-  private readonly TRIAL_KEY = 'farm_trial_start_date';
-  private readonly TRIAL_DAYS = 7;
 
   constructor() {}
 
-  /**
-   * Start the trial period
-   */
-  startTrial(): void {
-    const today = new Date();
-    localStorage.setItem(this.TRIAL_KEY, today.toISOString());
+  private get api(): any {
+    return (window as any).electronAPI.license;
   }
 
-  /**
-   * Get trial start date
-   */
-  getTrialStartDate(): Date | null {
-    const data = localStorage.getItem(this.TRIAL_KEY);
-    if (!data) return null;
-    return new Date(data);
+  private async getMachineId(): Promise<string> {
+    return (window as any).electronAPI.getMachineId();
   }
 
-  /**
-   * Get trial expiration date
-   */
-  getTrialExpirationDate(): string | null {
-    const start = this.getTrialStartDate();
-    if (!start) return null;
-    const expiry = new Date(start);
-    expiry.setDate(expiry.getDate() + this.TRIAL_DAYS);
-    return expiry.toISOString().split('T')[0];
+  async validateActivationKey(key: string): Promise<boolean> {
+    try {
+      const result = await this.api.activate(await this.getMachineId(), key);
+      return result.success;
+    } catch (error) {
+      console.error('Failed to validate activation key:', error);
+      return false;
+    }
   }
 
-  /**
-   * Get days remaining in trial
-   */
-  getTrialDaysRemaining(): number {
-    const start = this.getTrialStartDate();
-    if (!start) return this.TRIAL_DAYS;
-    
-    const now = new Date();
-    const diffTime = now.getTime() - start.getTime();
-    const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
-    const remaining = this.TRIAL_DAYS - diffDays;
-    return remaining > 0 ? remaining : 0;
+  async startTrial(): Promise<void> {
+    const machineId = await this.getMachineId();
+    const today = new Date().toISOString();
+    await this.api.startTrial(machineId, today);
   }
 
-  /**
-   * Check if trial is expired
-   */
-  isTrialExpired(): boolean {
-    const start = this.getTrialStartDate();
-    if (!start) return false;
-    
-    const now = new Date();
-    const diffTime = now.getTime() - start.getTime();
-    const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
-    return diffDays > this.TRIAL_DAYS;
+  async activate(key: string): Promise<void> {
+    // Already validated via validateActivationKey, just store is handled there
   }
 
-  /**
-   * Activate the application with a license key
-   */
-  activate(): void {
-    localStorage.setItem(this.LICENSE_KEY, 'true');
+  async isActivated(): Promise<boolean> {
+    const status = await this.api.getStatus();
+    return status.activated;
   }
 
-  /**
-   * Check if application is activated
-   */
-  isActivated(): boolean {
-    return localStorage.getItem(this.LICENSE_KEY) === 'true';
+  async getLicenseDaysRemaining(): Promise<number> {
+    const status = await this.api.getStatus();
+    return status.licenseDaysRemaining || 0;
   }
 
-  /**
-   * Deactivate the application
-   */
-  deactivate(): void {
-    localStorage.removeItem(this.LICENSE_KEY);
-  }
-
-  /**
-   * Get license status
-   */
-  getStatus(): { 
-    activated: boolean; 
-    trialExpired: boolean; 
-    daysRemaining: number; 
+  async getStatus(): Promise<{
+    activated: boolean;
+    trialExpired: boolean;
+    daysRemaining: number;
     expiryDate: string | null;
     trialStarted: boolean;
-  } {
-    const activated = this.isActivated();
-    const trialStarted = !!this.getTrialStartDate();
-    const trialExpired = this.isTrialExpired();
-    const daysRemaining = this.getTrialDaysRemaining();
-    const expiryDate = this.getTrialExpirationDate();
+    clockTampered: boolean;
+    licenseDaysRemaining: number;
+  }> {
+    const status = await this.api.getStatus();
+    const expiryDate = status.activated
+      ? new Date(Date.now() + status.licenseDaysRemaining * 24 * 60 * 60 * 1000).toISOString().split('T')[0]
+      : null;
 
-    return { 
-      activated, 
-      trialExpired, 
-      daysRemaining, 
+    return {
+      activated: status.activated,
+      trialExpired: status.trialExpired,
+      daysRemaining: status.daysRemaining,
       expiryDate,
-      trialStarted
+      trialStarted: status.trialStarted,
+      clockTampered: status.clockTampered,
+      licenseDaysRemaining: status.licenseDaysRemaining || 0
     };
   }
 
-  /**
-   * Check if application is accessible
-   * Returns true if:
-   * - Activated, OR
-   * - Trial is active (not expired)
-   */
-  isAccessAllowed(): boolean {
-    // If activated, always allow access
-    if (this.isActivated()) {
-      return true;
-    }
-    
-    // If not activated, check trial
-    return !this.isTrialExpired();
+  async updateLastLaunchDate(): Promise<void> {
+    const machineId = await this.getMachineId();
+    const today = new Date().toISOString();
+    await this.api.updateLastLaunch(machineId, today);
   }
 
-  /**
-   * Get trial status message
-   */
-  getTrialStatusMessage(): string {
-    if (this.isActivated()) {
-      return '✅ License Activated';
+  async getTrialStatusMessage(): Promise<string> {
+    const status = await this.api.getStatus();
+    if (status.activated) {
+      const days = status.licenseDaysRemaining || 0;
+      return `✅ Licensed - ${days} day${days !== 1 ? 's' : ''} left`;
     }
-    
-    if (this.isTrialExpired()) {
-      return '⛔ Trial Expired - Contact Support';
+    if (status.trialExpired) {
+      return '⚠️ Trial Expired - Contact Support';
     }
-    
-    const days = this.getTrialDaysRemaining();
-    return `🚀 Trial: ${days} day${days > 1 ? 's' : ''} remaining`;
+    return `🚀 Trial: ${status.daysRemaining} day${status.daysRemaining !== 1 ? 's' : ''} remaining`;
   }
 }

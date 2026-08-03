@@ -45,8 +45,6 @@
       "target": "nsis",
       "icon": "public/favicon.ico",
       "publisherName": "DevInfantary",
-      "certificateFile": "",
-      "certificatePassword": "",
       "legalTrademarks": "Talha Farm is a trademark of DevInfantary",
       "rfc3161TimeStampServer": "http://timestamp.comodoca.com/rfc3161"
     },
@@ -60,17 +58,19 @@
       "shortcutName": "Talha Farm",
       "uninstallDisplayName": "Talha Farm Management System",
       "license": "LICENSE.txt",
-      "perMachine": true,
-      "installerHeader": "public/installer-header.bmp",
-      "installerSidebar": "public/installer-sidebar.bmp"
+      "perMachine": true
     },
     "files": [
       "dist/**/*",
       "electron/**/*",
       "public/**/*",
-      "!node_modules/**/*",
-      "node_modules/sql.js/dist/sql-wasm.wasm",
-      "node_modules/electron-updater/**/*"
+      "node_modules/**/*",
+      "!node_modules/@angular/**/*",
+      "!node_modules/rxjs/**/*",
+      "!node_modules/zone.js/**/*",
+      "!node_modules/typescript/**/*",
+      "!node_modules/@angular-devkit/**/*",
+      "!node_modules/electron-builder/**/*"
     ],
     "extraResources": [
       {
