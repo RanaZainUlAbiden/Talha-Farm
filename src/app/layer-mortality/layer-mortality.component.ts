@@ -1,4 +1,4 @@
-import { Component, OnInit, ChangeDetectorRef, HostListener } from '@angular/core';
+import { Component, OnInit, OnDestroy, ChangeDetectorRef, HostListener } from '@angular/core';
 import { CommonModule } from '@angular/common';
 import { FormsModule } from '@angular/forms';
 import { DatabaseService } from '../shared/services/database.service';
@@ -7,6 +7,8 @@ import { ConfirmDialogComponent } from '../shared/components/confirm-dialog/conf
 import { DateOnlyPipe } from '../shared/pipes/date-format.pipe';
 import { PendingStateService } from '../shared/services/pending-state.service';
 import { PaginationComponent } from '../shared/components/pagination/pagination.component';
+import { FlockService } from '../shared/services/flock.service';
+import { Subscription } from 'rxjs';
 
 @Component({
   selector: 'app-layer-mortality',
@@ -15,7 +17,7 @@ import { PaginationComponent } from '../shared/components/pagination/pagination.
   templateUrl: './layer-mortality.component.html',
   styleUrl: './layer-mortality.component.scss'
 })
-export class LayerMortalityComponent implements OnInit {
+export class LayerMortalityComponent implements OnInit, OnDestroy {
   currentFarm: any = null;
   batches: any[] = [];
   records: any[] = [];
@@ -30,6 +32,7 @@ export class LayerMortalityComponent implements OnInit {
 
   currentPage = 1;
   pageSize = 20;
+  private subs = new Subscription();
 
   get paginatedRecords() {
     const start = (this.currentPage - 1) * this.pageSize;
@@ -68,16 +71,32 @@ export class LayerMortalityComponent implements OnInit {
     }
   }
 
-  constructor(private db: DatabaseService, private authService: AuthService, private cdr: ChangeDetectorRef, private pendingState: PendingStateService) {}
+  constructor(private db: DatabaseService, private authService: AuthService, private cdr: ChangeDetectorRef, private pendingState: PendingStateService, private flockService: FlockService) {}
 
   ngOnInit() {
     this.currentFarm = this.authService.getCurrentFarm();
     this.loadData();
     const cached = this.pendingState.getState('LayerMortalityComponent');
     if (cached?.farmId === this.currentFarm?.farm_id) this.pendingRows = cached.pendingRows || [];
+    this.applyActiveBatch(this.flockService.getCurrentFlock());
+    this.subs.add(
+      this.flockService.currentFlock$.subscribe(flock => this.applyActiveBatch(flock))
+    );
   }
 
-  ngOnDestroy() { this.pendingState.saveState('LayerMortalityComponent', { farmId: this.currentFarm?.farm_id, pendingRows: this.pendingRows }); }
+  ngOnDestroy() {
+    this.subs.unsubscribe();
+    this.pendingState.saveState('LayerMortalityComponent', { farmId: this.currentFarm?.farm_id, pendingRows: this.pendingRows });
+  }
+
+  private applyActiveBatch(flock: any) {
+    if (!flock?.batch_id) return;
+    const batchId = Number(flock.batch_id);
+    if (this.currentBatchId === batchId) return;
+    this.currentBatchId = batchId;
+    this.currentPage = 1;
+    this.cdr.detectChanges();
+  }
 
   async loadData() {
     const br = await this.db.get(`SELECT * FROM batches WHERE farm_id=? AND status='active'`, [this.currentFarm.farm_id]);

@@ -55,7 +55,7 @@
         class="nav-item"
         *ngFor="let item of menuItems"
         [class.active]="activeRoute === item.route"
-        (click)="navigate(item.route)"
+        (click)="navigate(item.route, item.queryParams)"
         [title]="sidebarCollapsed ? item.label : ''">
         <span class="nav-icon">{{ item.icon }}</span>
         <span class="nav-label" *ngIf="!sidebarCollapsed">{{ item.label }}</span>

@@ -22,6 +22,7 @@ export class ActivationComponent implements OnInit {
   isActivated: boolean = false;
   isClockTampered: boolean = false;
   machineId: string = '';
+  activationCycle: number = 0;
 
   constructor(
     private router: Router,
@@ -30,7 +31,6 @@ export class ActivationComponent implements OnInit {
 
   async ngOnInit() {
     this.licenseService.updateLastLaunchDate();
-
     try {
       this.machineId = await (window as any).electronAPI.getMachineId();
     } catch (e) {
@@ -38,25 +38,23 @@ export class ActivationComponent implements OnInit {
     }
 
     const status = await this.licenseService.getStatus();
+    this.activationCycle = status.activationCycle || 0;
 
     if (status.clockTampered) {
       this.isClockTampered = true;
       return;
     }
 
-    // Check if already activated
     if (status.activated) {
       this.isActivated = true;
       this.router.navigate(['/login']);
       return;
     }
 
-    // Check trial status
     if (status.trialStarted) {
       this.isTrialStarted = true;
       this.daysRemaining = status.daysRemaining;
       this.expirationDate = status.expiryDate || '';
-
       if (status.trialExpired) {
         this.isExpired = true;
         this.expirationDate = status.expiryDate || '';
@@ -66,30 +64,26 @@ export class ActivationComponent implements OnInit {
     }
   }
 
-copyMachineId() {
-  navigator.clipboard.writeText(this.machineId).then(() => {
-    // Brief visual feedback - could add a toast later
-  });
-}
+  copyMachineId() {
+    navigator.clipboard.writeText(this.machineId);
+  }
+
+  copyRenewalInfo() {
+    navigator.clipboard.writeText(`${this.machineId} | Cycle: ${this.activationCycle}`);
+  }
 
   async activate() {
     if (!this.activationKey.trim()) {
       this.errorMessage = 'Please enter an activation key';
       return;
     }
-
     this.isLoading = true;
     this.errorMessage = '';
-
     try {
-      // Validate against machine ID using hash
       const isValid = await this.licenseService.validateActivationKey(this.activationKey);
-
       if (isValid) {
         this.licenseService.activate(this.activationKey);
         this.isActivated = true;
-
-        // Navigate to login after a brief delay
         setTimeout(() => {
           this.router.navigate(['/login']);
         }, 500);
@@ -108,12 +102,10 @@ copyMachineId() {
       this.router.navigate(['/login']);
       return;
     }
-
     this.licenseService.startTrial();
     this.isTrialStarted = true;
     this.daysRemaining = 7;
     this.expirationDate = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString().split('T')[0];
-
     setTimeout(() => {
       this.router.navigate(['/login']);
     }, 300);

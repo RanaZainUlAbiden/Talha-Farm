@@ -21,7 +21,7 @@ function createTables(db) {
   db.run(`CREATE TABLE IF NOT EXISTS flock_health (health_id INTEGER PRIMARY KEY AUTOINCREMENT, flock_id INTEGER NOT NULL, week_number INTEGER NOT NULL, total_birds INTEGER NOT NULL, mortality INTEGER DEFAULT 0, feed_used REAL DEFAULT 0, avg_weight REAL DEFAULT 0, fcr REAL DEFAULT 0, FOREIGN KEY (flock_id) REFERENCES flocks(flock_id));`)
   db.run(`CREATE TABLE IF NOT EXISTS balance (balance_id INTEGER PRIMARY KEY AUTOINCREMENT, flock_id INTEGER NOT NULL, date DATE NOT NULL, description TEXT, amount REAL NOT NULL, type TEXT NOT NULL, module_type TEXT DEFAULT 'broiler', FOREIGN KEY (flock_id) REFERENCES flocks(flock_id));`)
   db.run(`CREATE TABLE IF NOT EXISTS brokers (broker_id INTEGER PRIMARY KEY AUTOINCREMENT, flock_id INTEGER NOT NULL, broker_name TEXT NOT NULL, FOREIGN KEY (flock_id) REFERENCES flocks(flock_id));`)
-db.run(`CREATE TABLE IF NOT EXISTS activation (machine_id TEXT PRIMARY KEY, activation_code TEXT NOT NULL, trial_start_date TEXT, last_launch_date TEXT, is_permanent INTEGER DEFAULT 0, activated_at DATETIME DEFAULT CURRENT_TIMESTAMP, is_active INTEGER DEFAULT 1);`)
+db.run(`CREATE TABLE IF NOT EXISTS activation (machine_id TEXT PRIMARY KEY, activation_code TEXT NOT NULL, trial_start_date TEXT, last_launch_date TEXT, is_permanent INTEGER DEFAULT 0, activated_at DATETIME DEFAULT CURRENT_TIMESTAMP, is_active INTEGER DEFAULT 1,activation_cycle INTEGER DEFAULT 0);`)
   // ── Layer Module ───────────────────────────────────────
   db.run(`CREATE TABLE IF NOT EXISTS batches (batch_id INTEGER PRIMARY KEY AUTOINCREMENT, farm_id INTEGER NOT NULL, batch_name TEXT NOT NULL, start_date DATE NOT NULL, initial_birds INTEGER NOT NULL, breed TEXT, status TEXT DEFAULT 'active', FOREIGN KEY (farm_id) REFERENCES farms(farm_id));`)
   db.run(`CREATE TABLE IF NOT EXISTS egg_collection (collection_id INTEGER PRIMARY KEY AUTOINCREMENT, batch_id INTEGER NOT NULL, date DATE NOT NULL, total_eggs INTEGER DEFAULT 0, broken_eggs INTEGER DEFAULT 0, small_grade INTEGER DEFAULT 0, medium_grade INTEGER DEFAULT 0, large_grade INTEGER DEFAULT 0, xl_grade INTEGER DEFAULT 0, FOREIGN KEY (batch_id) REFERENCES batches(batch_id));`)
@@ -146,6 +146,9 @@ db.run(`CREATE TABLE IF NOT EXISTS activation (machine_id TEXT PRIMARY KEY, acti
     FOREIGN KEY (farm_id) REFERENCES farms(farm_id)
   );`)
 
+db.run(`CREATE TABLE IF NOT EXISTS categories (category_id INTEGER PRIMARY KEY AUTOINCREMENT, farm_id INTEGER NOT NULL, category_name TEXT NOT NULL, FOREIGN KEY (farm_id) REFERENCES farms(farm_id));`);
+
+db.run(`CREATE UNIQUE INDEX IF NOT EXISTS idx_categories_farm_name ON categories(farm_id, category_name);`);
   // Indexes for performance
   db.run(`CREATE INDEX IF NOT EXISTS idx_customer_ledger_customer ON customer_ledger(customer_id);`)
   db.run(`CREATE INDEX IF NOT EXISTS idx_customer_ledger_date ON customer_ledger(transaction_date);`)
@@ -169,7 +172,7 @@ db.run(`CREATE TABLE IF NOT EXISTS activation (machine_id TEXT PRIMARY KEY, acti
 // ATTEMPT TO RECOVER DATA FROM CORRUPTED DB
 // =============================================
 function attemptRecovery(dbPath, oldDb, SQL) {
-  const tables = ['farms', 'flocks', 'ledgers', 'expenses', 'ledger_entries', 'medicine_traders', 'medicine_entries', 'sales', 'income', 'flock_health', 'balance', 'brokers', 'activation', 'batches', 'egg_collection', 'egg_sales', 'vaccinations', 'layer_mortality', 'products', 'customers', 'suppliers', 'purchase_orders', 'sales_orders', 'customer_payments', 'product_batches', 'batch_transactions', 'customer_ledger', 'supplier_ledger', 'bank_accounts', 'bank_ledger', 'expense_ledger']
+  const tables = ['farms', 'flocks', 'ledgers', 'expenses', 'ledger_entries', 'medicine_traders', 'medicine_entries', 'sales', 'income', 'flock_health', 'balance', 'brokers', 'activation', 'batches', 'egg_collection', 'egg_sales', 'vaccinations', 'layer_mortality', 'products', 'customers', 'suppliers', 'purchase_orders', 'sales_orders', 'customer_payments', 'product_batches', 'batch_transactions', 'customer_ledger', 'supplier_ledger', 'bank_accounts', 'bank_ledger', 'expense_ledger','categories']
   
   const newDb = new SQL.Database()
   createTables(newDb)
@@ -270,6 +273,7 @@ async function initializeDatabase() {
   createTables(db)
 
   const alterStatements = [
+`ALTER TABLE activation ADD COLUMN activation_cycle INTEGER DEFAULT 0`,
     `ALTER TABLE activation ADD COLUMN trial_start_date TEXT`,
 `ALTER TABLE activation ADD COLUMN last_launch_date TEXT`,
 `ALTER TABLE activation ADD COLUMN is_permanent INTEGER DEFAULT 0`,
@@ -871,8 +875,8 @@ function addBankLedgerEntry(entry) {
 function updateCustomerOutstandingBalance(customerId) {
   try {
     const stmt = db.prepare(`
-      SELECT COALESCE(SUM(debit - credit), 0) as balance 
-      FROM customer_ledger 
+      SELECT COALESCE(SUM(MAX(COALESCE(total_amount, 0) - COALESCE(amount_paid, 0), 0)), 0) as balance 
+      FROM bills 
       WHERE customer_id = ?
     `)
     stmt.bind([customerId])
@@ -891,17 +895,31 @@ function getCustomerLedgerWithBalance(customerId) {
   try {
     const stmt = db.prepare(`
       SELECT 
-        l.*,
+        l.ledger_id,
+        l.customer_id,
+        l.transaction_date,
+        l.description,
+        l.debit,
+        l.credit,
+        l.reference_type,
+        l.reference_id,
+        l.created_at,
         c.customer_name,
         c.phone,
         c.address,
-        (SELECT COALESCE(SUM(debit - credit), 0) FROM customer_ledger WHERE customer_id = ? AND ledger_id <= l.ledger_id) as running_balance
+        (SELECT COALESCE(SUM(cl.debit - cl.credit), 0)
+         FROM customer_ledger cl
+         WHERE cl.customer_id = l.customer_id
+           AND (
+             cl.transaction_date < l.transaction_date OR
+             (cl.transaction_date = l.transaction_date AND cl.ledger_id <= l.ledger_id)
+           )) as balance
       FROM customer_ledger l
       INNER JOIN customers c ON l.customer_id = c.customer_id
       WHERE l.customer_id = ?
       ORDER BY l.transaction_date ASC, l.ledger_id ASC
     `)
-    stmt.bind([customerId, customerId])
+    stmt.bind([customerId])
     const rows = []
     while (stmt.step()) {
       rows.push(stmt.getAsObject())
@@ -917,16 +935,30 @@ function getSupplierLedgerWithBalance(supplierId) {
   try {
     const stmt = db.prepare(`
       SELECT 
-        l.*,
+        l.ledger_id,
+        l.supplier_id,
+        l.transaction_date,
+        l.description,
+        l.debit,
+        l.credit,
+        l.reference_type,
+        l.reference_id,
+        l.created_at,
         s.supplier_name,
         s.phone,
-        (SELECT COALESCE(SUM(credit - debit), 0) FROM supplier_ledger WHERE supplier_id = ? AND ledger_id <= l.ledger_id) as running_balance
+        (SELECT COALESCE(SUM(sl.credit - sl.debit), 0)
+         FROM supplier_ledger sl
+         WHERE sl.supplier_id = l.supplier_id
+           AND (
+             sl.transaction_date < l.transaction_date OR
+             (sl.transaction_date = l.transaction_date AND sl.ledger_id <= l.ledger_id)
+           )) as balance
       FROM supplier_ledger l
       INNER JOIN suppliers s ON l.supplier_id = s.supplier_id
       WHERE l.supplier_id = ?
       ORDER BY l.transaction_date ASC, l.ledger_id ASC
     `)
-    stmt.bind([supplierId, supplierId])
+    stmt.bind([supplierId])
     const rows = []
     while (stmt.step()) {
       rows.push(stmt.getAsObject())
@@ -942,16 +974,31 @@ function getBankLedgerWithBalance(bankId) {
   try {
     const stmt = db.prepare(`
       SELECT 
-        l.*,
+        l.ledger_id,
+        l.bank_id,
+        l.transaction_date,
+        l.description,
+        l.debit,
+        l.credit,
+        l.reference_type,
+        l.reference_id,
+        l.transaction_number,
+        l.created_at,
         b.bank_name,
         b.account_number,
-        (SELECT COALESCE(SUM(debit - credit), 0) FROM bank_ledger WHERE bank_id = ? AND ledger_id <= l.ledger_id) as running_balance
+        (SELECT COALESCE(SUM(bl.debit - bl.credit), 0)
+         FROM bank_ledger bl
+         WHERE bl.bank_id = l.bank_id
+           AND (
+             bl.transaction_date < l.transaction_date OR
+             (bl.transaction_date = l.transaction_date AND bl.ledger_id <= l.ledger_id)
+           )) as balance
       FROM bank_ledger l
       INNER JOIN bank_accounts b ON l.bank_id = b.bank_id
       WHERE l.bank_id = ?
       ORDER BY l.transaction_date ASC, l.ledger_id ASC
     `)
-    stmt.bind([bankId, bankId])
+    stmt.bind([bankId])
     const rows = []
     while (stmt.step()) {
       rows.push(stmt.getAsObject())
@@ -1076,7 +1123,7 @@ function getAllCustomersWithBalance(farmId) {
     const stmt = db.prepare(`
       SELECT 
         c.*,
-        (SELECT COALESCE(SUM(debit - credit), 0) FROM customer_ledger WHERE customer_id = c.customer_id) as outstanding_balance
+        (SELECT COALESCE(SUM(MAX(COALESCE(total_amount, 0) - COALESCE(amount_paid, 0), 0)), 0) FROM bills WHERE customer_id = c.customer_id) as outstanding_balance
       FROM customers c
       WHERE c.farm_id = ?
       ORDER BY c.customer_name ASC
@@ -1300,6 +1347,44 @@ function getExpenseCategories(farmId) {
   }
 }
 
+
+// ── CATEGORY OPERATIONS ──────────────────────────────────
+
+function getCategories(farmId) {
+  try {
+    const stmt = db.prepare('SELECT * FROM categories WHERE farm_id = ? ORDER BY category_name ASC');
+    stmt.bind([farmId]);
+    const rows = [];
+    while (stmt.step()) rows.push(stmt.getAsObject());
+    stmt.free();
+    return { success: true, data: rows };
+  } catch (err) {
+    return { success: false, error: err.message };
+  }
+}
+
+function addCategory(farmId, categoryName) {
+  try {
+    db.run('INSERT OR IGNORE INTO categories (farm_id, category_name) VALUES (?, ?)', [farmId, categoryName.toLowerCase().trim()]);
+    return { success: true };
+  } catch (err) {
+    return { success: false, error: err.message };
+  }
+}
+
+function deleteCategory(categoryId) {
+  try {
+    db.run('DELETE FROM categories WHERE category_id = ?', [categoryId]);
+    return { success: true };
+  } catch (err) {
+    return { success: false, error: err.message };
+  }
+}
+
+
+
+
+
 module.exports = { 
   initializeDatabase, 
   runQuery, 
@@ -1342,5 +1427,8 @@ module.exports = {
   updateExpense,
   deleteExpense,
   getExpenses,
-  getExpenseCategories
+  getExpenseCategories,
+getCategories,
+addCategory,
+deleteCategory
 }

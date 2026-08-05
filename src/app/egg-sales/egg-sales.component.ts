@@ -1,4 +1,4 @@
-import { Component, OnInit, ChangeDetectorRef, HostListener } from '@angular/core';
+import { Component, OnInit, OnDestroy, ChangeDetectorRef, HostListener } from '@angular/core';
 import { CommonModule } from '@angular/common';
 import { FormsModule } from '@angular/forms';
 import { DatabaseService } from '../shared/services/database.service';
@@ -7,6 +7,8 @@ import { ConfirmDialogComponent } from '../shared/components/confirm-dialog/conf
 import { DateOnlyPipe } from '../shared/pipes/date-format.pipe';
 import { PendingStateService } from '../shared/services/pending-state.service';
 import { PaginationComponent } from '../shared/components/pagination/pagination.component';
+import { FlockService } from '../shared/services/flock.service';
+import { Subscription } from 'rxjs';
 
 @Component({
   selector: 'app-egg-sales',
@@ -15,7 +17,7 @@ import { PaginationComponent } from '../shared/components/pagination/pagination.
   templateUrl: './egg-sales.component.html',
   styleUrl: './egg-sales.component.scss'
 })
-export class EggSalesComponent implements OnInit {
+export class EggSalesComponent implements OnInit, OnDestroy {
   currentFarm: any = null;
   batches: any[] = [];
   sales: any[] = [];
@@ -39,6 +41,7 @@ export class EggSalesComponent implements OnInit {
   pageSize = 20;
 
   selectedBatchFilter: string = 'all';
+  private subs = new Subscription();
 
   get filteredSales() {
     if (this.selectedBatchFilter === 'all') return this.sales;
@@ -84,16 +87,32 @@ export class EggSalesComponent implements OnInit {
     if (event.ctrlKey && event.key === 's') { event.preventDefault(); if (this.hasPendingRows) this.saveAllRows(); }
   }
 
-  constructor(private db: DatabaseService, private authService: AuthService, private cdr: ChangeDetectorRef, private pendingState: PendingStateService) {}
+  constructor(private db: DatabaseService, private authService: AuthService, private cdr: ChangeDetectorRef, private pendingState: PendingStateService, private flockService: FlockService) {}
 
   ngOnInit() {
     this.currentFarm = this.authService.getCurrentFarm();
     this.loadData();
     const cached = this.pendingState.getState('EggSalesComponent');
     if (cached?.farmId === this.currentFarm?.farm_id) this.pendingRows = cached.pendingRows || [];
+    this.applyActiveBatch(this.flockService.getCurrentFlock());
+    this.subs.add(
+      this.flockService.currentFlock$.subscribe(flock => this.applyActiveBatch(flock))
+    );
   }
 
-  ngOnDestroy() { this.pendingState.saveState('EggSalesComponent', { farmId: this.currentFarm?.farm_id, pendingRows: this.pendingRows }); }
+  ngOnDestroy() {
+    this.subs.unsubscribe();
+    this.pendingState.saveState('EggSalesComponent', { farmId: this.currentFarm?.farm_id, pendingRows: this.pendingRows });
+  }
+
+  private applyActiveBatch(flock: any) {
+    if (!flock?.batch_id) return;
+    const batchId = String(flock.batch_id);
+    if (this.selectedBatchFilter === batchId) return;
+    this.selectedBatchFilter = batchId;
+    this.currentPage = 1;
+    this.cdr.detectChanges();
+  }
 
   async loadData() {
     const bRes = await this.db.get(`SELECT * FROM batches WHERE farm_id = ? AND status = 'active' ORDER BY batch_id DESC`, [this.currentFarm.farm_id]);
@@ -122,7 +141,7 @@ export class EggSalesComponent implements OnInit {
 
   getBatchName(id: number) { return this.batches.find(b => b.batch_id === id)?.batch_name || '—'; }
 
-  makeNewRow() { return { batch_id: this.batches[0]?.batch_id || null, date: new Date().toISOString().split('T')[0], customer_name: '', grade: 'mixed', quantity: null, rate_per_egg: null, amount: null, payment_type: 'cash' }; }
+  makeNewRow() { return { batch_id: this.selectedBatchFilter !== 'all' ? Number(this.selectedBatchFilter) : (this.batches[0]?.batch_id || null), date: new Date().toISOString().split('T')[0], customer_name: '', grade: 'mixed', quantity: null, rate_per_egg: null, amount: null, payment_type: 'cash' }; }
 
   addPendingRow() { if (!this.isSaving) { this.editingId = null; this.pendingRows.push(this.makeNewRow()); } }
   addRowAfter(i: number) { this.pendingRows.splice(i + 1, 0, this.makeNewRow()); }

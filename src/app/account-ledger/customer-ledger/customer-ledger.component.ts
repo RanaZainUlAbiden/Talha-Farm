@@ -99,7 +99,10 @@ export class CustomerLedgerComponent implements OnInit {
       // This is what getCustomerBalance() reads from, so it always matches
       // what Sales Orders / Reports show for this customer.
       const customerResult = await this.db.get(
-        'SELECT * FROM customers WHERE customer_id = ? AND farm_id = ?',
+        `SELECT c.*,
+          (SELECT COALESCE(SUM(MAX(COALESCE(total_amount, 0) - COALESCE(amount_paid, 0), 0)), 0) FROM bills WHERE customer_id = c.customer_id) as outstanding_balance
+         FROM customers c
+         WHERE c.customer_id = ? AND c.farm_id = ?`,
         [customerId, this.currentFarm.farm_id]
       );
       
@@ -115,7 +118,7 @@ export class CustomerLedgerComponent implements OnInit {
         const billsResult = await this.db.get(
           `SELECT * FROM bills 
            WHERE customer_id = ? 
-           AND (amount_paid < total_amount OR amount_paid IS NULL)
+           AND (COALESCE(amount_paid, 0) < COALESCE(total_amount, 0))
            ORDER BY bill_date ASC`,
           [customerId]
         );

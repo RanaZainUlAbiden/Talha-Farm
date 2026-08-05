@@ -132,7 +132,19 @@
             </thead>
             <tbody>
               <tr *ngFor="let item of gridItems">
-                <td>{{ item.productName }}</td>
+                <td>
+                  <div style="font-weight: 500;">{{ item.productName }}</div>
+                  <select *ngIf="item.batches && item.batches.length > 0" 
+                          class="inline-input" 
+                          style="font-size: 11px; padding: 2px 4px; margin-top: 4px; width: 100%;" 
+                          [(ngModel)]="item.selectedBatchId">
+                    <option [ngValue]="null">Auto (FIFO)</option>
+                    <option *ngFor="let b of item.batches" [ngValue]="b.batch_id">
+                      {{ b.batch_code || b.batch_id }} ({{ b.quantity }} left)
+                    </option>
+                  </select>
+                  <div *ngIf="!item.batches || item.batches.length === 0" style="font-size: 10px; color: #888; margin-top: 4px;">No active batches</div>
+                </td>
                 <td>
                   <div class="stepper">
                     <button class="st-btn" (click)="item.quantity = item.quantity > 1 ? item.quantity - 1 : 1; recalcItem(item)">−</button>
@@ -228,6 +240,10 @@
           <div class="paid-field">
             <span>Rs.</span>
             <input class="paid-input" type="number" [(ngModel)]="paidAmount" (input)="onPaidAmountChange()" placeholder="0"/>
+          </div>
+          <div class="payment-shortcuts">
+            <button type="button" class="pay-shortcut paid" (click)="markPaid()">Paid</button>
+            <button type="button" class="pay-shortcut unpaid" (click)="markUnpaid()">Unpaid</button>
           </div>
           <div class="change-row" *ngIf="paidAmount > cartSubtotal">Change: <strong>Rs. {{ paidAmount - cartSubtotal | number:'1.0-0' }}</strong></div>
           <div class="change-row remaining" *ngIf="paidAmount < cartSubtotal">Remaining: <strong>Rs. {{ cartSubtotal - paidAmount | number:'1.0-0' }}</strong></div>

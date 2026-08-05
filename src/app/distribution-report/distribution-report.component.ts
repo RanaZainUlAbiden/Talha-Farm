@@ -18,6 +18,7 @@ export class DistributionReportComponent implements OnInit {
   products: any[] = [];
   purchases: any[] = [];
   sales: any[] = [];
+  expenses: any[] = [];
   customers: any[] = [];
   isGenerating = false;
   isLoading = true;
@@ -28,6 +29,7 @@ export class DistributionReportComponent implements OnInit {
     inventory: true,
     purchases: true,
     sales: true,
+    expenses: true,
     summary: true
   };
   
@@ -78,6 +80,20 @@ export class DistributionReportComponent implements OnInit {
     });
   }
 
+  get filteredExpenses(): any[] {
+    if (!this.dateFrom && !this.dateTo) return this.expenses;
+    return this.expenses.filter((e: any) => {
+      const date = e.transaction_date ? new Date(e.transaction_date).setHours(0,0,0,0) : null;
+      if (!date) return false;
+      const from = this.dateFrom ? new Date(this.dateFrom).setHours(0,0,0,0) : null;
+      const to = this.dateTo ? new Date(this.dateTo).setHours(0,0,0,0) : null;
+      if (from && to) return date >= from && date <= to;
+      if (from) return date >= from;
+      if (to) return date <= to;
+      return true;
+    });
+  }
+
   get totalPurchases(): number {
     return this.filteredPurchases.reduce((sum: number, p: any) => sum + (p.total_amount || 0), 0);
   }
@@ -87,7 +103,15 @@ export class DistributionReportComponent implements OnInit {
   }
 
   get totalPaidSales(): number {
-    return this.filteredSales.reduce((sum: number, s: any) => sum + (s.amount_paid || 0), 0);
+    return this.filteredSales.reduce((sum: number, s: any) => sum + this.getBillPaidAmount(s), 0);
+  }
+
+  get totalExpenses(): number {
+    return this.filteredExpenses.reduce((sum: number, e: any) => sum + (e.amount || 0), 0);
+  }
+
+  get totalProfitLoss(): number {
+    return this.totalSales - this.totalPurchases - this.totalExpenses;
   }
 
   /**
@@ -95,7 +119,10 @@ export class DistributionReportComponent implements OnInit {
    * This is the correct accounting formula
    */
   get totalUnpaidSales(): number {
-    return this.totalSales - this.totalPaidSales;
+    return this.filteredSales.reduce((sum: number, s: any) => {
+      const total = Number(s.total_amount) || 0;
+      return sum + Math.max(total - this.getBillPaidAmount(s), 0);
+    }, 0);
   }
 
   /**
@@ -116,6 +143,10 @@ export class DistributionReportComponent implements OnInit {
 
   get totalSalesCount(): number {
     return this.filteredSales.length;
+  }
+
+  get totalExpensesCount(): number {
+    return this.filteredExpenses.length;
   }
 
   /**
@@ -221,9 +252,16 @@ export class DistributionReportComponent implements OnInit {
       const customersResult = await this.db.getAllCustomersWithBalance(this.currentFarm.farm_id);
       this.customers = customersResult.success ? customersResult.data : [];
 
+      // Load expenses
+      const ex = await this.db.get(
+        `SELECT * FROM expense_ledger WHERE farm_id = ? ORDER BY transaction_date DESC`,
+        [this.currentFarm.farm_id]
+      );
+      this.expenses = ex.success ? ex.data : [];
+
       // Determine bill paid status
       for (const bill of this.sales) {
-        bill.is_paid = (bill.amount_paid || 0) >= (bill.total_amount || 0);
+        bill.is_paid = this.getBillPaidAmount(bill) >= (Number(bill.total_amount) || 0);
       }
 
       console.log('📊 Distribution Report Data:');
@@ -232,6 +270,7 @@ export class DistributionReportComponent implements OnInit {
       console.log(`Total Sales: Rs. ${this.totalSales.toLocaleString()}`);
       console.log(`Total Paid Sales: Rs. ${this.totalPaidSales.toLocaleString()}`);
       console.log(`Total Unpaid Sales: Rs. ${this.totalUnpaidSales.toLocaleString()}`);
+      console.log(`Total Expenses: Rs. ${this.totalExpenses.toLocaleString()}`);
       console.log(`Inventory Value: Rs. ${this.totalInventoryValue.toLocaleString()}`);
 
     } catch (error: any) {
@@ -247,7 +286,13 @@ export class DistributionReportComponent implements OnInit {
     if (bill.is_paid !== undefined) {
       return bill.is_paid;
     }
-    return (bill.amount_paid || 0) >= (bill.total_amount || 0);
+    return this.getBillPaidAmount(bill) >= (Number(bill.total_amount) || 0);
+  }
+
+  getBillPaidAmount(bill: any): number {
+    const total = Number(bill?.total_amount) || 0;
+    const paid = Number(bill?.amount_paid) || 0;
+    return Math.min(Math.max(paid, 0), total);
   }
 
   // ── PDF GENERATION ────────────────────────────────────────
@@ -327,11 +372,14 @@ export class DistributionReportComponent implements OnInit {
           ['Total Products', String(this.totalProducts)],
           ['Total Purchase Orders', String(this.totalPurchasesCount)],
           ['Total Sales Bills', String(this.totalSalesCount)],
+          ['Total Expenses Count', String(this.totalExpensesCount)],
           ['Inventory Value (Stock × Cost)', 'Rs. ' + this.totalInventoryValue.toLocaleString()],
           ['Total Purchases', 'Rs. ' + this.totalPurchases.toLocaleString()],
           ['Total Sales', 'Rs. ' + this.totalSales.toLocaleString()],
           ['Total Paid Sales', 'Rs. ' + this.totalPaidSales.toLocaleString()],
-          ['Total Unpaid Sales (Sales - Paid)', 'Rs. ' + this.totalUnpaidSales.toLocaleString()]
+          ['Total Unpaid Sales (Sales - Paid)', 'Rs. ' + this.totalUnpaidSales.toLocaleString()],
+          ['Total Expenses', 'Rs. ' + this.totalExpenses.toLocaleString()],
+          ['Profit / Loss', 'Rs. ' + this.totalProfitLoss.toLocaleString()]
         ];
 
         doc.setFont('helvetica', 'normal');
@@ -455,7 +503,7 @@ export class DistributionReportComponent implements OnInit {
             s.bill_number || '—',
             s.customer_name || 'Walk-in',
             'Rs. ' + (s.total_amount || 0).toLocaleString(),
-            'Rs. ' + (s.amount_paid || 0).toLocaleString(),
+            'Rs. ' + this.getBillPaidAmount(s).toLocaleString(),
             isPaid ? '✅ Paid' : '❌ Unpaid'
           ];
         });
@@ -485,6 +533,44 @@ export class DistributionReportComponent implements OnInit {
         doc.text(`Total Sales: Rs. ${this.totalSales.toLocaleString()}`, margin, finalY);
         doc.text(`Total Paid: Rs. ${this.totalPaidSales.toLocaleString()}`, margin, finalY + 6);
         doc.text(`Total Unpaid: Rs. ${this.totalUnpaidSales.toLocaleString()}`, margin, finalY + 12);
+      }
+
+      // ── EXPENSES ───────────────────────────────────────────
+
+      if (this.sections.expenses && this.filteredExpenses.length > 0) {
+        doc.addPage();
+        this.addPageHeader(doc, farmName, today, 'DISTRIBUTION EXPENSES');
+        
+        const expensesBody = this.filteredExpenses.map(e => [
+          formatDate(e.transaction_date),
+          e.category || '—',
+          e.description || '—',
+          e.payment_type || 'cash',
+          'Rs. ' + (e.amount || 0).toLocaleString()
+        ]);
+
+        autoTable(doc, {
+          startY: 35,
+          head: [['Date', 'Category', 'Description', 'Payment Type', 'Amount']],
+          body: expensesBody.length > 0 ? expensesBody : [['No expenses found', '', '', '', '']],
+          theme: 'striped',
+          headStyles: { fontStyle: 'bold', fontSize: 8, fillColor: [26, 92, 56], textColor: [255, 255, 255] },
+          bodyStyles: { fontSize: 8, textColor: B },
+          margin: { left: margin, right: margin },
+          columnStyles: {
+            0: { cellWidth: 25 },
+            1: { cellWidth: 35 },
+            2: { cellWidth: 70 },
+            3: { cellWidth: 25 },
+            4: { cellWidth: 25, halign: 'right' }
+          }
+        });
+
+        const finalY = (doc as any).lastAutoTable.finalY + 6;
+        doc.setFont('helvetica', 'bold');
+        doc.setFontSize(9);
+        doc.setTextColor(...B);
+        doc.text(`Total Expenses: Rs. ${this.totalExpenses.toLocaleString()}`, margin, finalY);
       }
 
       // ── FOOTER ─────────────────────────────────────────────

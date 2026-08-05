@@ -4,6 +4,7 @@ import { FormsModule } from '@angular/forms';
 import { ActivatedRoute } from '@angular/router';
 import { FlockService } from '../shared/services/flock.service';
 import { AuthService } from '../shared/services/auth.service';
+import { DatabaseService } from '../shared/services/database.service';
 import { Subscription } from 'rxjs';
 import { skip } from 'rxjs/operators';
 import { jsPDF } from 'jspdf';
@@ -31,6 +32,7 @@ export class ReportComponent implements OnInit, OnDestroy {
   health: any[] = [];
   isGenerating = false;
   private subs = new Subscription();
+  private reportLoadToken = 0;
 
   // ── Section selection ──────────────────────────────────────
   sections = {
@@ -63,6 +65,7 @@ export class ReportComponent implements OnInit, OnDestroy {
   constructor(
     private flockService: FlockService,
     private authService: AuthService,
+    private db: DatabaseService,
     private route: ActivatedRoute,
     private cdr: ChangeDetectorRef
   ) {}
@@ -90,13 +93,97 @@ export class ReportComponent implements OnInit, OnDestroy {
         if (flock) {
           this.currentFlock = flock;
           this.loadPreferences();
-          this.cdr.detectChanges();
+          this.loadData();
         }
       })
     );
   }
 
   ngOnDestroy() { this.subs.unsubscribe(); }
+
+  async loadData() {
+    const loadToken = ++this.reportLoadToken;
+    if (!this.currentFlock?.flock_id) {
+      this.expenses = [];
+      this.ledgers = [];
+      this.ledgerEntries = [];
+      this.traders = [];
+      this.medicineEntries = [];
+      this.sales = [];
+      this.income = [];
+      this.health = [];
+      this.cdr.detectChanges();
+      return;
+    }
+
+    const flockId = this.currentFlock.flock_id;
+    const [
+      expenses,
+      ledgers,
+      ledgerEntries,
+      traders,
+      medicineEntries,
+      sales,
+      income,
+      health
+    ] = await Promise.all([
+      this.db.get(
+        `SELECT e.*, l.ledger_name FROM expenses e
+         LEFT JOIN ledgers l ON e.ledger_id = l.ledger_id
+         WHERE e.flock_id = ? ORDER BY e.date ASC`,
+        [flockId]
+      ),
+      this.db.get(
+        `SELECT * FROM ledgers WHERE flock_id = ?
+         ORDER BY ledger_name ASC`,
+        [flockId]
+      ),
+      this.db.get(
+        `SELECT le.*, l.ledger_name FROM ledger_entries le
+         JOIN ledgers l ON le.ledger_id = l.ledger_id
+         WHERE le.flock_id = ? ORDER BY le.date ASC`,
+        [flockId]
+      ),
+      this.db.get(
+        `SELECT * FROM medicine_traders WHERE flock_id = ?
+         ORDER BY trader_name ASC`,
+        [flockId]
+      ),
+      this.db.get(
+        `SELECT me.*, mt.trader_name FROM medicine_entries me
+         JOIN medicine_traders mt ON me.trader_id = mt.trader_id
+         WHERE me.flock_id = ? ORDER BY me.date ASC`,
+        [flockId]
+      ),
+      this.db.get(
+        `SELECT * FROM sales WHERE flock_id = ?
+         ORDER BY date ASC`,
+        [flockId]
+      ),
+      this.db.get(
+        `SELECT * FROM income WHERE flock_id = ?
+         ORDER BY date ASC`,
+        [flockId]
+      ),
+      this.db.get(
+        `SELECT * FROM flock_health WHERE flock_id = ?
+         ORDER BY week_number ASC`,
+        [flockId]
+      )
+    ]);
+
+    if (loadToken !== this.reportLoadToken) return;
+
+    this.expenses = expenses.success ? expenses.data : [];
+    this.ledgers = ledgers.success ? ledgers.data : [];
+    this.ledgerEntries = ledgerEntries.success ? ledgerEntries.data : [];
+    this.traders = traders.success ? traders.data : [];
+    this.medicineEntries = medicineEntries.success ? medicineEntries.data : [];
+    this.sales = sales.success ? sales.data : [];
+    this.income = income.success ? income.data : [];
+    this.health = health.success ? health.data : [];
+    this.cdr.detectChanges();
+  }
 
   // ── Preferences ───────────────────────────────────────────
   private prefKey(): string {

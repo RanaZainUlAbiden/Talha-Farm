@@ -1,4 +1,4 @@
-import { Component, OnInit, ChangeDetectorRef, HostListener } from '@angular/core';
+import { Component, OnInit, OnDestroy, ChangeDetectorRef, HostListener } from '@angular/core';
 import { CommonModule } from '@angular/common';
 import { FormsModule } from '@angular/forms';
 import { DatabaseService } from '../shared/services/database.service';
@@ -7,6 +7,8 @@ import { ConfirmDialogComponent } from '../shared/components/confirm-dialog/conf
 import { DateOnlyPipe } from '../shared/pipes/date-format.pipe';
 import { PendingStateService } from '../shared/services/pending-state.service';
 import { PaginationComponent } from '../shared/components/pagination/pagination.component';
+import { FlockService } from '../shared/services/flock.service';
+import { Subscription } from 'rxjs';
 
 @Component({
   selector: 'app-egg-collection',
@@ -15,7 +17,7 @@ import { PaginationComponent } from '../shared/components/pagination/pagination.
   templateUrl: './egg-collection.component.html',
   styleUrl: './egg-collection.component.scss'
 })
-export class EggCollectionComponent implements OnInit {
+export class EggCollectionComponent implements OnInit, OnDestroy {
   currentFarm: any = null;
   batches: any[] = [];
   collections: any[] = [];
@@ -32,6 +34,7 @@ export class EggCollectionComponent implements OnInit {
   pageSize = 30;
 
   selectedBatchFilter: string = 'all';
+  private subs = new Subscription();
 
   get filteredCollections() {
     if (this.selectedBatchFilter === 'all') return this.collections;
@@ -62,7 +65,8 @@ export class EggCollectionComponent implements OnInit {
     private db: DatabaseService,
     private authService: AuthService,
     private cdr: ChangeDetectorRef,
-    private pendingState: PendingStateService
+    private pendingState: PendingStateService,
+    private flockService: FlockService
   ) {}
 
   ngOnInit() {
@@ -73,10 +77,25 @@ export class EggCollectionComponent implements OnInit {
     if (cached && cached.farmId === this.currentFarm?.farm_id) {
       this.pendingRows = cached.pendingRows || [];
     }
+
+    this.applyActiveBatch(this.flockService.getCurrentFlock());
+    this.subs.add(
+      this.flockService.currentFlock$.subscribe(flock => this.applyActiveBatch(flock))
+    );
   }
 
   ngOnDestroy() {
+    this.subs.unsubscribe();
     this.pendingState.saveState('EggCollectionComponent', { farmId: this.currentFarm?.farm_id, pendingRows: this.pendingRows });
+  }
+
+  private applyActiveBatch(flock: any) {
+    if (!flock?.batch_id) return;
+    const batchId = String(flock.batch_id);
+    if (this.selectedBatchFilter === batchId) return;
+    this.selectedBatchFilter = batchId;
+    this.currentPage = 1;
+    this.cdr.detectChanges();
   }
 
   async loadData() {
@@ -97,7 +116,7 @@ export class EggCollectionComponent implements OnInit {
 
   makeNewRow(): any {
     return {
-      batch_id: this.batches.length > 0 ? this.batches[0].batch_id : null,
+      batch_id: this.selectedBatchFilter !== 'all' ? Number(this.selectedBatchFilter) : (this.batches.length > 0 ? this.batches[0].batch_id : null),
       date: new Date().toISOString().split('T')[0],
       total_eggs: null, broken_eggs: 0, small_grade: 0, medium_grade: 0, large_grade: 0, xl_grade: 0
     };

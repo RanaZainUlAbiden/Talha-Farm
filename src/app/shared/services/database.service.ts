@@ -337,16 +337,30 @@ export class DatabaseService {
   async getCustomerLedgerWithBalance(customerId: number): Promise<any> {
     return this.get(
       `SELECT 
-        l.*,
+        l.ledger_id,
+        l.customer_id,
+        l.transaction_date,
+        l.description,
+        l.debit,
+        l.credit,
+        l.reference_type,
+        l.reference_id,
+        l.created_at,
         c.customer_name,
         c.phone,
         c.address,
-        (SELECT COALESCE(SUM(debit - credit), 0) FROM customer_ledger WHERE customer_id = ? AND ledger_id <= l.ledger_id) as running_balance
+        (SELECT COALESCE(SUM(cl.debit - cl.credit), 0)
+         FROM customer_ledger cl
+         WHERE cl.customer_id = l.customer_id
+           AND (
+             cl.transaction_date < l.transaction_date OR
+             (cl.transaction_date = l.transaction_date AND cl.ledger_id <= l.ledger_id)
+           )) as balance
        FROM customer_ledger l
        INNER JOIN customers c ON l.customer_id = c.customer_id
        WHERE l.customer_id = ?
        ORDER BY l.transaction_date ASC, l.ledger_id ASC`,
-      [customerId, customerId]
+      [customerId]
     );
   }
 
@@ -374,7 +388,7 @@ export class DatabaseService {
   async updateCustomerOutstandingBalance(customerId: number): Promise<any> {
     return this.run(
       `UPDATE customers SET outstanding_balance = 
-        (SELECT COALESCE(SUM(total_amount - amount_paid), 0) FROM bills WHERE customer_id = ?)
+        (SELECT COALESCE(SUM(MAX(COALESCE(total_amount, 0) - COALESCE(amount_paid, 0), 0)), 0) FROM bills WHERE customer_id = ?)
        WHERE customer_id = ?`,
       [customerId, customerId]
     );
@@ -384,7 +398,7 @@ export class DatabaseService {
     return this.get(
       `SELECT 
         c.*,
-        (SELECT COALESCE(SUM(total_amount - amount_paid), 0) FROM bills WHERE customer_id = c.customer_id) as outstanding_balance
+        (SELECT COALESCE(SUM(MAX(COALESCE(total_amount, 0) - COALESCE(amount_paid, 0), 0)), 0) FROM bills WHERE customer_id = c.customer_id) as outstanding_balance
        FROM customers c
        WHERE c.farm_id = ?
        ORDER BY c.customer_name ASC`,
@@ -406,15 +420,29 @@ export class DatabaseService {
   async getSupplierLedgerWithBalance(supplierId: number): Promise<any> {
     return this.get(
       `SELECT 
-        l.*,
+        l.ledger_id,
+        l.supplier_id,
+        l.transaction_date,
+        l.description,
+        l.debit,
+        l.credit,
+        l.reference_type,
+        l.reference_id,
+        l.created_at,
         s.supplier_name,
         s.phone,
-        (SELECT COALESCE(SUM(credit - debit), 0) FROM supplier_ledger WHERE supplier_id = ? AND ledger_id <= l.ledger_id) as running_balance
+        (SELECT COALESCE(SUM(sl.credit - sl.debit), 0)
+         FROM supplier_ledger sl
+         WHERE sl.supplier_id = l.supplier_id
+           AND (
+             sl.transaction_date < l.transaction_date OR
+             (sl.transaction_date = l.transaction_date AND sl.ledger_id <= l.ledger_id)
+           )) as balance
        FROM supplier_ledger l
        INNER JOIN suppliers s ON l.supplier_id = s.supplier_id
        WHERE l.supplier_id = ?
        ORDER BY l.transaction_date ASC, l.ledger_id ASC`,
-      [supplierId, supplierId]
+      [supplierId]
     );
   }
 
@@ -546,15 +574,30 @@ export class DatabaseService {
   async getBankLedgerWithBalance(bankId: number): Promise<any> {
     return this.get(
       `SELECT 
-        l.*,
+        l.ledger_id,
+        l.bank_id,
+        l.transaction_date,
+        l.description,
+        l.debit,
+        l.credit,
+        l.reference_type,
+        l.reference_id,
+        l.transaction_number,
+        l.created_at,
         b.bank_name,
         b.account_number,
-        (SELECT COALESCE(SUM(debit - credit), 0) FROM bank_ledger WHERE bank_id = ? AND ledger_id <= l.ledger_id) as running_balance
+        (SELECT COALESCE(SUM(bl.debit - bl.credit), 0)
+         FROM bank_ledger bl
+         WHERE bl.bank_id = l.bank_id
+           AND (
+             bl.transaction_date < l.transaction_date OR
+             (bl.transaction_date = l.transaction_date AND bl.ledger_id <= l.ledger_id)
+           )) as balance
        FROM bank_ledger l
        INNER JOIN bank_accounts b ON l.bank_id = b.bank_id
        WHERE l.bank_id = ?
        ORDER BY l.transaction_date ASC, l.ledger_id ASC`,
-      [bankId, bankId]
+      [bankId]
     );
   }
 // ── BANK LEDGER ENTRY ──────────────────────────────────────
@@ -727,6 +770,20 @@ async addBankLedgerEntry(entry: {
       [farmId]
     );
   }
+
+// ── CATEGORY METHODS ──────────────────────────────────
+
+async getCategories(farmId: number): Promise<any> {
+  return this.get('SELECT * FROM categories WHERE farm_id = ? ORDER BY category_name ASC', [farmId]);
+}
+
+async addCategory(farmId: number, categoryName: string): Promise<any> {
+  return this.run('INSERT INTO categories (farm_id, category_name) VALUES (?, ?)', [farmId, categoryName.toLowerCase().trim()]);
+}
+
+async deleteCategory(categoryId: number): Promise<any> {
+  return this.run('DELETE FROM categories WHERE category_id = ?', [categoryId]);
+}
 
   // 🔥 NEW: Force update batch statuses for a specific product
   async forceUpdateBatchStatuses(productId: number): Promise<any> {

@@ -4,7 +4,6 @@ import { Injectable } from '@angular/core';
   providedIn: 'root'
 })
 export class LicenseService {
-
   constructor() {}
 
   private get api(): any {
@@ -53,12 +52,12 @@ export class LicenseService {
     trialStarted: boolean;
     clockTampered: boolean;
     licenseDaysRemaining: number;
+    activationCycle: number;
   }> {
     const status = await this.api.getStatus();
     const expiryDate = status.activated
       ? new Date(Date.now() + status.licenseDaysRemaining * 24 * 60 * 60 * 1000).toISOString().split('T')[0]
       : null;
-
     return {
       activated: status.activated,
       trialExpired: status.trialExpired,
@@ -66,7 +65,8 @@ export class LicenseService {
       expiryDate,
       trialStarted: status.trialStarted,
       clockTampered: status.clockTampered,
-      licenseDaysRemaining: status.licenseDaysRemaining || 0
+      licenseDaysRemaining: status.licenseDaysRemaining || 0,
+      activationCycle: status.activationCycle || 0
     };
   }
 

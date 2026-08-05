@@ -152,8 +152,11 @@ function licenseHashCode(str) {
   return hex.padStart(8, '0');
 }
 
-function generateExpectedCode(machineId) {
-  const combined = machineId + LICENSE_SECRET;
+// 🔐 Cycle is now baked into the code. Every successful activation
+// bumps activation_cycle in the DB, which invalidates the code that
+// was just used — client can't replay the same code after it expires.
+function generateExpectedCode(machineId, cycle) {
+  const combined = machineId + cycle + LICENSE_SECRET;
   const hash = licenseHashCode(combined);
   return `DIP-${hash.slice(0, 4)}-${hash.slice(4, 8)}`;
 }
@@ -165,20 +168,31 @@ ipcMain.handle('license-get', async () => {
 
 ipcMain.handle('license-start-trial', async (event, machineId, date) => {
   return runQuery(
-    'INSERT OR REPLACE INTO activation (machine_id, activation_code, trial_start_date, last_launch_date, is_permanent, is_active) VALUES (?, ?, ?, ?, 0, 1)',
+    'INSERT OR REPLACE INTO activation (machine_id, activation_code, trial_start_date, last_launch_date, is_permanent, is_active, activation_cycle) VALUES (?, ?, ?, ?, 0, 1, 0)',
     [machineId, '', date, date]
   );
 });
 
 ipcMain.handle('license-activate', async (event, machineId, code) => {
-  const expectedCode = generateExpectedCode(machineId);
+  // Get current cycle from DB
+  const existing = await getQuery('SELECT * FROM activation WHERE machine_id = ?', [machineId]);
+  const row = existing.success && existing.data.length > 0 ? existing.data[0] : null;
+  const currentCycle = row && row.activation_cycle !== undefined ? row.activation_cycle : 0;
+
+  // Validate against current cycle
+  const expectedCode = generateExpectedCode(machineId, currentCycle);
   if (code.trim().toUpperCase() !== expectedCode) {
     return { success: false, error: 'Invalid activation code' };
   }
+
+  // 🔒 Burn this code — increment cycle so old code never works again
   const now = new Date().toISOString();
+  const nextCycle = currentCycle + 1;
+  const trialStart = row && row.trial_start_date ? row.trial_start_date : now;
+
   return runQuery(
-    'INSERT OR REPLACE INTO activation (machine_id, activation_code, trial_start_date, last_launch_date, is_permanent, is_active, activated_at) VALUES (?, ?, ?, ?, 0, 1, ?)',
-    [machineId, code, now, now, now]
+    'INSERT OR REPLACE INTO activation (machine_id, activation_code, trial_start_date, last_launch_date, is_permanent, is_active, activated_at, activation_cycle) VALUES (?, ?, ?, ?, 0, 1, ?, ?)',
+    [machineId, code, trialStart, now, now, nextCycle]
   );
 });
 
@@ -198,7 +212,8 @@ ipcMain.handle('license-status', async () => {
       trialExpired: false, 
       daysRemaining: 7, 
       clockTampered: false, 
-      licenseDaysRemaining: 0 
+      licenseDaysRemaining: 0,
+      activationCycle: 0
     };
   }
 
@@ -206,6 +221,7 @@ ipcMain.handle('license-status', async () => {
   const trialStart = row.trial_start_date ? new Date(row.trial_start_date) : null;
   const lastLaunch = row.last_launch_date ? new Date(row.last_launch_date) : null;
   const activatedAt = row.activated_at ? new Date(row.activated_at) : null;
+  const activationCycle = row.activation_cycle || 0;
 
   // ═══════════════ 🔒 CLOCK TAMPER DETECTION ═══════════════
   let clockTampered = false;
@@ -221,16 +237,12 @@ ipcMain.handle('license-status', async () => {
     }
 
     // 2️⃣ FORWARD JUMP: More than 48 hours since last launch (suspicious)
-    //    Normal usage would have daily launches. A gap > 2 days suggests
-    //    the user changed the system date forward.
     if (hoursSinceLastLaunch > 48) {
       clockTampered = true;
     }
   }
 
-  // 3️⃣ FUTURE DATE CHECK: System date is more than 8 days ahead of activation/trial
-  //    Even if they trickle-change the date 1 day at a time (avoiding the 48hr check),
-  //    they can't go beyond 7 days from activation.
+  // 3️⃣ FUTURE DATE CHECK: More than 8 days from activation/trial
   if (!clockTampered) {
     const referenceDate = activatedAt || trialStart;
     if (referenceDate) {
@@ -241,7 +253,7 @@ ipcMain.handle('license-status', async () => {
     }
   }
 
-  // If clock tampered → deactivate license and lock out
+  // If clock tampered → deactivate and lock out
   if (clockTampered) {
     await runQuery('UPDATE activation SET is_active = 0 WHERE machine_id = ?', [machineId]);
     return { 
@@ -250,7 +262,8 @@ ipcMain.handle('license-status', async () => {
       trialExpired: true, 
       daysRemaining: 0, 
       clockTampered: true, 
-      licenseDaysRemaining: 0 
+      licenseDaysRemaining: 0,
+      activationCycle
     };
   }
 
@@ -289,7 +302,8 @@ ipcMain.handle('license-status', async () => {
     trialExpired,
     daysRemaining: daysRemaining > 0 ? daysRemaining : 0,
     clockTampered: false,
-    licenseDaysRemaining: licenseDaysRemaining > 0 ? licenseDaysRemaining : 0
+    licenseDaysRemaining: licenseDaysRemaining > 0 ? licenseDaysRemaining : 0,
+    activationCycle
   };
 });
 

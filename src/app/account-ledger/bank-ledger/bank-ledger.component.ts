@@ -193,8 +193,7 @@ export class BankLedgerComponent implements OnInit {
   }
 
   getBankBalance(): number {
-    if (this.ledgerEntries.length === 0) return 0;
-    return this.ledgerEntries[this.ledgerEntries.length - 1]?.balance || 0;
+    return this.ledgerEntries.reduce((sum, e) => sum + (Number(e.debit) || 0) - (Number(e.credit) || 0), 0);
   }
 
   getTotalDeposits(): number {
@@ -392,6 +391,12 @@ export class BankLedgerComponent implements OnInit {
         await this.loadBanks();
       } else {
         await this.db.run('DELETE FROM bank_ledger WHERE ledger_id = ?', [this.deletingId]);
+        await this.db.run(
+          `UPDATE bank_accounts SET current_balance =
+            (SELECT COALESCE(SUM(debit - credit), 0) FROM bank_ledger WHERE bank_id = ?)
+           WHERE bank_id = ?`,
+          [this.selectedBank.bank_id, this.selectedBank.bank_id]
+        );
         await this.loadBankDetail(this.selectedBank.bank_id);
         this.showDeleteDialog = false;
         this.deletingId = null;

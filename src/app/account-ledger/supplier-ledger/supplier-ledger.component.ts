@@ -166,8 +166,7 @@ export class SupplierLedgerComponent implements OnInit {
   }
 
   getSupplierBalance(): number {
-    if (this.ledgerEntries.length === 0) return 0;
-    return this.ledgerEntries[this.ledgerEntries.length - 1]?.balance || 0;
+    return this.ledgerEntries.reduce((sum, e) => sum + (Number(e.credit) || 0) - (Number(e.debit) || 0), 0);
   }
 
   // ── PAYMENT METHODS ──────────────────────────────────────

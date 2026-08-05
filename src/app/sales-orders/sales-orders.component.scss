@@ -89,6 +89,11 @@
   span { font-size: 14px; color: #888; }
 }
 .paid-input { flex: 1; border: none; outline: none; background: transparent; font-size: 16px; font-weight: 600; }
+.payment-shortcuts { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-top: 8px; }
+.pay-shortcut { border: 1px solid #d0d0d0; background: #fff; border-radius: 6px; padding: 8px 10px; font-size: 13px; font-weight: 600; cursor: pointer; transition: all 0.15s; }
+.pay-shortcut.paid { color: #1a5c38; border-color: #b8dbc5; background: #f0faf4; }
+.pay-shortcut.unpaid { color: #c62828; border-color: #f3c4c4; background: #fff7f7; }
+.pay-shortcut:hover { filter: brightness(0.98); transform: translateY(-1px); }
 .change-row { font-size: 13px; padding: 8px 0; color: #1a5c38; font-weight: 500; }
 .change-row.remaining { color: #e53935; }
 .change-row.exact-ok { color: #1a5c38; }

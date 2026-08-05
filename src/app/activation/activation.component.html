@@ -1,6 +1,5 @@
 <div class="activation-container">
   <div class="activation-card">
-    
     <!-- Logo & Branding -->
     <div class="logo-section">
       <img src="devlogo.png" alt="DevInfantary Poultry Farm" class="logo" />
@@ -23,6 +22,19 @@
       <div class="expiry-info">
         <p>Expired on: <strong>{{ expirationDate }}</strong></p>
       </div>
+
+      <!-- Renewal info the client sends back to support -->
+      <div class="machine-id-section">
+        <label>Renewal Code</label>
+        <div class="machine-id-box">
+          <code>{{ machineId }} | Cycle: {{ activationCycle }}</code>
+          <button class="btn-copy" (click)="copyRenewalInfo()" title="Copy to clipboard">
+            📋 Copy
+          </button>
+        </div>
+        <p class="hint">Send this along with your Machine ID to receive a new activation code.</p>
+      </div>
+
       <div class="contact-info">
         <p>📞 Contact: <strong>0302 6938217</strong></p>
         <p>📧 Email: <strong>support&#64;devinfantary.com</strong></p>
@@ -34,7 +46,6 @@
 
     <!-- Activation Form -->
     <div class="activation-form" *ngIf="!isExpired && !isClockTampered">
-      
       <!-- Machine ID -->
       <div class="machine-id-section">
         <label>Your Machine ID</label>

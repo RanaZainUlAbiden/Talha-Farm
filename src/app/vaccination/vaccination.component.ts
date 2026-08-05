@@ -1,10 +1,12 @@
-import { Component, OnInit, ChangeDetectorRef, HostListener } from '@angular/core';
+import { Component, OnInit, OnDestroy, ChangeDetectorRef, HostListener } from '@angular/core';
 import { CommonModule } from '@angular/common';
 import { FormsModule } from '@angular/forms';
 import { DatabaseService } from '../shared/services/database.service';
 import { AuthService } from '../shared/services/auth.service';
 import { ConfirmDialogComponent } from '../shared/components/confirm-dialog/confirm-dialog.component';
 import { DateOnlyPipe } from '../shared/pipes/date-format.pipe';
+import { FlockService } from '../shared/services/flock.service';
+import { Subscription } from 'rxjs';
 
 @Component({
   selector: 'app-vaccination',
@@ -13,7 +15,7 @@ import { DateOnlyPipe } from '../shared/pipes/date-format.pipe';
   templateUrl: './vaccination.component.html',
   styleUrl: './vaccination.component.scss'
 })
-export class VaccinationComponent implements OnInit {
+export class VaccinationComponent implements OnInit, OnDestroy {
   currentFarm: any = null;
   batches: any[] = [];
   vaccinations: any[] = [];
@@ -24,6 +26,8 @@ export class VaccinationComponent implements OnInit {
   deletingId: number | null = null;
   isSaving = false;
   isSavingAll = false;
+  currentBatchId: number | null = null;
+  private subs = new Subscription();
 
   get hasPendingRows(): boolean { return this.pendingRows.length > 0; }
 
@@ -41,9 +45,26 @@ export class VaccinationComponent implements OnInit {
     }
   }
 
-  constructor(private db: DatabaseService, private authService: AuthService, private cdr: ChangeDetectorRef) {}
+  constructor(private db: DatabaseService, private authService: AuthService, private cdr: ChangeDetectorRef, private flockService: FlockService) {}
 
-  ngOnInit() { this.currentFarm = this.authService.getCurrentFarm(); this.loadData(); }
+  ngOnInit() {
+    this.currentFarm = this.authService.getCurrentFarm();
+    this.loadData();
+    this.applyActiveBatch(this.flockService.getCurrentFlock());
+    this.subs.add(
+      this.flockService.currentFlock$.subscribe(flock => this.applyActiveBatch(flock))
+    );
+  }
+
+  ngOnDestroy() { this.subs.unsubscribe(); }
+
+  private applyActiveBatch(flock: any) {
+    if (!flock?.batch_id) return;
+    const batchId = Number(flock.batch_id);
+    if (this.currentBatchId === batchId) return;
+    this.currentBatchId = batchId;
+    this.cdr.detectChanges();
+  }
 
   async loadData() {
     const br = await this.db.get(`SELECT * FROM batches WHERE farm_id = ? AND status='active'`, [this.currentFarm.farm_id]);
@@ -55,7 +76,7 @@ export class VaccinationComponent implements OnInit {
 
   getBatchName(id: number) { return this.batches.find(b => b.batch_id === id)?.batch_name || '—'; }
 
-  makeNewRow() { return { batch_id: this.batches[0]?.batch_id, date: new Date().toISOString().split('T')[0], vaccine_name: '', dose: '', notes: '', done: 0 }; }
+  makeNewRow() { return { batch_id: this.currentBatchId || this.batches[0]?.batch_id, date: new Date().toISOString().split('T')[0], vaccine_name: '', dose: '', notes: '', done: 0 }; }
   addPendingRow() { if (!this.isSaving) this.pendingRows.push(this.makeNewRow()); }
   addRowAfter(i: number) { this.pendingRows.splice(i + 1, 0, this.makeNewRow()); }
   removePendingRow(i: number) { this.pendingRows.splice(i, 1); }

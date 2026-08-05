@@ -1,8 +1,10 @@
-import { Component, OnInit, ChangeDetectorRef } from '@angular/core';
+import { Component, OnInit, OnDestroy, ChangeDetectorRef } from '@angular/core';
 import { CommonModule } from '@angular/common';
 import { FormsModule } from '@angular/forms';
 import { DatabaseService } from '../shared/services/database.service';
 import { AuthService } from '../shared/services/auth.service';
+import { FlockService } from '../shared/services/flock.service';
+import { Subscription } from 'rxjs';
 import { jsPDF } from 'jspdf';
 import autoTable from 'jspdf-autotable';
 
@@ -13,7 +15,7 @@ import autoTable from 'jspdf-autotable';
   templateUrl: './layer-report.component.html',
   styleUrl: './layer-report.component.scss'
 })
-export class LayerReportComponent implements OnInit {
+export class LayerReportComponent implements OnInit, OnDestroy {
   currentFarm: any = null;
   batches: any[] = [];
   eggCollections: any[] = [];
@@ -21,6 +23,7 @@ export class LayerReportComponent implements OnInit {
   vaccinations: any[] = [];
   mortalities: any[] = [];
   isGenerating = false;
+  private subs = new Subscription();
 
   sections = {
     eggCollection: true,
@@ -30,7 +33,10 @@ export class LayerReportComponent implements OnInit {
     summary: true
   };
 
-  private prefKey(): string { return 'layer_report_preferences_' + (this.batches[0]?.batch_id || 'default'); }
+  private prefKey(): string {
+    const batchId = this.selectedBatchFilter !== 'all' ? this.selectedBatchFilter : (this.batches[0]?.batch_id || 'default');
+    return 'layer_report_preferences_' + batchId;
+  }
 
   private loadPreferences() {
     try {
@@ -66,9 +72,28 @@ export class LayerReportComponent implements OnInit {
   get totalEggSales() { return this.filteredEggSales.reduce((s: number, e: any) => s + (e.total_amount || 0), 0); }
   get totalMortality() { return this.filteredMortalities.reduce((s: number, e: any) => s + (e.count || 0), 0); }
 
-  constructor(private db: DatabaseService, private authService: AuthService, private cdr: ChangeDetectorRef) {}
+  constructor(private db: DatabaseService, private authService: AuthService, private cdr: ChangeDetectorRef, private flockService: FlockService) {}
 
-  async ngOnInit() { this.currentFarm = this.authService.getCurrentFarm(); await this.loadData(); this.loadPreferences(); }
+  async ngOnInit() {
+    this.currentFarm = this.authService.getCurrentFarm();
+    await this.loadData();
+    this.applyActiveBatch(this.flockService.getCurrentFlock());
+    this.loadPreferences();
+    this.subs.add(
+      this.flockService.currentFlock$.subscribe(flock => this.applyActiveBatch(flock))
+    );
+  }
+
+  ngOnDestroy() { this.subs.unsubscribe(); }
+
+  private applyActiveBatch(flock: any) {
+    if (!flock?.batch_id) return;
+    const batchId = String(flock.batch_id);
+    if (this.selectedBatchFilter === batchId) return;
+    this.selectedBatchFilter = batchId;
+    this.loadPreferences();
+    this.cdr.detectChanges();
+  }
 
   async loadData() {
     const b = await this.db.get('SELECT * FROM batches WHERE farm_id=?', [this.currentFarm.farm_id]); this.batches = b.success ? b.data : [];

@@ -36,28 +36,32 @@ export class LayoutComponent implements OnInit, OnDestroy {
 
   private subs = new Subscription();
 
-  broilerMenu = [
+  broilerMenu: any[] = [
     { label: 'Flock Health',  icon: '🐔', route: 'flock-health'    },
     { label: 'Expenses',      icon: '💰', route: 'expenses'         },
     { label: 'Ledger',        icon: '📒', route: 'ledger'           },
-    { label: 'Medicine',      icon: '💊', route: 'medicine'         },
+    { label: 'Medicine',      icon: '💊', route: 'inventory', queryParams: { category: 'medicine' } },
+    { label: 'Feed',          icon: '🌾', route: 'inventory', queryParams: { category: 'feed' } },
+    { label: 'Vaccination',   icon: '💉', route: 'inventory', queryParams: { category: 'vaccine' } },
     { label: 'Sale',          icon: '🛒', route: 'sale'             },
     { label: 'Income',        icon: '📈', route: 'income'           },
     { label: 'Report',        icon: '📄', route: 'report'           },
     { label: 'Flocks',        icon: '🐣', route: 'flock-management' }
   ];
 
-  layerMenu = [
+  layerMenu: any[] = [
     { label: 'Batches',         icon: '🥚', route: 'batch-management' },
     { label: 'Egg Collection',  icon: '📋', route: 'egg-collection'   },
     { label: 'Egg Sales',       icon: '🛒', route: 'egg-sales'        },
-    { label: 'Vaccination',     icon: '💉', route: 'vaccination'      },
+    { label: 'Medicine',        icon: '💊', route: 'inventory', queryParams: { category: 'medicine' } },
+    { label: 'Feed',            icon: '🌾', route: 'inventory', queryParams: { category: 'feed' } },
+    { label: 'Vaccination',     icon: '💉', route: 'inventory', queryParams: { category: 'vaccine' } },
     { label: 'Mortality',       icon: '⚠️', route: 'layer-mortality'  },
     { label: 'Income',          icon: '📈', route: 'income'           },
     { label: 'Report',          icon: '📄', route: 'layer-report'     }
   ];
 
-  distributionMenu = [
+  distributionMenu: any[] = [
     { label: 'Inventory',     icon: '📦', route: 'inventory'            },
     { label: 'Purchase',      icon: '📥', route: 'purchase-orders'      },
     { label: 'Sales Orders',  icon: '📤', route: 'sales-orders'         },
@@ -68,7 +72,7 @@ export class LayoutComponent implements OnInit, OnDestroy {
     { label: 'Report',        icon: '📄', route: 'distribution-report'  }
   ];
 
-  allMenu = [
+  allMenu: any[] = [
     { label: 'Expenses',      icon: '💰', route: 'expenses'         },
     { label: 'Income',        icon: '📈', route: 'income'           },
     { label: 'Report',        icon: '📄', route: 'report'           },
@@ -313,9 +317,17 @@ export class LayoutComponent implements OnInit, OnDestroy {
     this.cdr.detectChanges();
   }
 
-  navigate(route: string) {
+  navigate(route: string, queryParams?: any) {
     this.activeRoute = route;
-    this.router.navigate(['/app', route]);
+    if (route === 'inventory') {
+      this.activeBusinessTab = 'distribution';
+    }
+    
+    if (queryParams) {
+      this.router.navigate(['/app', route], { queryParams });
+    } else {
+      this.router.navigate(['/app', route]);
+    }
     this.cdr.detectChanges();
   }
 

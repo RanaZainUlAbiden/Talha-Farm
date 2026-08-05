@@ -4,7 +4,10 @@
       <h3>Inventory Management</h3>
       <p class="subtitle">{{ currentFarm?.farm_name }}</p>
     </div>
-    <button class="btn-primary" (click)="addNewRow()" *ngIf="!showNewRow" [disabled]="isLoading">+ Add Product</button>
+    <div style="display: flex; gap: 8px;">
+      <button class="btn-secondary" (click)="openCategoryModal()" [disabled]="isLoading">+ Add Category</button>
+      <button class="btn-primary" (click)="addNewRow()" *ngIf="!showNewRow" [disabled]="isLoading">+ Add Product</button>
+    </div>
   </div>
 
   <!-- SEARCH BAR -->
@@ -48,6 +51,7 @@
       <thead>
         <tr>
           <th>Product Name</th>
+          <th>Category</th>
           <th>Stock</th>
           <th>Expiry</th>
           <th>Min Alert</th>
@@ -68,6 +72,11 @@
               (ngModelChange)="onFormChange()" 
               placeholder="Product name"
             />
+          </td>
+          <td>
+            <select class="inline-input" [(ngModel)]="newRow.category" (ngModelChange)="onFormChange()">
+              <option *ngFor="let c of allCategories" [value]="c">{{ c | titlecase }}</option>
+            </select>
           </td>
           <td>
             <input 
@@ -138,6 +147,9 @@
           
           <ng-container *ngIf="editingId !== p.product_id">
             <td class="product-name">{{ p.product_name }}</td>
+            <td>
+              <span class="category-badge">{{ p.category || '—' }}</span>
+            </td>
             <td [class.low-stock-text]="isLowStock(p)">{{ getStockDisplay(p) | number }}</td>
             <td [class.expiry-text]="isExpiring(p)">{{ p.earliest_expiry || '—' }}</td>
             <td><span [class]="getMinAlert(p).class">{{ getMinAlert(p).text }}</span></td>
@@ -160,6 +172,11 @@
                 type="text" 
                 [(ngModel)]="editForm.product_name"
               />
+            </td>
+            <td>
+              <select class="inline-input" [(ngModel)]="editForm.category">
+                <option *ngFor="let c of allCategories" [value]="c">{{ c | titlecase }}</option>
+              </select>
             </td>
             <td>
               <span style="font-size: 12px; color: #1a5c38; font-weight: 600;">
@@ -229,3 +246,37 @@
   (confirmed)="onDeleteConfirmed()" 
   (cancelled)="onDeleteCancelled()"
 />
+
+<!-- ── ADD CATEGORY MODAL ──────────────────────────────────── -->
+<div class="modal-overlay" *ngIf="showCategoryModal" (click)="closeCategoryModal()">
+  <div class="modal-box" (click)="$event.stopPropagation()">
+    <div class="modal-header">
+      <h4>Add New Category</h4>
+      <button class="modal-close" (click)="closeCategoryModal()">✕</button>
+    </div>
+    <div class="modal-body">
+      <label class="modal-label">Category Name</label>
+      <input
+        class="inline-input"
+        type="text"
+        [(ngModel)]="newCategoryName"
+        placeholder="e.g. antibiotic, disinfectant..."
+        style="width: 100%; margin-bottom: 8px;"
+        (keydown.enter)="saveCategory()"
+        autofocus
+      />
+      <div class="error-message" *ngIf="categoryError" style="margin-bottom: 8px;">{{ categoryError }}</div>
+
+
+     <p *ngIf="allCategories.length > 0" style="font-size: 12px; color: #1a5c38; margin-bottom: 12px;">
+  Existing categories: {{ allCategories.join(', ') }}
+</p>
+
+
+    </div>
+    <div class="modal-footer">
+      <button class="btn-primary" (click)="saveCategory()">Save Category</button>
+      <button class="btn-cancel-edit" (click)="closeCategoryModal()">Cancel</button>
+    </div>
+  </div>
+</div>

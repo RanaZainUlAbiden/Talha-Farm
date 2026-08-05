@@ -51,6 +51,16 @@
       <div class="card-label">Total Sales</div>
       <div class="card-value">Rs. {{ totalSales | number:'1.0-0' }}</div>
     </div>
+    <div class="summary-card expenses" style="border-left: 4px solid #f44336; background: #fff;">
+      <div class="card-icon" style="background: #ffebee; color: #d32f2f;">💸</div>
+      <div class="card-label">Total Expenses</div>
+      <div class="card-value" style="color: #d32f2f;">Rs. {{ totalExpenses | number:'1.0-0' }}</div>
+    </div>
+    <div class="summary-card profit" style="border-left: 4px solid #4caf50; background: #fff;">
+      <div class="card-icon" style="background: #e8f5e9; color: #2e7d32;">🏆</div>
+      <div class="card-label">Profit / Loss</div>
+      <div class="card-value" [style.color]="totalProfitLoss >= 0 ? '#2e7d32' : '#d32f2f'">Rs. {{ totalProfitLoss | number:'1.0-0' }}</div>
+    </div>
   </div>
 
   <!-- Section Selector -->
@@ -58,8 +68,8 @@
     <div class="sections-panel-header">
       <span class="sections-title">📋 Sections to Include in PDF</span>
       <div class="sections-bulk">
-        <button class="bulk-btn" (click)="sections.inventory=true; sections.purchases=true; sections.sales=true; sections.summary=true; savePreferences()">All</button>
-        <button class="bulk-btn" (click)="sections.inventory=false; sections.purchases=false; sections.sales=false; sections.summary=false; savePreferences()">None</button>
+        <button class="bulk-btn" (click)="sections.inventory=true; sections.purchases=true; sections.sales=true; sections.expenses=true; sections.summary=true; savePreferences()">All</button>
+        <button class="bulk-btn" (click)="sections.inventory=false; sections.purchases=false; sections.sales=false; sections.expenses=false; sections.summary=false; savePreferences()">None</button>
       </div>
     </div>
 
@@ -97,6 +107,15 @@
         <span class="checkbox-info">
           <span class="checkbox-label">Sales Bills</span>
           <span class="checkbox-meta">{{ totalSalesCount }} bills — Rs. {{ totalSales | number:'1.0-0' }}</span>
+        </span>
+      </label>
+
+      <label class="section-checkbox" [class.checked]="sections.expenses">
+        <input type="checkbox" [(ngModel)]="sections.expenses" (change)="savePreferences()" />
+        <span class="checkbox-icon">💸</span>
+        <span class="checkbox-info">
+          <span class="checkbox-label">Expenses</span>
+          <span class="checkbox-meta">{{ totalExpensesCount }} expenses — Rs. {{ totalExpenses | number:'1.0-0' }}</span>
         </span>
       </label>
     </div>
@@ -204,10 +223,10 @@
           <td class="bill-number">{{ s.bill_number }}</td>
           <td>{{ s.customer_name || 'Walk-in' }}</td>
           <td class="amount">Rs. {{ s.total_amount | number:'1.0-0' }}</td>
-          <td>Rs. {{ s.amount_paid | number:'1.0-0' }}</td>
+          <td>Rs. {{ getBillPaidAmount(s) | number:'1.0-0' }}</td>
           <td>
-            <span class="status-badge" [class.paid]="(s.amount_paid || 0) >= (s.total_amount || 0)" [class.unpaid]="(s.amount_paid || 0) < (s.total_amount || 0)">
-              {{ (s.amount_paid || 0) >= (s.total_amount || 0) ? '✅ Paid' : '⏳ Unpaid' }}
+            <span class="status-badge" [class.paid]="isBillPaid(s)" [class.unpaid]="!isBillPaid(s)">
+              {{ isBillPaid(s) ? '✅ Paid' : '⏳ Unpaid' }}
             </span>
           </td>
         </tr>
@@ -216,6 +235,42 @@
           <td class="amount"><strong>Rs. {{ totalSales | number:'1.0-0' }}</strong></td>
           <td class="amount"><strong>Rs. {{ totalPaidSales | number:'1.0-0' }}</strong></td>
           <td class="amount"><strong>Rs. {{ totalUnpaidSales | number:'1.0-0' }}</strong></td>
+        </tr>
+      </tbody>
+    </table>
+  </div>
+
+  <!-- Expenses Table -->
+  <div class="table-card" *ngIf="!isLoading && sections.expenses">
+    <h4>💸 Expenses</h4>
+    <div class="empty-state" *ngIf="filteredExpenses.length === 0">
+      <p>No expenses recorded yet.</p>
+    </div>
+    <table *ngIf="filteredExpenses.length > 0">
+      <thead>
+        <tr>
+          <th>Date</th>
+          <th>Category</th>
+          <th>Description</th>
+          <th>Payment</th>
+          <th>Amount</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr *ngFor="let e of filteredExpenses">
+          <td>{{ e.transaction_date | date:'dd-MM-yyyy' }}</td>
+          <td>{{ e.category }}</td>
+          <td class="product-name">{{ e.description || '—' }}</td>
+          <td>
+            <span class="payment-badge" [class.cash]="e.payment_type === 'cash'">
+              {{ e.payment_type || 'cash' }}
+            </span>
+          </td>
+          <td class="amount">Rs. {{ e.amount | number:'1.0-0' }}</td>
+        </tr>
+        <tr class="total-row">
+          <td colspan="4"><strong>Total Expenses</strong></td>
+          <td class="amount"><strong>Rs. {{ totalExpenses | number:'1.0-0' }}</strong></td>
         </tr>
       </tbody>
     </table>

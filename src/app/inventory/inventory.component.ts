@@ -1,7 +1,7 @@
 import { Component, OnInit, ChangeDetectorRef, AfterViewInit, OnDestroy } from '@angular/core';
 import { CommonModule } from '@angular/common';
 import { FormsModule } from '@angular/forms';
-import { Router } from '@angular/router';
+import { Router, ActivatedRoute } from '@angular/router';
 import { DatabaseService } from '../shared/services/database.service';
 import { AuthService } from '../shared/services/auth.service';
 import { FormStateService } from '../shared/services/form-state.service';
@@ -28,16 +28,29 @@ export class InventoryComponent implements OnInit, AfterViewInit, OnDestroy {
   errorMessage = '';
   isLoading = true;
   searchTerm: string = '';
-  
+
+  // ── CATEGORIES ────────────────────────────────────────────
+ readonly DEFAULT_CATEGORIES = [];
+dbCategories: any[] = [];
+
+
+  showCategoryModal = false;
+  newCategoryName = '';
+  categoryError = '';
+
+  get allCategories(): string[] {
+  const custom = this.dbCategories.map((c: any) => c.category_name);
+  return [...this.DEFAULT_CATEGORIES, ...custom];
+}
   newRow = { 
     product_name: '', 
     category: 'medicine', 
     unit: '', 
-    current_stock: 0,
+    current_stock: null as number | null,
     expiry_date: '',
-    min_stock_alert: 0, 
-    cost_price: 0, 
-    selling_price: 0 
+    min_stock_alert: null as number | null,
+    cost_price: null as number | null,
+    selling_price: null as number | null
   };
 
   currentPage = 1;
@@ -61,12 +74,23 @@ export class InventoryComponent implements OnInit, AfterViewInit, OnDestroy {
     private authService: AuthService,
     private cdr: ChangeDetectorRef,
     private router: Router,
+    private route: ActivatedRoute,
     private formState: FormStateService
   ) {}
 
-  ngOnInit() { 
+ async  ngOnInit() { 
     this.currentFarm = this.authService.getCurrentFarm();
+await this.loadCategories();
     this.loadProducts(); 
+    
+    this.route.queryParams.subscribe(params => {
+      if (params['category']) {
+        this.searchTerm = params['category'];
+        if (this.products.length > 0) {
+          this.filterProducts();
+        }
+      }
+    });
   }
 
   ngAfterViewInit() {
@@ -114,6 +138,47 @@ export class InventoryComponent implements OnInit, AfterViewInit, OnDestroy {
   }
 
   // ── AUTO-SAVE ON INPUT CHANGE ─────────────────────────────
+
+  // ── CATEGORY MANAGEMENT ──────────────────────────────────
+
+  private async loadCategories(): Promise<void> {
+  try {
+    const result = await this.db.getCategories(this.currentFarm.farm_id);
+    this.dbCategories = result.success ? result.data : [];
+    if (this.dbCategories.length === 0) {
+      for (const cat of this.DEFAULT_CATEGORIES) {
+        await this.db.addCategory(this.currentFarm.farm_id, cat);
+      }
+      const refreshed = await this.db.getCategories(this.currentFarm.farm_id);
+      this.dbCategories = refreshed.success ? refreshed.data : [];
+    }
+  } catch {
+    this.dbCategories = [];
+  }
+}
+
+  openCategoryModal(): void {
+    this.newCategoryName = '';
+    this.categoryError = '';
+    this.showCategoryModal = true;
+    this.cdr.detectChanges();
+  }
+
+  closeCategoryModal(): void {
+    this.showCategoryModal = false;
+    this.newCategoryName = '';
+    this.categoryError = '';
+    this.cdr.detectChanges();
+  }
+
+  async saveCategory(): Promise<void> {
+  const name = this.newCategoryName.trim().toLowerCase();
+  if (!name) { this.categoryError = 'Category name is required.'; return; }
+  if (this.allCategories.includes(name)) { this.categoryError = 'Category already exists.'; return; }
+  await this.db.addCategory(this.currentFarm.farm_id, name);
+  await this.loadCategories();
+  this.closeCategoryModal();
+}
 
   onFormChange(): void {
     if (this.showNewRow) {
@@ -256,11 +321,11 @@ export class InventoryComponent implements OnInit, AfterViewInit, OnDestroy {
       product_name: '', 
       category: 'medicine', 
       unit: '', 
-      current_stock: 0, 
+      current_stock: null,
       expiry_date: '', 
-      min_stock_alert: 0, 
-      cost_price: 0, 
-      selling_price: 0 
+      min_stock_alert: null,
+      cost_price: null,
+      selling_price: null
     }; 
     this.cdr.detectChanges();
     this.saveState();
@@ -285,7 +350,16 @@ export class InventoryComponent implements OnInit, AfterViewInit, OnDestroy {
     try {
       const result = await this.db.run(
         'INSERT INTO products (farm_id, product_name, category, unit, current_stock, min_stock_alert, cost_price, selling_price) VALUES (?,?,?,?,?,?,?,?)',
-        [this.currentFarm.farm_id, this.newRow.product_name, this.newRow.category, this.newRow.unit, 0, this.newRow.min_stock_alert, this.newRow.cost_price, this.newRow.selling_price]
+        [
+          this.currentFarm.farm_id,
+          this.newRow.product_name,
+          this.newRow.category,
+          this.newRow.unit,
+          0,
+          this.newRow.min_stock_alert || 0,
+          this.newRow.cost_price || 0,
+          this.newRow.selling_price || 0
+        ]
       );
       
       if (result.success) {
@@ -293,7 +367,7 @@ export class InventoryComponent implements OnInit, AfterViewInit, OnDestroy {
         const productId = pr.success && pr.data && pr.data.length > 0 ? pr.data[0].id : null;
         
         if (productId) {
-          const stockToAdd = this.newRow.current_stock > 0 ? this.newRow.current_stock : 0;
+          const stockToAdd = (this.newRow.current_stock || 0) > 0 ? this.newRow.current_stock || 0 : 0;
           
           if (stockToAdd > 0) {
             const today = new Date().toISOString().split('T')[0];
@@ -307,7 +381,7 @@ export class InventoryComponent implements OnInit, AfterViewInit, OnDestroy {
               manufacturing_date: today, 
               expiry_date: expiryDate, 
               quantity: stockToAdd, 
-              purchase_price: this.newRow.cost_price 
+              purchase_price: this.newRow.cost_price || 0
             });
             
             console.log(`✅ Added ${stockToAdd} units to product ${this.newRow.product_name} as batch`);
@@ -364,7 +438,7 @@ export class InventoryComponent implements OnInit, AfterViewInit, OnDestroy {
   confirmDelete(id: number) { 
     this.deletingId = id; 
     this.showDeleteDialog = true; 
-    this.cdr.detectChanges(); 
+    this.cdr.detectChanges();
   }
 
   async onDeleteConfirmed() {
