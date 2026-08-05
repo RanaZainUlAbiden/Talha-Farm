@@ -964,16 +964,54 @@ export class SalesOrdersComponent implements OnInit, OnDestroy {
       if (this.customerType === 'internal' && savedBillId && this.internalTargetFlockId) {
         for (const item of this.gridItems) {
           const desc = item.productName + ' × ' + item.quantity;
-          const expenseResult = await this.db.run(
-            'INSERT INTO expenses (flock_id, date, description, amount, module_type) VALUES (?,?,?,?,?)',
-            [this.internalTargetFlockId, new Date().toISOString().split('T')[0], desc, item.totalPrice, this.internalTargetModule]
-          );
-          if (expenseResult.lastId) {
-            await this.db.run(
-              'INSERT INTO internal_transfers (bill_id, expense_id, target_module, target_flock_id) VALUES (?,?,?,?)',
-              [savedBillId, expenseResult.lastId, this.internalTargetModule, this.internalTargetFlockId]
+          const todayDate = new Date().toISOString().split('T')[0];
+          
+          const productRes = await this.db.get('SELECT category FROM products WHERE product_id=?', [item.productId]);
+          const category = (productRes.success && productRes.data.length > 0) ? (productRes.data[0].category || '').toLowerCase() : '';
+          
+          let expenseId = null;
+
+          if (category === 'medicine') {
+            let traderRes = await this.db.get('SELECT trader_id FROM medicine_traders WHERE flock_id=? AND trader_name=?', [this.internalTargetFlockId, 'Internal Distribution']);
+            let traderId = null;
+            if (traderRes.success && traderRes.data.length > 0) {
+              traderId = traderRes.data[0].trader_id;
+            } else {
+              const newTrader = await this.db.run('INSERT INTO medicine_traders (flock_id, trader_name) VALUES (?, ?)', [this.internalTargetFlockId, 'Internal Distribution']);
+              traderId = newTrader.lastId;
+            }
+            if (traderId) {
+              await this.db.run('INSERT INTO medicine_entries (trader_id, flock_id, date, medicine_name, quantity, price_per_unit, total_amount) VALUES (?,?,?,?,?,?,?)', 
+                [traderId, this.internalTargetFlockId, todayDate, item.productName, item.quantity, item.unitPrice, item.totalPrice]);
+            }
+          } else if (category === 'feed') {
+            let traderRes = await this.db.get('SELECT trader_id FROM feed_traders WHERE flock_id=? AND trader_name=?', [this.internalTargetFlockId, 'Internal Distribution']);
+            let traderId = null;
+            if (traderRes.success && traderRes.data.length > 0) {
+              traderId = traderRes.data[0].trader_id;
+            } else {
+              const newTrader = await this.db.run('INSERT INTO feed_traders (flock_id, trader_name) VALUES (?, ?)', [this.internalTargetFlockId, 'Internal Distribution']);
+              traderId = newTrader.lastId;
+            }
+            if (traderId) {
+              await this.db.run('INSERT INTO feed_entries (trader_id, flock_id, date, feed_name, quantity, price_per_unit, total_amount) VALUES (?,?,?,?,?,?,?)', 
+                [traderId, this.internalTargetFlockId, todayDate, item.productName, item.quantity, item.unitPrice, item.totalPrice]);
+            }
+          } else if (category === 'vaccine' || category === 'vaccination') {
+             await this.db.run('INSERT INTO vaccinations (batch_id, flock_id, date, vaccine_name, dose, notes, done) VALUES (?,?,?,?,?,?,?)', 
+                [this.internalTargetModule === 'layer' ? this.internalTargetFlockId : null, this.internalTargetModule === 'broiler' ? this.internalTargetFlockId : null, todayDate, item.productName, '1', 'Internal Transfer', 1]);
+          } else {
+            const expenseResult = await this.db.run(
+              'INSERT INTO expenses (flock_id, date, description, amount, module_type) VALUES (?,?,?,?,?)',
+              [this.internalTargetFlockId, todayDate, desc, item.totalPrice, this.internalTargetModule]
             );
+            expenseId = expenseResult.lastId;
           }
+          
+          await this.db.run(
+            'INSERT INTO internal_transfers (bill_id, expense_id, target_module, target_flock_id) VALUES (?,?,?,?)',
+            [savedBillId, expenseId, this.internalTargetModule, this.internalTargetFlockId]
+          );
         }
       }
 

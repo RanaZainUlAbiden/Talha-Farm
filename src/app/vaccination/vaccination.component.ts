@@ -18,6 +18,7 @@ import { Subscription } from 'rxjs';
 export class VaccinationComponent implements OnInit, OnDestroy {
   currentFarm: any = null;
   batches: any[] = [];
+  flocks: any[] = [];
   vaccinations: any[] = [];
   pendingRows: any[] = [];
   editingId: number | null = null;
@@ -27,6 +28,7 @@ export class VaccinationComponent implements OnInit, OnDestroy {
   isSaving = false;
   isSavingAll = false;
   currentBatchId: number | null = null;
+  currentFlockId: number | null = null;
   private subs = new Subscription();
 
   get hasPendingRows(): boolean { return this.pendingRows.length > 0; }
@@ -50,33 +52,63 @@ export class VaccinationComponent implements OnInit, OnDestroy {
   ngOnInit() {
     this.currentFarm = this.authService.getCurrentFarm();
     this.loadData();
-    this.applyActiveBatch(this.flockService.getCurrentFlock());
+    this.applyActiveFlock(this.flockService.getCurrentFlock());
     this.subs.add(
-      this.flockService.currentFlock$.subscribe(flock => this.applyActiveBatch(flock))
+      this.flockService.currentFlock$.subscribe(flock => this.applyActiveFlock(flock))
     );
   }
 
   ngOnDestroy() { this.subs.unsubscribe(); }
 
-  private applyActiveBatch(flock: any) {
-    if (!flock?.batch_id) return;
-    const batchId = Number(flock.batch_id);
-    if (this.currentBatchId === batchId) return;
-    this.currentBatchId = batchId;
+  private applyActiveFlock(flock: any) {
+    if (!flock) return;
+    if (flock.batch_id) {
+      this.currentBatchId = Number(flock.batch_id);
+      this.currentFlockId = null;
+    } else if (flock.flock_id) {
+      this.currentFlockId = Number(flock.flock_id);
+      this.currentBatchId = null;
+    }
     this.cdr.detectChanges();
   }
 
   async loadData() {
     const br = await this.db.get(`SELECT * FROM batches WHERE farm_id = ? AND status='active'`, [this.currentFarm.farm_id]);
     this.batches = br.success ? br.data : [];
-    const vr = await this.db.get(`SELECT v.*, b.batch_name FROM vaccinations v JOIN batches b ON v.batch_id=b.batch_id WHERE b.farm_id=? ORDER BY v.date ASC`, [this.currentFarm.farm_id]);
+    
+    const fr = await this.db.get(`SELECT * FROM flocks WHERE farm_id = ? AND status='active'`, [this.currentFarm.farm_id]);
+    this.flocks = fr.success ? fr.data : [];
+    
+    // Fetch vaccinations for BOTH batches and flocks of this farm
+    const vr = await this.db.get(`
+      SELECT v.*, b.batch_name, f.flock_name 
+      FROM vaccinations v 
+      LEFT JOIN batches b ON v.batch_id = b.batch_id 
+      LEFT JOIN flocks f ON v.flock_id = f.flock_id 
+      WHERE (b.farm_id = ? OR f.farm_id = ?)
+      ORDER BY v.date ASC`, 
+      [this.currentFarm.farm_id, this.currentFarm.farm_id]);
     this.vaccinations = vr.success ? vr.data : [];
     this.cdr.detectChanges();
   }
 
-  getBatchName(id: number) { return this.batches.find(b => b.batch_id === id)?.batch_name || '—'; }
+  getTargetName(v: any) { 
+    if (v.flock_id) return this.flocks.find(f => f.flock_id === v.flock_id)?.flock_name || '—';
+    return this.batches.find(b => b.batch_id === v.batch_id)?.batch_name || '—'; 
+  }
 
-  makeNewRow() { return { batch_id: this.currentBatchId || this.batches[0]?.batch_id, date: new Date().toISOString().split('T')[0], vaccine_name: '', dose: '', notes: '', done: 0 }; }
+  makeNewRow() { 
+    return { 
+      batch_id: this.currentBatchId || null, 
+      flock_id: this.currentFlockId || null, 
+      date: new Date().toISOString().split('T')[0], 
+      vaccine_name: '', 
+      dose: '', 
+      notes: '', 
+      done: 0 
+    }; 
+  }
+  
   addPendingRow() { if (!this.isSaving) this.pendingRows.push(this.makeNewRow()); }
   addRowAfter(i: number) { this.pendingRows.splice(i + 1, 0, this.makeNewRow()); }
   removePendingRow(i: number) { this.pendingRows.splice(i, 1); }
@@ -85,9 +117,9 @@ export class VaccinationComponent implements OnInit, OnDestroy {
     if (!this.pendingRows.length || this.isSavingAll) return;
     this.isSavingAll = true;
     for (const row of this.pendingRows) {
-      if (!row.batch_id || !row.vaccine_name) continue;
-      await this.db.run(`INSERT INTO vaccinations (batch_id, date, vaccine_name, dose, notes, done) VALUES (?,?,?,?,?,?)`, 
-        [row.batch_id, row.date, row.vaccine_name, row.dose, row.notes, row.done ? 1 : 0]);
+      if ((!row.batch_id && !row.flock_id) || !row.vaccine_name) continue;
+      await this.db.run(`INSERT INTO vaccinations (batch_id, flock_id, date, vaccine_name, dose, notes, done) VALUES (?,?,?,?,?,?,?)`, 
+        [row.batch_id || null, row.flock_id || null, row.date, row.vaccine_name, row.dose, row.notes, row.done ? 1 : 0]);
     }
     this.pendingRows = [];
     this.isSavingAll = false;
@@ -96,10 +128,11 @@ export class VaccinationComponent implements OnInit, OnDestroy {
 
   cancelAllRows() { this.pendingRows = []; }
 
-  startEdit(v: any) { this.editingId = v.vaccination_id; this.editForm = { batch_id: v.batch_id, date: v.date, vaccine_name: v.vaccine_name, dose: v.dose, notes: v.notes, done: !!v.done }; }
+  startEdit(v: any) { this.editingId = v.vaccination_id; this.editForm = { batch_id: v.batch_id, flock_id: v.flock_id, date: v.date, vaccine_name: v.vaccine_name, dose: v.dose, notes: v.notes, done: !!v.done }; }
   cancelEdit() { this.editingId = null; }
   async saveEdit(id: number) {
-    await this.db.run(`UPDATE vaccinations SET batch_id=?, date=?, vaccine_name=?, dose=?, notes=?, done=? WHERE vaccination_id=?`, [this.editForm.batch_id, this.editForm.date, this.editForm.vaccine_name, this.editForm.dose, this.editForm.notes, this.editForm.done ? 1 : 0, id]);
+    await this.db.run(`UPDATE vaccinations SET batch_id=?, flock_id=?, date=?, vaccine_name=?, dose=?, notes=?, done=? WHERE vaccination_id=?`, 
+      [this.editForm.batch_id || null, this.editForm.flock_id || null, this.editForm.date, this.editForm.vaccine_name, this.editForm.dose, this.editForm.notes, this.editForm.done ? 1 : 0, id]);
     this.editingId = null; await this.loadData();
   }
 

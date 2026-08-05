@@ -3,6 +3,7 @@ import { FlockHealthResolver } from './shared/resolvers/flock-health.resolver';
 import { LedgerResolver } from './shared/resolvers/ledger.resolver';
 import { ExpensesResolver } from './shared/resolvers/expenses.resolver';
 import { MedicineResolver } from './shared/resolvers/medicine.resolver';
+import { FeedResolver } from './shared/resolvers/feed.resolver';
 import { SaleResolver } from './shared/resolvers/sale.resolver';
 import { IncomeResolver } from './shared/resolvers/income.resolver';
 import { BalanceResolver } from './shared/resolvers/balance.resolver';
@@ -70,6 +71,19 @@ export const routes: Routes = [
           import('./medicine/medicine.component')
             .then(m => m.MedicineComponent),
         resolve: { data: MedicineResolver }
+      },
+      {
+        path: 'feed',
+        loadComponent: () =>
+          import('./feed/feed.component')
+            .then(m => m.FeedComponent),
+        resolve: { data: FeedResolver }
+      },
+      {
+        path: 'vaccination',
+        loadComponent: () =>
+          import('./vaccination/vaccination.component')
+            .then(m => m.VaccinationComponent)
       },
       {
         path: 'sale',

@@ -18,6 +18,7 @@ export class DistributionReportComponent implements OnInit {
   products: any[] = [];
   purchases: any[] = [];
   sales: any[] = [];
+  salesReturns: any[] = [];
   expenses: any[] = [];
   customers: any[] = [];
   isGenerating = false;
@@ -29,6 +30,7 @@ export class DistributionReportComponent implements OnInit {
     inventory: true,
     purchases: true,
     sales: true,
+    returns: true,
     expenses: true,
     summary: true
   };
@@ -80,6 +82,20 @@ export class DistributionReportComponent implements OnInit {
     });
   }
 
+  get filteredReturns(): any[] {
+    if (!this.dateFrom && !this.dateTo) return this.salesReturns;
+    return this.salesReturns.filter((r: any) => {
+      const date = r.return_date ? new Date(r.return_date).setHours(0,0,0,0) : null;
+      if (!date) return false;
+      const from = this.dateFrom ? new Date(this.dateFrom).setHours(0,0,0,0) : null;
+      const to = this.dateTo ? new Date(this.dateTo).setHours(0,0,0,0) : null;
+      if (from && to) return date >= from && date <= to;
+      if (from) return date >= from;
+      if (to) return date <= to;
+      return true;
+    });
+  }
+
   get filteredExpenses(): any[] {
     if (!this.dateFrom && !this.dateTo) return this.expenses;
     return this.expenses.filter((e: any) => {
@@ -104,6 +120,10 @@ export class DistributionReportComponent implements OnInit {
 
   get totalPaidSales(): number {
     return this.filteredSales.reduce((sum: number, s: any) => sum + this.getBillPaidAmount(s), 0);
+  }
+
+  get totalReturns(): number {
+    return this.filteredReturns.reduce((sum: number, r: any) => sum + (Number(r.return_amount) || 0), 0);
   }
 
   get totalExpenses(): number {
@@ -143,6 +163,10 @@ export class DistributionReportComponent implements OnInit {
 
   get totalSalesCount(): number {
     return this.filteredSales.length;
+  }
+
+  get totalReturnsCount(): number {
+    return this.filteredReturns.length;
   }
 
   get totalExpensesCount(): number {
@@ -248,6 +272,16 @@ export class DistributionReportComponent implements OnInit {
       );
       this.sales = sa.success ? sa.data : [];
 
+      const returnsResult = await this.db.get(
+        `SELECT sr.*, b.bill_number, b.customer_name
+         FROM sales_returns sr
+         JOIN bills b ON b.bill_id = sr.bill_id
+         WHERE sr.farm_id = ?
+         ORDER BY sr.return_date DESC, sr.return_id DESC`,
+        [this.currentFarm.farm_id]
+      );
+      this.salesReturns = returnsResult.success ? returnsResult.data : [];
+
       // Load customers
       const customersResult = await this.db.getAllCustomersWithBalance(this.currentFarm.farm_id);
       this.customers = customersResult.success ? customersResult.data : [];
@@ -270,6 +304,7 @@ export class DistributionReportComponent implements OnInit {
       console.log(`Total Sales: Rs. ${this.totalSales.toLocaleString()}`);
       console.log(`Total Paid Sales: Rs. ${this.totalPaidSales.toLocaleString()}`);
       console.log(`Total Unpaid Sales: Rs. ${this.totalUnpaidSales.toLocaleString()}`);
+      console.log(`Total Returns: Rs. ${this.totalReturns.toLocaleString()}`);
       console.log(`Total Expenses: Rs. ${this.totalExpenses.toLocaleString()}`);
       console.log(`Inventory Value: Rs. ${this.totalInventoryValue.toLocaleString()}`);
 
@@ -372,6 +407,7 @@ export class DistributionReportComponent implements OnInit {
           ['Total Products', String(this.totalProducts)],
           ['Total Purchase Orders', String(this.totalPurchasesCount)],
           ['Total Sales Bills', String(this.totalSalesCount)],
+          ['Total Returns', 'Rs. ' + this.totalReturns.toLocaleString()],
           ['Total Expenses Count', String(this.totalExpensesCount)],
           ['Inventory Value (Stock × Cost)', 'Rs. ' + this.totalInventoryValue.toLocaleString()],
           ['Total Purchases', 'Rs. ' + this.totalPurchases.toLocaleString()],
@@ -533,6 +569,37 @@ export class DistributionReportComponent implements OnInit {
         doc.text(`Total Sales: Rs. ${this.totalSales.toLocaleString()}`, margin, finalY);
         doc.text(`Total Paid: Rs. ${this.totalPaidSales.toLocaleString()}`, margin, finalY + 6);
         doc.text(`Total Unpaid: Rs. ${this.totalUnpaidSales.toLocaleString()}`, margin, finalY + 12);
+      }
+
+      if (this.sections.returns && this.filteredReturns.length > 0) {
+        doc.addPage();
+        this.addPageHeader(doc, farmName, today, 'SALES RETURNS');
+
+        const returnsBody = this.filteredReturns.map(r => [
+          formatDate(r.return_date),
+          r.return_number || '—',
+          r.bill_number || '—',
+          r.customer_name || 'Walk-in',
+          'Rs. ' + (r.return_amount || 0).toLocaleString(),
+          'Rs. ' + (r.refund_amount || 0).toLocaleString(),
+          r.refund_method || 'cash'
+        ]);
+
+        autoTable(doc, {
+          startY: 35,
+          head: [['Date', 'Return #', 'Bill #', 'Customer', 'Amount', 'Refund', 'Method']],
+          body: returnsBody,
+          theme: 'striped',
+          headStyles: { fontStyle: 'bold', fontSize: 8, fillColor: [26, 92, 56], textColor: [255, 255, 255] },
+          bodyStyles: { fontSize: 8, textColor: B },
+          margin: { left: margin, right: margin }
+        });
+
+        const returnFinalY = (doc as any).lastAutoTable.finalY + 6;
+        doc.setFont('helvetica', 'bold');
+        doc.setFontSize(9);
+        doc.setTextColor(...B);
+        doc.text(`Total Returns: Rs. ${this.totalReturns.toLocaleString()}`, margin, returnFinalY);
       }
 
       // ── EXPENSES ───────────────────────────────────────────

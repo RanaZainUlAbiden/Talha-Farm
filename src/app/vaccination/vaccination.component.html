@@ -34,7 +34,7 @@
       <tbody>
         <tr *ngFor="let row of pendingRows; let i = index" class="pending-row">
           <td class="row-plus-cell"><button class="row-plus-btn" (click)="addRowAfter(i)">+</button></td>
-          <td><select class="inline-input" [(ngModel)]="row.batch_id"><option *ngFor="let b of batches" [value]="b.batch_id">{{ b.batch_name }}</option></select></td>
+          <td>{{ getTargetName(row) }}</td>
           <td><input class="inline-input" type="date" [(ngModel)]="row.date"/></td>
           <td><input class="inline-input" type="text" [(ngModel)]="row.vaccine_name" placeholder="Vaccine name"/></td>
           <td><input class="inline-input" type="text" [(ngModel)]="row.dose" placeholder="e.g. 0.5ml"/></td>
@@ -45,7 +45,7 @@
         <tr *ngFor="let v of vaccinations" [class.editing]="editingId === v.vaccination_id">
           <ng-container *ngIf="editingId !== v.vaccination_id">
             <td></td>
-            <td>{{ getBatchName(v.batch_id) }}</td>
+            <td>{{ getTargetName(v) }}</td>
             <td>{{ v.date | dateOnly }}</td>
             <td>{{ v.vaccine_name }}</td>
             <td>{{ v.dose || '—' }}</td>
@@ -58,7 +58,7 @@
           </ng-container>
           <ng-container *ngIf="editingId === v.vaccination_id">
             <td></td>
-            <td><select class="inline-input" [(ngModel)]="editForm.batch_id"><option *ngFor="let b of batches" [value]="b.batch_id">{{ b.batch_name }}</option></select></td>
+            <td>{{ getTargetName(editForm) }}</td>
             <td><input class="inline-input" type="date" [(ngModel)]="editForm.date"/></td>
             <td><input class="inline-input" type="text" [(ngModel)]="editForm.vaccine_name"/></td>
             <td><input class="inline-input" type="text" [(ngModel)]="editForm.dose"/></td>
