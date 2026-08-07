@@ -27,6 +27,9 @@ export class ReportComponent implements OnInit, OnDestroy {
   ledgerEntries: any[] = [];
   traders: any[] = [];
   medicineEntries: any[] = [];
+  feedTraders: any[] = [];
+  feedEntries: any[] = [];
+  vaccinations: any[] = [];
   sales: any[] = [];
   income: any[] = [];
   health: any[] = [];
@@ -39,6 +42,8 @@ export class ReportComponent implements OnInit, OnDestroy {
     expenses: true,
     ledgers: true,
     medicine: true,
+    feed: true,
+    vaccinations: true,
     sales: true,
     income: true,
     health: true,
@@ -81,6 +86,9 @@ export class ReportComponent implements OnInit, OnDestroy {
       this.ledgerEntries    = resolved.ledgerEntries    || [];
       this.traders          = resolved.traders          || [];
       this.medicineEntries  = resolved.medicineEntries  || [];
+      this.feedTraders      = resolved.feedTraders      || [];
+      this.feedEntries      = resolved.feedEntries      || [];
+      this.vaccinations     = resolved.vaccinations     || [];
       this.sales            = resolved.sales            || [];
       this.income           = resolved.income           || [];
       this.health           = resolved.health           || [];
@@ -109,6 +117,9 @@ export class ReportComponent implements OnInit, OnDestroy {
       this.ledgerEntries = [];
       this.traders = [];
       this.medicineEntries = [];
+      this.feedTraders = [];
+      this.feedEntries = [];
+      this.vaccinations = [];
       this.sales = [];
       this.income = [];
       this.health = [];
@@ -123,6 +134,9 @@ export class ReportComponent implements OnInit, OnDestroy {
       ledgerEntries,
       traders,
       medicineEntries,
+      feedTraders,
+      feedEntries,
+      vaccinations,
       sales,
       income,
       health
@@ -156,12 +170,26 @@ export class ReportComponent implements OnInit, OnDestroy {
         [flockId]
       ),
       this.db.get(
+        `SELECT * FROM feed_traders WHERE flock_id = ? ORDER BY trader_name ASC`,
+        [flockId]
+      ),
+      this.db.get(
+        `SELECT fe.*, ft.trader_name FROM feed_entries fe
+         JOIN feed_traders ft ON fe.trader_id = ft.trader_id
+         WHERE fe.flock_id = ? ORDER BY fe.date ASC`,
+        [flockId]
+      ),
+      this.db.get(
+        `SELECT * FROM vaccinations WHERE flock_id = ? ORDER BY date ASC`,
+        [flockId]
+      ),
+      this.db.get(
         `SELECT * FROM sales WHERE flock_id = ?
          ORDER BY date ASC`,
         [flockId]
       ),
       this.db.get(
-        `SELECT * FROM income WHERE flock_id = ?
+        `SELECT * FROM income WHERE flock_id = ? AND module_type = 'broiler'
          ORDER BY date ASC`,
         [flockId]
       ),
@@ -179,6 +207,9 @@ export class ReportComponent implements OnInit, OnDestroy {
     this.ledgerEntries = ledgerEntries.success ? ledgerEntries.data : [];
     this.traders = traders.success ? traders.data : [];
     this.medicineEntries = medicineEntries.success ? medicineEntries.data : [];
+    this.feedTraders = feedTraders.success ? feedTraders.data : [];
+    this.feedEntries = feedEntries.success ? feedEntries.data : [];
+    this.vaccinations = vaccinations.success ? vaccinations.data : [];
     this.sales = sales.success ? sales.data : [];
     this.income = income.success ? income.data : [];
     this.health = health.success ? health.data : [];
@@ -218,6 +249,12 @@ export class ReportComponent implements OnInit, OnDestroy {
   }
   getTraderTotal(traderId: number): number {
     return this.getTraderEntries(traderId).reduce((s, e) => s + (e.total_amount || 0), 0);
+  }
+  getFeedTraderEntries(traderId: number): any[] {
+    return this.feedEntries.filter(e => e.trader_id === traderId);
+  }
+  getFeedTraderTotal(traderId: number): number {
+    return this.getFeedTraderEntries(traderId).reduce((s, e) => s + (e.total_amount || 0), 0);
   }
 
   // ── PDF Generation ────────────────────────────────────────
@@ -299,6 +336,28 @@ export class ReportComponent implements OnInit, OnDestroy {
         doc.text(`Page ${pageNum} of ${totalPagesRef.val}`, pageWidth / 2, pageHeight - 4, { align: 'center' });
       };
 
+      // ── Background helper ─────────────────────────────────
+      let bgImgData: string | null = null;
+      let bgW = 0; let bgH = 0;
+      try {
+        bgImgData = await this.loadImageAsBase64('reportimage.png');
+        const bgProps = doc.getImageProperties(bgImgData);
+        bgW = 140; // a little large
+        bgH = (bgProps.height * bgW) / bgProps.width;
+      } catch {}
+
+      const drawBackground = () => {
+        if (bgImgData) {
+          doc.saveGraphicsState();
+          doc.setGState(new (doc as any).GState({ opacity: 0.1 }));
+          doc.addImage(bgImgData, 'PNG', (pageWidth - bgW) / 2, (pageHeight - bgH) / 2, bgW, bgH);
+          doc.restoreGraphicsState();
+        }
+      };
+
+      // Draw background on first page
+      drawBackground();
+
       // ════════════════════════════════════════════════════════
       // COVER PAGE
       // ════════════════════════════════════════════════════════
@@ -376,6 +435,7 @@ coverY += 8;
       const addPage = (title: string) => {
         if (isFirstSection || (pageHeight - y) < 80) {
           doc.addPage();
+          drawBackground();
           // Thin top border line
           doc.setDrawColor(...LGRAY);
           doc.setLineWidth(0.3);
@@ -489,6 +549,47 @@ coverY += 8;
           ]),
           [['', '', '', `${this.totalSaleWeight.toFixed(0)} kg`, '', this.totalSaleAmount.toLocaleString()]],
           5
+        );
+      }
+
+      // ════════════════════════════════════════════════════════
+      // FEED PAGES
+      // ════════════════════════════════════════════════════════
+      if (this.sections.feed) {
+        for (const trader of this.feedTraders) {
+          const entries = this.getFeedTraderEntries(trader.trader_id);
+          if (entries.length === 0) continue;
+          addPage(`Feed: ${trader.trader_name}`);
+          bwTable(
+            y,
+            [['Date', 'Feed', 'Qty', 'Price/Unit (Rs.)', 'Total (Rs.)']],
+            entries.map(e => [
+              formatDate(e.date),
+              e.feed_name || e.Feed_name,
+              e.quantity,
+              (e.price_per_unit || 0).toLocaleString(),
+              (e.total_amount   || 0).toLocaleString()
+            ]),
+            [['', '', '', 'Total', this.getFeedTraderTotal(trader.trader_id).toLocaleString()]],
+            4
+          );
+        }
+      }
+
+      // ════════════════════════════════════════════════════════
+      // VACCINATIONS
+      // ════════════════════════════════════════════════════════
+      if (this.sections.vaccinations && this.vaccinations.length > 0) {
+        addPage('Vaccinations');
+        bwTable(
+          y,
+          [['Date', 'Vaccine', 'Dose', 'Notes']],
+          this.vaccinations.map(v => [
+            formatDate(v.date),
+            v.vaccine_name || '—',
+            v.dose || '—',
+            v.notes || '—'
+          ])
         );
       }
 

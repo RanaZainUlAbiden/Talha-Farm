@@ -50,8 +50,8 @@
       <div class="sections-panel-header">
         <span class="sections-title">📋 Sections to Include in PDF</span>
         <div class="sections-bulk">
-          <button class="bulk-btn" (click)="sections.expenses=true; sections.ledgers=true; sections.medicine=true; sections.sales=true; sections.income=true; sections.health=true; sections.profitLoss=true; savePreferences()">All</button>
-          <button class="bulk-btn" (click)="sections.expenses=false; sections.ledgers=false; sections.medicine=false; sections.sales=false; sections.income=false; sections.health=false; sections.profitLoss=false; savePreferences()">None</button>
+          <button class="bulk-btn" (click)="sections.expenses=true; sections.ledgers=true; sections.medicine=true; sections.feed=true; sections.vaccinations=true; sections.sales=true; sections.income=true; sections.health=true; sections.profitLoss=true; savePreferences()">All</button>
+          <button class="bulk-btn" (click)="sections.expenses=false; sections.ledgers=false; sections.medicine=false; sections.feed=false; sections.vaccinations=false; sections.sales=false; sections.income=false; sections.health=false; sections.profitLoss=false; savePreferences()">None</button>
         </div>
       </div>
 
@@ -81,6 +81,24 @@
           <span class="checkbox-info">
             <span class="checkbox-label">Medicine</span>
             <span class="checkbox-meta">{{ traders.length }} traders</span>
+          </span>
+        </label>
+
+        <label class="section-checkbox" [class.checked]="sections.feed">
+          <input type="checkbox" [(ngModel)]="sections.feed" (change)="savePreferences()" />
+          <span class="checkbox-icon">🌾</span>
+          <span class="checkbox-info">
+            <span class="checkbox-label">Feed</span>
+            <span class="checkbox-meta">{{ feedTraders.length }} traders</span>
+          </span>
+        </label>
+
+        <label class="section-checkbox" [class.checked]="sections.vaccinations">
+          <input type="checkbox" [(ngModel)]="sections.vaccinations" (change)="savePreferences()" />
+          <span class="checkbox-icon">💉</span>
+          <span class="checkbox-info">
+            <span class="checkbox-label">Vaccinations</span>
+            <span class="checkbox-meta">{{ vaccinations.length }} records</span>
           </span>
         </label>
 

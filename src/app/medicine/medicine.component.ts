@@ -65,6 +65,10 @@ export class MedicineComponent implements OnInit, OnDestroy {
     return this.pendingRows.length > 0;
   }
 
+  get moduleType(): string {
+    return this.currentFlock?.batch_id ? 'layer' : 'broiler';
+  }
+
   get traderTotal(): number {
     return this.entries.reduce((sum, e) => sum + (e.total_amount || 0), 0);
   }
@@ -151,10 +155,10 @@ export class MedicineComponent implements OnInit, OnDestroy {
         COALESCE(SUM(e.total_amount), 0) as total
        FROM medicine_traders t
        LEFT JOIN medicine_entries e ON t.trader_id = e.trader_id
-       WHERE t.flock_id = ?
+       WHERE t.flock_id = ? AND t.module_type = ?
        GROUP BY t.trader_id
        ORDER BY t.trader_name ASC`,
-      [this.currentFlock.flock_id]
+      [this.currentFlock.flock_id, this.moduleType]
     );
     if (result.success) {
       this.traders = result.data;
@@ -191,8 +195,8 @@ export class MedicineComponent implements OnInit, OnDestroy {
 
     try {
       await this.db.run(
-        `INSERT INTO medicine_traders (flock_id, trader_name) VALUES (?, ?)`,
-        [this.currentFlock.flock_id, this.traderForm.trader_name.trim()]
+        `INSERT INTO medicine_traders (flock_id, trader_name, module_type) VALUES (?, ?, ?)`,
+        [this.currentFlock.flock_id, this.traderForm.trader_name.trim(), this.moduleType]
       );
       await this.loadTraders();
     } finally {
@@ -304,8 +308,8 @@ export class MedicineComponent implements OnInit, OnDestroy {
         await this.db.run(
           `INSERT INTO medicine_entries
             (trader_id, flock_id, date, medicine_name,
-             quantity, price_per_unit, total_amount)
-           VALUES (?, ?, ?, ?, ?, ?, ?)`,
+             quantity, price_per_unit, total_amount, module_type)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
           [
             this.selectedTrader.trader_id,
             this.currentFlock.flock_id,
@@ -313,7 +317,8 @@ export class MedicineComponent implements OnInit, OnDestroy {
             row.medicine_name,
             row.quantity,
             row.price_per_unit,
-            total
+            total,
+            this.moduleType
           ]
         );
         insertedCount++;

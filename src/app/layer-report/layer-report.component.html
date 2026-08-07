@@ -26,14 +26,15 @@
     <div class="summary-card"><div class="card-label">Total Eggs Collected</div><div class="card-value">{{ totalEggs | number }}</div></div>
     <div class="summary-card"><div class="card-label">Egg Sales</div><div class="card-value">Rs. {{ totalEggSales | number:'1.0-0' }}</div></div>
     <div class="summary-card"><div class="card-label">Total Mortality</div><div class="card-value">{{ totalMortality | number }}</div></div>
+    <div class="summary-card"><div class="card-label">{{ netProfitLoss >= 0 ? 'Net Profit' : 'Net Loss' }}</div><div class="card-value">Rs. {{ netProfitLoss | number:'1.0-0' }}</div></div>
   </div>
 
   <div class="sections-panel">
     <div class="sections-panel-header">
       <span class="sections-title">📋 Sections to Include in PDF</span>
       <div class="sections-bulk">
-        <button class="bulk-btn" (click)="sections.eggCollection=true; sections.eggSales=true; sections.vaccinations=true; sections.mortality=true; sections.summary=true; savePreferences()">All</button>
-        <button class="bulk-btn" (click)="sections.eggCollection=false; sections.eggSales=false; sections.vaccinations=false; sections.mortality=false; sections.summary=false; savePreferences()">None</button>
+        <button class="bulk-btn" (click)="sections.eggCollection=true; sections.eggSales=true; sections.expenses=true; sections.medicine=true; sections.feed=true; sections.vaccinations=true; sections.mortality=true; sections.income=true; sections.summary=true; savePreferences()">All</button>
+        <button class="bulk-btn" (click)="sections.eggCollection=false; sections.eggSales=false; sections.expenses=false; sections.medicine=false; sections.feed=false; sections.vaccinations=false; sections.mortality=false; sections.income=false; sections.summary=false; savePreferences()">None</button>
       </div>
     </div>
 
@@ -56,6 +57,33 @@
         </span>
       </label>
 
+      <label class="section-checkbox" [class.checked]="sections.expenses">
+        <input type="checkbox" [(ngModel)]="sections.expenses" (change)="savePreferences()" />
+        <span class="checkbox-icon">Rs</span>
+        <span class="checkbox-info">
+          <span class="checkbox-label">Expenses</span>
+          <span class="checkbox-meta">{{ filteredExpenses.length }} entries - Rs. {{ totalExpenses | number:'1.0-0' }}</span>
+        </span>
+      </label>
+
+      <label class="section-checkbox" [class.checked]="sections.medicine">
+        <input type="checkbox" [(ngModel)]="sections.medicine" (change)="savePreferences()" />
+        <span class="checkbox-icon">Med</span>
+        <span class="checkbox-info">
+          <span class="checkbox-label">Medicine</span>
+          <span class="checkbox-meta">{{ medicineTraders.length }} traders - Rs. {{ totalMedicineAmount | number:'1.0-0' }}</span>
+        </span>
+      </label>
+
+      <label class="section-checkbox" [class.checked]="sections.feed">
+        <input type="checkbox" [(ngModel)]="sections.feed" (change)="savePreferences()" />
+        <span class="checkbox-icon">🌾</span>
+        <span class="checkbox-info">
+          <span class="checkbox-label">Feed</span>
+          <span class="checkbox-meta">{{ feedTraders.length }} traders</span>
+        </span>
+      </label>
+
       <label class="section-checkbox" [class.checked]="sections.vaccinations">
         <input type="checkbox" [(ngModel)]="sections.vaccinations" (change)="savePreferences()" />
         <span class="checkbox-icon">💉</span>
@@ -71,6 +99,15 @@
         <span class="checkbox-info">
           <span class="checkbox-label">Mortality</span>
           <span class="checkbox-meta">{{ filteredMortalities.length }} records</span>
+        </span>
+      </label>
+
+      <label class="section-checkbox" [class.checked]="sections.income">
+        <input type="checkbox" [(ngModel)]="sections.income" (change)="savePreferences()" />
+        <span class="checkbox-icon">In</span>
+        <span class="checkbox-info">
+          <span class="checkbox-label">Income</span>
+          <span class="checkbox-meta">{{ filteredIncome.length }} entries - Rs. {{ totalIncome | number:'1.0-0' }}</span>
         </span>
       </label>
 

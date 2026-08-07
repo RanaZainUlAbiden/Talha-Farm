@@ -23,6 +23,9 @@ export class ReportResolver implements Resolve<any> {
         ledgerEntries,
         traders,
         medicineEntries,
+        feedTraders,
+        feedEntries,
+        vaccinations,
         sales,
         income,
         health
@@ -56,12 +59,28 @@ export class ReportResolver implements Resolve<any> {
           [flock.flock_id]
         ),
         this.db.get(
+          `SELECT * FROM feed_traders WHERE flock_id = ?
+           ORDER BY trader_name ASC`,
+          [flock.flock_id]
+        ),
+        this.db.get(
+          `SELECT fe.*, ft.trader_name FROM feed_entries fe
+           JOIN feed_traders ft ON fe.trader_id = ft.trader_id
+           WHERE fe.flock_id = ? ORDER BY fe.date ASC`,
+          [flock.flock_id]
+        ),
+        this.db.get(
+          `SELECT * FROM vaccinations
+           WHERE flock_id = ? ORDER BY date ASC`,
+          [flock.flock_id]
+        ),
+        this.db.get(
           `SELECT * FROM sales WHERE flock_id = ?
            ORDER BY date ASC`,
           [flock.flock_id]
         ),
         this.db.get(
-          `SELECT * FROM income WHERE flock_id = ?
+          `SELECT * FROM income WHERE flock_id = ? AND module_type = 'broiler'
            ORDER BY date ASC`,
           [flock.flock_id]
         ),
@@ -79,6 +98,9 @@ export class ReportResolver implements Resolve<any> {
         ledgerEntries: ledgerEntries.success ? ledgerEntries.data : [],
         traders: traders.success ? traders.data : [],
         medicineEntries: medicineEntries.success ? medicineEntries.data : [],
+        feedTraders: feedTraders.success ? feedTraders.data : [],
+        feedEntries: feedEntries.success ? feedEntries.data : [],
+        vaccinations: vaccinations.success ? vaccinations.data : [],
         sales: sales.success ? sales.data : [],
         income: income.success ? income.data : [],
         health: health.success ? health.data : [],

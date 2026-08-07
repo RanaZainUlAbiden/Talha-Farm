@@ -302,17 +302,40 @@ export class SalesOrdersComponent implements OnInit, OnDestroy {
     this.viewMode = 'edit';
     this.isEditMode = true;
     this.editingBillId = bill.bill_id;
-    this.customerType = bill.customer_id ? 'regular' : 'walkin';
-    this.selectedCustomerId = bill.customer_id || null;
-    this.paidAmount = bill.amount_paid;
-    this.lastCartSubtotal = bill.total_amount || 0;
     this.errorMessage = '';
+    this.lastCartSubtotal = bill.total_amount || 0;
     this.paymentMethod = bill.payment_type === 'bank' ? 'bank' : 'cash';
-    
-    if (this.selectedCustomerId) {
+
+    // ── FIX: Correctly restore customerType (internal must not map to walkin) ──
+    if (bill.payment_type === 'internal') {
+      this.customerType = 'internal';
+      this.selectedCustomerId = null;
+      this.paidAmount = 0;
+      // Restore internal transfer targets from the stored internal_transfers record
+      const transferRes = await this.db.get(
+        'SELECT * FROM internal_transfers WHERE bill_id = ? LIMIT 1',
+        [bill.bill_id]
+      );
+      if (transferRes.success && transferRes.data && transferRes.data.length > 0) {
+        const t = transferRes.data[0];
+        this.internalTargetModule = t.target_module || 'broiler';
+        this.internalTargetFlockId = t.target_flock_id || null;
+      } else {
+        this.internalTargetModule = 'broiler';
+        this.internalTargetFlockId = null;
+      }
+      await this.loadInternalTargets();
+    } else if (bill.customer_id) {
+      this.customerType = 'regular';
+      this.selectedCustomerId = bill.customer_id;
+      this.paidAmount = bill.amount_paid;
       await this.checkCustomerBank(this.selectedCustomerId, true);
+    } else {
+      this.customerType = 'walkin';
+      this.selectedCustomerId = null;
+      this.paidAmount = bill.amount_paid;
     }
-    
+
     const items = await this.db.get('SELECT * FROM bill_items WHERE bill_id=?', [bill.bill_id]);
     this.gridItems = items.success ? items.data.map((i: any) => ({
       productId: i.product_id,
@@ -320,9 +343,11 @@ export class SalesOrdersComponent implements OnInit, OnDestroy {
       quantity: i.quantity,
       unitPrice: i.unit_price,
       totalPrice: i.total_price,
-      itemId: i.item_id
+      itemId: i.item_id,
+      batches: [],
+      selectedBatchId: null
     })) : [];
-    
+
     this.cdr.detectChanges();
     this.onFormChange();
   }
@@ -366,7 +391,7 @@ export class SalesOrdersComponent implements OnInit, OnDestroy {
     
     if (type === 'internal') { 
       await this.loadInternalTargets(); 
-      this.paidAmount = 0; 
+      this.paidAmount = this.cartSubtotal; // same default as walkin
     } else if (type === 'walkin') { 
       this.paidAmount = this.cartSubtotal; 
     } else { 
@@ -596,8 +621,7 @@ export class SalesOrdersComponent implements OnInit, OnDestroy {
     return this.gridItems.reduce((s, i) => s + i.totalPrice, 0); 
   }
   
-  onPaidAmountChange() { 
-    if (this.customerType === 'walkin') this.paidAmount = this.cartSubtotal;
+  onPaidAmountChange() {
     this.lastCartSubtotal = this.cartSubtotal;
     this.onFormChange();
   }
@@ -616,17 +640,12 @@ export class SalesOrdersComponent implements OnInit, OnDestroy {
 
   private syncPaidAmountWithTotal(previousTotal: number = this.lastCartSubtotal) {
     const total = this.cartSubtotal;
-
-    if (this.customerType === 'internal') {
-      this.paidAmount = 0;
-    } else if (this.customerType === 'walkin') {
-      this.paidAmount = total;
-    } else if (!this.isEditMode && (this.paidAmount === previousTotal || this.paidAmount === 0)) {
+    // Always sync if user hadn't manually diverged
+    if (this.paidAmount === previousTotal || this.paidAmount === 0) {
       this.paidAmount = total;
     } else if (this.isEditMode && this.paidAmount === previousTotal) {
       this.paidAmount = total;
     }
-
     this.lastCartSubtotal = total;
   }
 
@@ -868,10 +887,7 @@ export class SalesOrdersComponent implements OnInit, OnDestroy {
       let bankDeductAmount = 0;
       let paymentType = 'cash';
       
-      if (this.customerType === 'internal') {
-        effectivePaid = 0;
-        paymentType = 'internal';
-      } else if (this.paymentMethod === 'bank' && this.selectedCustomerId) {
+      if (this.paymentMethod === 'bank' && this.selectedCustomerId) {
         paymentType = 'bank';
         effectivePaid = clampPaidAmount(this.paidAmount);
         bankDeductAmount = effectivePaid;

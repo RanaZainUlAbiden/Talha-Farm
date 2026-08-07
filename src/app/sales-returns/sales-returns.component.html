@@ -4,27 +4,41 @@
       <h3>Sales Returns</h3>
       <p class="subtitle">{{ currentFarm?.farm_name }}</p>
     </div>
-    <button class="btn-secondary" *ngIf="selectedBill" (click)="clearSelection()">Back to Bills</button>
+    <button class="btn-secondary" *ngIf="selectedBill" (click)="clearSelection()">
+      ← Back to Bills
+    </button>
   </div>
 
-  <div class="error-message" *ngIf="errorMessage">{{ errorMessage }}</div>
+  <!-- Alerts -->
+  <div class="alert alert-error" *ngIf="errorMessage">{{ errorMessage }}</div>
+  <div class="alert alert-success" *ngIf="successMessage && !selectedBill">{{ successMessage }}</div>
 
+  <!-- Loading -->
   <div class="loading-state" *ngIf="isLoading">
-    <p>Loading returns...</p>
+    <div class="spinner"></div>
+    <p>Loading data...</p>
   </div>
 
+  <!-- ═══ BILL LIST VIEW ════════════════════════════════════════ -->
   <ng-container *ngIf="!isLoading && !selectedBill">
+
     <div class="summary-grid">
       <div class="summary-card">
-        <span class="summary-label">Bills</span>
+        <span class="summary-label">Eligible Bills</span>
         <strong>{{ bills.length }}</strong>
       </div>
       <div class="summary-card">
-        <span class="summary-label">Returns</span>
+        <span class="summary-label">Total Returns</span>
         <strong>{{ returns.length }}</strong>
+      </div>
+      <div class="summary-card">
+        <span class="summary-label">Total Returned</span>
+        <strong>Rs. {{ totalReturnsAmount | number:'1.0-0' }}</strong>
       </div>
     </div>
 
+    <!-- Bills Table -->
+    <div class="section-title">Bills Available for Return</div>
     <div class="table-card">
       <table>
         <thead>
@@ -32,31 +46,46 @@
             <th>Bill #</th>
             <th>Date</th>
             <th>Customer</th>
-            <th>Total</th>
-            <th>Returned</th>
+            <th class="text-right">Total</th>
+            <th class="text-right">Paid</th>
+            <th class="text-right">Returned</th>
             <th>Status</th>
             <th>Action</th>
           </tr>
         </thead>
         <tbody>
           <tr *ngFor="let bill of bills">
-            <td class="strong">{{ bill.bill_number }}</td>
+            <td class="strong bill-num">{{ bill.bill_number }}</td>
             <td>{{ bill.bill_date | dateOnly }}</td>
-            <td>{{ bill.customer_name || 'Walk-in' }}</td>
-            <td class="amount">Rs. {{ bill.total_amount | number:'1.0-0' }}</td>
-            <td>Rs. {{ bill.returned_amount || 0 | number:'1.0-0' }}</td>
-            <td>{{ bill.status || 'completed' }}</td>
-            <td><button class="btn-primary" (click)="selectBill(bill)">Return</button></td>
+            <td>{{ bill.customer_name || '—' }}</td>
+            <td class="text-right amount">Rs. {{ bill.total_amount | number:'1.0-0' }}</td>
+            <td class="text-right">Rs. {{ bill.amount_paid | number:'1.0-0' }}</td>
+            <td class="text-right returned-amt">
+              {{ bill.returned_amount > 0 ? ('Rs. ' + (bill.returned_amount | number:'1.0-0')) : '—' }}
+            </td>
+            <td>
+              <span class="badge" [ngClass]="'badge-' + (bill.status || 'completed')">
+                {{ bill.status || 'completed' }}
+              </span>
+            </td>
+            <td>
+              <button class="btn-return"
+                [disabled]="bill.status === 'returned'"
+                (click)="selectBill(bill)">
+                ↩ Return
+              </button>
+            </td>
           </tr>
           <tr *ngIf="bills.length === 0">
-            <td colspan="7" class="empty-row">No bills found.</td>
+            <td colspan="8" class="empty-row">No bills available for return.</td>
           </tr>
         </tbody>
       </table>
     </div>
 
+    <!-- Return History -->
+    <div class="section-title" *ngIf="returns.length > 0">Return History</div>
     <div class="table-card history" *ngIf="returns.length > 0">
-      <h4>Return History</h4>
       <table>
         <thead>
           <tr>
@@ -64,80 +93,132 @@
             <th>Date</th>
             <th>Bill #</th>
             <th>Customer</th>
-            <th>Amount</th>
-            <th>Refund</th>
+            <th class="text-right">Return Amt</th>
+            <th class="text-right">Refund</th>
+            <th>Method</th>
+            <th>Reason</th>
           </tr>
         </thead>
         <tbody>
           <tr *ngFor="let r of returns">
-            <td class="strong">{{ r.return_number }}</td>
+            <td class="strong bill-num">{{ r.return_number }}</td>
             <td>{{ r.return_date | dateOnly }}</td>
             <td>{{ r.bill_number }}</td>
-            <td>{{ r.customer_name || 'Walk-in' }}</td>
-            <td class="amount">Rs. {{ r.return_amount | number:'1.0-0' }}</td>
-            <td>Rs. {{ r.refund_amount | number:'1.0-0' }} {{ r.refund_method }}</td>
+            <td>{{ r.customer_name || '—' }}</td>
+            <td class="text-right amount">Rs. {{ r.return_amount | number:'1.0-0' }}</td>
+            <td class="text-right">Rs. {{ r.refund_amount | number:'1.0-0' }}</td>
+            <td>
+              <span class="badge" [ngClass]="r.refund_method === 'bank' ? 'badge-bank' : 'badge-cash'">
+                {{ r.refund_method }}
+              </span>
+            </td>
+            <td class="reason-cell">{{ r.reason || '—' }}</td>
           </tr>
         </tbody>
       </table>
     </div>
+
   </ng-container>
 
+  <!-- ═══ RETURN FORM VIEW ══════════════════════════════════════ -->
   <ng-container *ngIf="!isLoading && selectedBill">
-    <div class="return-panel">
-      <div>
-        <h4>{{ selectedBill.bill_number }}</h4>
-        <p>{{ selectedBill.customer_name || 'Walk-in' }} · Rs. {{ selectedBill.total_amount | number:'1.0-0' }}</p>
+
+    <!-- Bill info bar -->
+    <div class="bill-info-bar">
+      <div class="bill-info-main">
+        <span class="bill-info-num">{{ selectedBill.bill_number }}</span>
+        <span class="bill-info-customer">{{ selectedBill.customer_name || 'Walk-in Customer' }}</span>
+        <span class="badge" [ngClass]="'badge-' + (selectedBill.status || 'completed')">
+          {{ selectedBill.status || 'completed' }}
+        </span>
       </div>
-      <div class="form-row">
-        <label>Date</label>
-        <input class="inline-input" type="date" [(ngModel)]="returnDate" />
-      </div>
-      <div class="form-row">
-        <label>Refund</label>
-        <select class="inline-input" [(ngModel)]="refundMethod">
-          <option value="cash">Cash</option>
-          <option value="bank">Bank</option>
-        </select>
+      <div class="bill-info-amounts">
+        <span>Original: <strong>Rs. {{ selectedBill.total_amount | number:'1.0-0' }}</strong></span>
+        <span>Paid: <strong>Rs. {{ selectedBill.amount_paid | number:'1.0-0' }}</strong></span>
       </div>
     </div>
 
+    <!-- Return controls -->
+    <div class="controls-bar">
+      <div class="control-group">
+        <label>Return Date</label>
+        <input type="date" class="ctrl-input" [(ngModel)]="returnDate" />
+      </div>
+      <div class="control-group">
+        <label>Refund Method</label>
+        <select class="ctrl-input" [(ngModel)]="refundMethod">
+          <option value="cash">Cash</option>
+          <option value="bank">Bank Transfer</option>
+        </select>
+      </div>
+      <div class="control-group reason-group">
+        <label>Reason (optional)</label>
+        <input type="text" class="ctrl-input" [(ngModel)]="reason" placeholder="e.g. Damaged goods, Wrong item..." />
+      </div>
+    </div>
+
+    <!-- Items table -->
     <div class="table-card">
       <table>
         <thead>
           <tr>
             <th>Product</th>
-            <th>Sold</th>
-            <th>Unit Price</th>
-            <th>Return Qty</th>
-            <th>Return Amount</th>
+            <th class="text-right">Sold Qty</th>
+            <th class="text-right">Unit Price</th>
+            <th class="text-center">Return Qty</th>
+            <th class="text-right">Return Amount</th>
           </tr>
         </thead>
         <tbody>
-          <tr *ngFor="let row of returnRows">
+          <tr *ngFor="let row of returnRows" [class.row-active]="(row.return_quantity || 0) > 0">
             <td class="strong">{{ row.product_name }}</td>
-            <td>{{ row.sold_quantity | number }}</td>
-            <td>Rs. {{ row.unit_price | number:'1.0-0' }}</td>
-            <td>
-              <input class="inline-input" type="number" min="0" [max]="row.sold_quantity" [(ngModel)]="row.return_quantity" placeholder="Qty" />
+            <td class="text-right">{{ row.sold_quantity | number }}</td>
+            <td class="text-right">Rs. {{ row.unit_price | number:'1.2-2' }}</td>
+            <td class="text-center">
+              <input
+                class="qty-input"
+                type="number"
+                min="0"
+                [max]="row.sold_quantity"
+                [(ngModel)]="row.return_quantity"
+                placeholder="0"
+              />
             </td>
-            <td class="amount">Rs. {{ getRowReturnAmount(row) | number:'1.0-0' }}</td>
+            <td class="text-right amount">
+              {{ getRowReturnAmount(row) > 0 ? ('Rs. ' + (getRowReturnAmount(row) | number:'1.0-0')) : '—' }}
+            </td>
           </tr>
           <tr *ngIf="returnRows.length === 0">
-            <td colspan="5" class="empty-row">This bill has no remaining items to return.</td>
+            <td colspan="5" class="empty-row">All items in this bill have already been returned.</td>
           </tr>
         </tbody>
       </table>
     </div>
 
-    <div class="return-summary">
-      <label>Reason</label>
-      <input class="inline-input reason" [(ngModel)]="reason" placeholder="Optional note" />
-      <div>Total Return: <strong>Rs. {{ totalReturnAmount | number:'1.0-0' }}</strong></div>
-      <div>New Bill Total: <strong>Rs. {{ newBillTotal | number:'1.0-0' }}</strong></div>
-      <div>Refund Due: <strong>Rs. {{ refundDue | number:'1.0-0' }}</strong></div>
-      <button class="btn-primary" [disabled]="isSaving || totalReturnAmount <= 0" (click)="saveReturn()">
-        {{ isSaving ? 'Saving...' : 'Save Return' }}
+    <!-- Summary footer -->
+    <div class="return-summary-bar">
+      <div class="summary-numbers">
+        <div class="sumrow">
+          <span>Total Return Amount</span>
+          <strong class="amount">Rs. {{ totalReturnAmount | number:'1.0-0' }}</strong>
+        </div>
+        <div class="sumrow">
+          <span>New Bill Total</span>
+          <strong>Rs. {{ newBillTotal | number:'1.0-0' }}</strong>
+        </div>
+        <div class="sumrow" *ngIf="refundDue > 0">
+          <span>Refund Due</span>
+          <strong class="refund-due">Rs. {{ refundDue | number:'1.0-0' }}</strong>
+        </div>
+      </div>
+      <button
+        class="btn-save"
+        [disabled]="isSaving || totalReturnAmount <= 0"
+        (click)="saveReturn()">
+        <span *ngIf="!isSaving">✔ Save Return</span>
+        <span *ngIf="isSaving">Saving...</span>
       </button>
     </div>
+
   </ng-container>
 </div>
