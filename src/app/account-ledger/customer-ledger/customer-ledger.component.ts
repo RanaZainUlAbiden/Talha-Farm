@@ -246,53 +246,77 @@ export class CustomerLedgerComponent implements OnInit {
       // 🔥 FIX: apply the payment to the actual bill(s) FIRST. This is the
       // real, authoritative change — everything else (ledger entry, balance
       // recalculation) is derived from this and must happen after it.
-      if (this.selectedBillId) {
-        const billResult = await this.db.get(
-          'SELECT total_amount, amount_paid FROM bills WHERE bill_id = ?',
-          [this.selectedBillId]
-        );
-        if (billResult.success && billResult.data && billResult.data.length > 0) {
-          const bill = billResult.data[0];
-          const currentPaid = bill.amount_paid || 0;
-          const totalAmount = bill.total_amount || 0;
-          const newPaid = Math.min(currentPaid + this.paymentAmount, totalAmount);
+      //
+      // If a specific bill was selected, pay that one first — but if the
+      // entered amount is larger than that bill's outstanding balance
+      // (e.g. the form was left at its default "total balance" prefill),
+      // any leftover is distributed FIFO across the customer's other
+      // unpaid bills instead of being silently discarded. This guarantees
+      // the full paymentAmount always lands on real bills, matching the
+      // credit amount that gets written to the ledger below.
+      let remaining = this.paymentAmount;
 
+      const payOrder = this.selectedBillId
+        ? [
+            ...this.unpaidBills.filter(b => b.bill_id === this.selectedBillId),
+            ...this.unpaidBills.filter(b => b.bill_id !== this.selectedBillId)
+          ]
+        : this.unpaidBills;
+
+      for (const bill of payOrder) {
+        if (remaining <= 0) break;
+        const currentPaid = bill.amount_paid || 0;
+        const totalAmount = bill.total_amount || 0;
+        const outstanding = totalAmount - currentPaid;
+
+        if (outstanding > 0) {
+          const payAmount = Math.min(remaining, outstanding);
+          const newPaid = currentPaid + payAmount;
           await this.db.run(
             'UPDATE bills SET amount_paid = ? WHERE bill_id = ?',
-            [newPaid, this.selectedBillId]
+            [newPaid, bill.bill_id]
           );
-        }
-      } else {
-        // Distribute payment across unpaid bills, oldest first (FIFO)
-        let remaining = this.paymentAmount;
-
-        for (const bill of this.unpaidBills) {
-          if (remaining <= 0) break;
-          const currentPaid = bill.amount_paid || 0;
-          const totalAmount = bill.total_amount || 0;
-          const outstanding = totalAmount - currentPaid;
-
-          if (outstanding > 0) {
-            const payAmount = Math.min(remaining, outstanding);
-            const newPaid = currentPaid + payAmount;
-            await this.db.run(
-              'UPDATE bills SET amount_paid = ? WHERE bill_id = ?',
-              [newPaid, bill.bill_id]
-            );
-            remaining -= payAmount;
-          }
+          remaining -= payAmount;
         }
       }
 
       // Log to customer_ledger for the audit trail / PDF statement.
       // This is display-only now — it no longer feeds outstanding_balance.
-      await this.db.addCustomerLedgerEntry({
-        customer_id: this.selectedCustomer.customer_id,
-        transaction_date: this.paymentDate,
-        description: this.paymentNote || 'Payment received',
-        credit: this.paymentAmount,
-        reference_type: 'payment'
-      });
+      //
+      // 🔥 FIX: tag each entry with the bill_id it was actually applied to
+      // (matching the same distribution used above), so that if Sales
+      // Orders later edits that bill and regenerates its ledger entries
+      // (which deletes by reference_id), this payment gets replaced
+      // instead of surviving as an untagged, double-counted duplicate.
+      if (this.selectedBillId) {
+        await this.db.addCustomerLedgerEntry({
+          customer_id: this.selectedCustomer.customer_id,
+          transaction_date: this.paymentDate,
+          description: this.paymentNote || 'Payment received',
+          credit: this.paymentAmount,
+          reference_type: 'payment',
+          reference_id: this.selectedBillId
+        });
+      } else {
+        // Distributed across multiple bills — log one tagged entry per bill actually paid.
+        let remainingForLog = this.paymentAmount;
+        for (const bill of this.unpaidBills) {
+          if (remainingForLog <= 0) break;
+          const outstanding = (bill.total_amount || 0) - (bill.amount_paid || 0);
+          if (outstanding > 0) {
+            const payAmount = Math.min(remainingForLog, outstanding);
+            await this.db.addCustomerLedgerEntry({
+              customer_id: this.selectedCustomer.customer_id,
+              transaction_date: this.paymentDate,
+              description: this.paymentNote || 'Payment received',
+              credit: payAmount,
+              reference_type: 'payment',
+              reference_id: bill.bill_id
+            });
+            remainingForLog -= payAmount;
+          }
+        }
+      }
 
       // 🔥 FIX: recompute AFTER bills are updated, since the balance is
       // now derived from bills.amount_paid vs bills.total_amount

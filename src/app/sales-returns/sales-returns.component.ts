@@ -291,7 +291,7 @@ export class SalesReturnsComponent implements OnInit {
     if (remaining > 0) {
       const batches = await this.db.getBatchesByProduct(row.product_id, this.currentFarm.farm_id);
       if (batches.success && batches.data && batches.data.length > 0) {
-        const target = batches.data.find((b: any) => b.status === 'active' || b.status === 'expiring')
+        const target = batches.data.find((b: any) => b.calculated_status === 'active' || b.calculated_status === 'expiring')
           || batches.data[0];
         const newQty = (Number(target.quantity) || 0) + remaining;
         await this.db.updateBatch(target.batch_id, { quantity: newQty, status: 'active' });
@@ -382,36 +382,120 @@ export class SalesReturnsComponent implements OnInit {
       : null;
     if (!transfer) return;
 
-    // Delete all old expenses linked to this bill's internal transfers
+    // 🔥 FIX: clean up whichever table each transfer actually points at
+    // (medicine_entries / feed_entries / vaccinations / expenses), same
+    // logic as cleanupInternalTransfers() in sales-orders.component.ts.
+    // The old version here only checked expense_id, which is null for
+    // medicine/feed/vaccination transfers — leaving those rows orphaned
+    // and then miscategorizing the return as a generic expense.
     const oldTransfers = await this.db.get(
-      'SELECT expense_id FROM internal_transfers WHERE bill_id = ?',
+      'SELECT * FROM internal_transfers WHERE bill_id = ?',
       [billId]
     );
     for (const row of oldTransfers.success ? oldTransfers.data : []) {
-      if (row.expense_id) {
+      const targetType = row.target_type || (row.expense_id ? 'expense' : null);
+      const refId = row.reference_id || row.expense_id;
+
+      if (targetType === 'medicine' && refId) {
+        await this.db.run('DELETE FROM medicine_entries WHERE entry_id = ?', [refId]);
+      } else if (targetType === 'feed' && refId) {
+        await this.db.run('DELETE FROM feed_entries WHERE entry_id = ?', [refId]);
+      } else if (targetType === 'vaccination' && refId) {
+        await this.db.run('DELETE FROM vaccinations WHERE vaccination_id = ?', [refId]);
+      } else if (row.expense_id) {
         await this.db.run('DELETE FROM expenses WHERE expense_id = ?', [row.expense_id]);
       }
     }
     // Remove old internal_transfer rows
     await this.db.run('DELETE FROM internal_transfers WHERE bill_id = ?', [billId]);
 
-    // Re-create expenses for remaining bill items
+    // 🔥 FIX: re-create each remaining bill item in ITS OWN category table,
+    // not always as a generic expense — otherwise every returned
+    // medicine/feed/vaccination item permanently loses its category.
     const itemsResult = await this.db.get(
       'SELECT * FROM bill_items WHERE bill_id = ?',
       [billId]
     );
+
     for (const item of itemsResult.success ? itemsResult.data : []) {
-      const expenseResult = await this.db.run(
-        'INSERT INTO expenses (flock_id, date, description, amount, module_type) VALUES (?, ?, ?, ?, ?)',
-        [transfer.target_flock_id, this.returnDate,
-         `${item.product_name} x ${item.quantity}`, item.total_price, transfer.target_module]
-      );
-      if (expenseResult.success && expenseResult.lastId) {
-        await this.db.run(
-          'INSERT INTO internal_transfers (bill_id, expense_id, target_module, target_flock_id) VALUES (?, ?, ?, ?)',
-          [billId, expenseResult.lastId, transfer.target_module, transfer.target_flock_id]
+      const productRes = item.product_id
+        ? await this.db.get('SELECT category FROM products WHERE product_id = ?', [item.product_id])
+        : { success: false, data: [] };
+      const category = (productRes.success && productRes.data.length > 0)
+        ? (productRes.data[0].category || '').toLowerCase()
+        : '';
+
+      let expenseId = null;
+      let targetType = 'expense';
+      let referenceId = null;
+
+      if (category === 'medicine') {
+        targetType = 'medicine';
+        let traderRes = await this.db.get(
+          'SELECT trader_id FROM medicine_traders WHERE flock_id=? AND module_type=? AND trader_name=?',
+          [transfer.target_flock_id, transfer.target_module, 'Internal Distribution']
         );
+        let traderId = traderRes.success && traderRes.data.length > 0 ? traderRes.data[0].trader_id : null;
+        if (!traderId) {
+          const newTrader = await this.db.run(
+            'INSERT INTO medicine_traders (flock_id, trader_name, module_type) VALUES (?, ?, ?)',
+            [transfer.target_flock_id, 'Internal Distribution', transfer.target_module]
+          );
+          traderId = newTrader.lastId;
+        }
+        if (traderId) {
+          const entryResult = await this.db.run(
+            'INSERT INTO medicine_entries (trader_id, flock_id, date, medicine_name, quantity, price_per_unit, total_amount, module_type) VALUES (?,?,?,?,?,?,?,?)',
+            [traderId, transfer.target_flock_id, this.returnDate, item.product_name, item.quantity, item.unit_price, item.total_price, transfer.target_module]
+          );
+          referenceId = entryResult.lastId;
+        }
+      } else if (category === 'feed') {
+        targetType = 'feed';
+        let traderRes = await this.db.get(
+          'SELECT trader_id FROM feed_traders WHERE flock_id=? AND module_type=? AND trader_name=?',
+          [transfer.target_flock_id, transfer.target_module, 'Internal Distribution']
+        );
+        let traderId = traderRes.success && traderRes.data.length > 0 ? traderRes.data[0].trader_id : null;
+        if (!traderId) {
+          const newTrader = await this.db.run(
+            'INSERT INTO feed_traders (flock_id, trader_name, module_type) VALUES (?, ?, ?)',
+            [transfer.target_flock_id, 'Internal Distribution', transfer.target_module]
+          );
+          traderId = newTrader.lastId;
+        }
+        if (traderId) {
+          const entryResult = await this.db.run(
+            'INSERT INTO feed_entries (trader_id, flock_id, date, feed_name, quantity, price_per_unit, total_amount, module_type) VALUES (?,?,?,?,?,?,?,?)',
+            [traderId, transfer.target_flock_id, this.returnDate, item.product_name, item.quantity, item.unit_price, item.total_price, transfer.target_module]
+          );
+          referenceId = entryResult.lastId;
+        }
+      } else if (category === 'vaccine' || category === 'vaccination') {
+        targetType = 'vaccination';
+        const vaccResult = await this.db.run(
+          'INSERT INTO vaccinations (batch_id, flock_id, date, vaccine_name, dose, notes, done) VALUES (?,?,?,?,?,?,?)',
+          [
+            transfer.target_module === 'layer' ? transfer.target_flock_id : null,
+            transfer.target_module === 'broiler' ? transfer.target_flock_id : null,
+            this.returnDate, item.product_name, '1', 'Internal Transfer (adjusted after return)', 1
+          ]
+        );
+        referenceId = vaccResult.lastId;
+      } else {
+        targetType = 'expense';
+        const expenseResult = await this.db.run(
+          'INSERT INTO expenses (flock_id, date, description, amount, module_type) VALUES (?, ?, ?, ?, ?)',
+          [transfer.target_flock_id, this.returnDate, `${item.product_name} x ${item.quantity}`, item.total_price, transfer.target_module]
+        );
+        expenseId = expenseResult.lastId;
+        referenceId = expenseId;
       }
+
+      await this.db.run(
+        'INSERT INTO internal_transfers (bill_id, expense_id, target_module, target_flock_id, target_type, reference_id) VALUES (?,?,?,?,?,?)',
+        [billId, expenseId, transfer.target_module, transfer.target_flock_id, targetType, referenceId]
+      );
     }
   }
 }

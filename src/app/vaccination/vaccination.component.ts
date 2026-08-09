@@ -51,10 +51,13 @@ export class VaccinationComponent implements OnInit, OnDestroy {
 
   ngOnInit() {
     this.currentFarm = this.authService.getCurrentFarm();
-    this.loadData();
     this.applyActiveFlock(this.flockService.getCurrentFlock());
+    this.loadData();
     this.subs.add(
-      this.flockService.currentFlock$.subscribe(flock => this.applyActiveFlock(flock))
+      this.flockService.currentFlock$.subscribe(flock => {
+        this.applyActiveFlock(flock);
+        this.loadData();
+      })
     );
   }
 
@@ -75,20 +78,35 @@ export class VaccinationComponent implements OnInit, OnDestroy {
   async loadData() {
     const br = await this.db.get(`SELECT * FROM batches WHERE farm_id = ? AND status='active'`, [this.currentFarm.farm_id]);
     this.batches = br.success ? br.data : [];
-    
+
     const fr = await this.db.get(`SELECT * FROM flocks WHERE farm_id = ? AND status='active'`, [this.currentFarm.farm_id]);
     this.flocks = fr.success ? fr.data : [];
-    
-    // Fetch vaccinations for BOTH batches and flocks of this farm
-    const vr = await this.db.get(`
-      SELECT v.*, b.batch_name, f.flock_name 
-      FROM vaccinations v 
-      LEFT JOIN batches b ON v.batch_id = b.batch_id 
-      LEFT JOIN flocks f ON v.flock_id = f.flock_id 
-      WHERE (b.farm_id = ? OR f.farm_id = ?)
-      ORDER BY v.date ASC`, 
-      [this.currentFarm.farm_id, this.currentFarm.farm_id]);
-    this.vaccinations = vr.success ? vr.data : [];
+
+    if (this.currentBatchId) {
+      // Layer view — only vaccinations for this specific batch
+      const vr = await this.db.get(`
+        SELECT v.*, b.batch_name, f.flock_name
+        FROM vaccinations v
+        LEFT JOIN batches b ON v.batch_id = b.batch_id
+        LEFT JOIN flocks f ON v.flock_id = f.flock_id
+        WHERE v.batch_id = ?
+        ORDER BY v.date ASC`,
+        [this.currentBatchId]);
+      this.vaccinations = vr.success ? vr.data : [];
+    } else if (this.currentFlockId) {
+      // Broiler view — only vaccinations for this specific flock
+      const vr = await this.db.get(`
+        SELECT v.*, b.batch_name, f.flock_name
+        FROM vaccinations v
+        LEFT JOIN batches b ON v.batch_id = b.batch_id
+        LEFT JOIN flocks f ON v.flock_id = f.flock_id
+        WHERE v.flock_id = ?
+        ORDER BY v.date ASC`,
+        [this.currentFlockId]);
+      this.vaccinations = vr.success ? vr.data : [];
+    } else {
+      this.vaccinations = [];
+    }
     this.cdr.detectChanges();
   }
 

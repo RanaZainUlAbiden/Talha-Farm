@@ -105,7 +105,10 @@
             <input type="file" #fileInput hidden accept="image/*" (change)="onFileSelected($event, row)"/>
             <div class="photo-thumb" *ngIf="row.receipt_image" (click)="openImage(row.receipt_image)"><img [src]="row.receipt_image"/></div>
           </td>
-          <td><button class="btn-remove-row" (click)="removePendingRow(i)">✕</button></td>
+<td>
+            <button class="btn-print-small" type="button" (click)="printDriverReceipt(row)" title="Print driver receipt">🖨️</button>
+            <button class="btn-remove-row" (click)="removePendingRow(i)">✕</button>
+          </td>
         </tr>
       </tbody>
     </table>
@@ -147,6 +150,7 @@
               <td><span class="payment-badge" [class.cash]="sale.payment_type==='cash'" [class.credit]="sale.payment_type==='credit'">{{ sale.payment_type || 'cash' }}</span></td>
               <td><div class="photo-thumb" *ngIf="sale.receipt_image" (click)="openImage(sale.receipt_image)"><img [src]="sale.receipt_image" title="Click to view full"/></div></td>
               <td class="actions">
+                <button class="btn-print-small" [disabled]="isSaving" (click)="printDriverReceipt(sale)" title="Print driver receipt">🖨️</button>
                 <button class="btn-edit" [disabled]="isSaving" (click)="startEdit(sale)">Edit</button>
                 <button class="btn-delete" [disabled]="isSaving" (click)="confirmDelete(sale.sale_id)">Delete</button>
               </td>
@@ -157,7 +161,7 @@
               <td><input class="inline-input" type="text" [(ngModel)]="editForm.vehicle_number"/></td>
               <td><input class="inline-input" type="text" [(ngModel)]="editForm.driver_name" placeholder="Driver name"/></td>
               <td><input class="inline-input" type="text" [(ngModel)]="editForm.driver_phone" placeholder="Driver phone"/></td>
-              <td><select class="inline-input" [(ngModel)]="editForm.broker_id"><option *ngFor="let broker of brokers" [ngValue]="broker.broker_id">{{ broker.broker_name }}</option></select></td>
+              <td><select class="inline-input" [(ngModel)]="editForm.broker_id"><option [ngValue]="null">Select Broker</option><option *ngFor="let broker of brokers" [ngValue]="broker.broker_id">{{ broker.broker_name }}</option></select></td>
               <td><input class="inline-input" type="number" [(ngModel)]="editForm.empty_weight"/></td>
               <td><input class="inline-input" type="number" [(ngModel)]="editForm.load_weight"/></td>
               <td class="highlight">{{ getEditBirdWeight() | number:'1.0-0' }}</td>

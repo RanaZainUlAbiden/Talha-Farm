@@ -28,6 +28,7 @@ export class InventoryComponent implements OnInit, AfterViewInit, OnDestroy {
   errorMessage = '';
   isLoading = true;
   searchTerm: string = '';
+  private skipRestoreState = false;
 
   // ── CATEGORIES ────────────────────────────────────────────
  readonly DEFAULT_CATEGORIES = [];
@@ -44,7 +45,7 @@ dbCategories: any[] = [];
 }
   newRow = { 
     product_name: '', 
-    category: 'medicine', 
+    category: '',
     unit: '', 
     current_stock: null as number | null,
     expiry_date: '',
@@ -60,8 +61,12 @@ dbCategories: any[] = [];
   private readonly FORM_KEY = 'inventory_form_state';
 
   get paginatedProducts() {
-    const start = (this.currentPage - 1) * this.pageSize;
     const dataToShow = this.searchTerm ? this.filteredProducts : this.products;
+    const maxPage = Math.max(1, Math.ceil(dataToShow.length / this.pageSize));
+    if (this.currentPage > maxPage) {
+      this.currentPage = maxPage;
+    }
+    const start = (this.currentPage - 1) * this.pageSize;
     return dataToShow.slice(start, start + this.pageSize);
   }
 
@@ -86,6 +91,7 @@ await this.loadCategories();
     this.route.queryParams.subscribe(params => {
       if (params['category']) {
         this.searchTerm = params['category'];
+        this.skipRestoreState = true;
         if (this.products.length > 0) {
           this.filterProducts();
         }
@@ -175,7 +181,11 @@ await this.loadCategories();
   const name = this.newCategoryName.trim().toLowerCase();
   if (!name) { this.categoryError = 'Category name is required.'; return; }
   if (this.allCategories.includes(name)) { this.categoryError = 'Category already exists.'; return; }
-  await this.db.addCategory(this.currentFarm.farm_id, name);
+  const result = await this.db.addCategory(this.currentFarm.farm_id, name);
+  if (!result || !result.success) {
+    this.categoryError = 'Failed to save category. It may already exist.';
+    return;
+  }
   await this.loadCategories();
   this.closeCategoryModal();
 }
@@ -225,8 +235,10 @@ await this.loadCategories();
         await this.loadBatchDataForProduct(product);
       }
       
-      // 🔥 Restore state AFTER products are loaded
-      this.restoreState();
+      // 🔥 Restore state AFTER products are loaded (unless a category filter was passed in)
+      if (!this.skipRestoreState) {
+        this.restoreState();
+      }
       
       if (this.searchTerm) this.filterProducts();
       this.cdr.detectChanges();
@@ -319,7 +331,7 @@ await this.loadCategories();
     this.showNewRow = true; 
     this.newRow = { 
       product_name: '', 
-      category: 'medicine', 
+      category: '',
       unit: '', 
       current_stock: null,
       expiry_date: '', 
@@ -340,6 +352,10 @@ await this.loadCategories();
   async saveNewRow() {
     if (!this.newRow.product_name.trim()) { 
       this.errorMessage = 'Product name is required'; 
+      return; 
+    }
+    if (!this.newRow.category) { 
+      this.errorMessage = 'Please select a category'; 
       return; 
     }
     
@@ -425,7 +441,15 @@ await this.loadCategories();
     try {
       await this.db.run(
         'UPDATE products SET product_name=?, category=?, unit=?, min_stock_alert=?, cost_price=?, selling_price=? WHERE product_id=?',
-        [this.editForm.product_name, this.editForm.category, this.editForm.unit, this.editForm.min_stock_alert, this.editForm.cost_price, this.editForm.selling_price, id]
+        [
+          this.editForm.product_name,
+          this.editForm.category,
+          this.editForm.unit,
+          this.editForm.min_stock_alert || 0,
+          this.editForm.cost_price || 0,
+          this.editForm.selling_price || 0,
+          id
+        ]
       );
       this.editingId = null;
       await this.loadProducts();

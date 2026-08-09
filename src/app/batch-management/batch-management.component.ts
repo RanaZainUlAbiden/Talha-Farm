@@ -149,6 +149,12 @@ export class BatchManagementComponent implements OnInit {
     this.showDeleteDialog = false;
     this.errorMessage = '';
     try {
+      // Explicitly clean up dependent records — FK cascades are not guaranteed
+      // to be enforced (PRAGMA foreign_keys may be OFF), so do this manually.
+      await this.db.run('DELETE FROM egg_collection WHERE batch_id = ?', [batchId]);
+      await this.db.run('DELETE FROM egg_sales WHERE batch_id = ?', [batchId]);
+      await this.db.run('DELETE FROM vaccinations WHERE batch_id = ?', [batchId]);
+      await this.db.run('DELETE FROM layer_mortality WHERE batch_id = ?', [batchId]);
       await this.db.run('DELETE FROM batches WHERE batch_id = ?', [batchId]);
       this.batches = this.batches.filter(b => b.batch_id !== batchId);
       this.flockService.notifyBatchesChanged();

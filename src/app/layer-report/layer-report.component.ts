@@ -155,10 +155,10 @@ export class LayerReportComponent implements OnInit, OnDestroy {
       this.db.get('SELECT v.*, b.batch_name FROM vaccinations v JOIN batches b ON v.batch_id = b.batch_id WHERE b.farm_id = ? ORDER BY v.date DESC', [farmId]),
       this.db.get('SELECT lm.*, b.batch_name FROM layer_mortality lm JOIN batches b ON lm.batch_id = b.batch_id WHERE b.farm_id = ? ORDER BY lm.date DESC', [farmId]),
       this.db.get('SELECT e.*, b.batch_name FROM expenses e JOIN batches b ON e.flock_id = b.batch_id WHERE b.farm_id = ? AND e.module_type = ? ORDER BY e.date DESC', [farmId, 'layer']),
-      this.db.get('SELECT * FROM medicine_traders WHERE flock_id IN (SELECT batch_id FROM batches WHERE farm_id = ?)', [farmId]),
-      this.db.get('SELECT me.*, mt.trader_name, b.batch_name FROM medicine_entries me JOIN medicine_traders mt ON me.trader_id = mt.trader_id JOIN batches b ON me.flock_id = b.batch_id WHERE b.farm_id = ? ORDER BY me.date DESC', [farmId]),
-      this.db.get('SELECT * FROM feed_traders WHERE flock_id IN (SELECT batch_id FROM batches WHERE farm_id = ?)', [farmId]),
-      this.db.get('SELECT fe.*, ft.trader_name, b.batch_name FROM feed_entries fe JOIN feed_traders ft ON fe.trader_id = ft.trader_id JOIN batches b ON fe.flock_id = b.batch_id WHERE b.farm_id = ? ORDER BY fe.date DESC', [farmId]),
+      this.db.get('SELECT * FROM medicine_traders WHERE flock_id IN (SELECT batch_id FROM batches WHERE farm_id = ?) AND module_type = ?', [farmId, 'layer']),
+      this.db.get('SELECT me.*, mt.trader_name, b.batch_name FROM medicine_entries me JOIN medicine_traders mt ON me.trader_id = mt.trader_id JOIN batches b ON me.flock_id = b.batch_id WHERE b.farm_id = ? AND me.module_type = ? ORDER BY me.date DESC', [farmId, 'layer']),
+      this.db.get('SELECT * FROM feed_traders WHERE flock_id IN (SELECT batch_id FROM batches WHERE farm_id = ?) AND module_type = ?', [farmId, 'layer']),
+      this.db.get('SELECT fe.*, ft.trader_name, b.batch_name FROM feed_entries fe JOIN feed_traders ft ON fe.trader_id = ft.trader_id JOIN batches b ON fe.flock_id = b.batch_id WHERE b.farm_id = ? AND fe.module_type = ? ORDER BY fe.date DESC', [farmId, 'layer']),
       this.db.get('SELECT i.*, b.batch_name FROM income i JOIN batches b ON i.flock_id = b.batch_id WHERE b.farm_id = ? AND i.module_type = ? ORDER BY i.date DESC', [farmId, 'layer'])
     ]);
 

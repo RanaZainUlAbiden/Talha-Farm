@@ -155,6 +155,10 @@ export class DistributionBatchComponent implements OnInit {
 
     try {
       if (this.isEditing && this.editingBatchId) {
+        const existingBatch = this.batches.find(b => b.batch_id === this.editingBatchId);
+        const oldQuantity = existingBatch ? Number(existingBatch.quantity) : 0;
+        const newQuantity = Number(this.batchForm.quantity);
+
         const result = await this.db.updateBatch(this.editingBatchId, {
           manufacturing_date: this.batchForm.manufacturing_date,
           expiry_date: this.batchForm.expiry_date,
@@ -164,6 +168,18 @@ export class DistributionBatchComponent implements OnInit {
         
         if (!result.success) {
           this.errorMessage = 'Failed to update batch: ' + result.error;
+        } else if (newQuantity !== oldQuantity) {
+          // Keep an audit trail for manual quantity edits, same as every
+          // other place batch quantity changes.
+          await this.db.addBatchTransaction(
+            this.editingBatchId,
+            this.productId,
+            'adjustment',
+            Math.abs(newQuantity - oldQuantity),
+            new Date().toISOString().split('T')[0],
+            null,
+            `Manual batch edit (${newQuantity > oldQuantity ? '+' : ''}${newQuantity - oldQuantity})`
+          );
         }
       } else {
         const result = await this.db.addBatch({

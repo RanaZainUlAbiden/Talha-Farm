@@ -98,19 +98,26 @@
           <div class="psf">
             <span>🔍</span>
             <input
+              #productSearchInput
               class="psf-input"
               type="text"
               placeholder="Search & add product..."
               [(ngModel)]="productSearchTerm"
               (input)="onProductSearch()"
+              (keydown)="onProductSearchKeydown($event)"
               autocomplete="off"
             />
           </div>
           <div class="pdrop" *ngIf="showProductDropdown">
-            <div class="pd-row" *ngFor="let p of productOptions" (click)="selectProductOption(p)">
+            <div class="pd-row"
+                 *ngFor="let p of productOptions; let i = index"
+                 [style.background]="i === highlightedIndex ? '#eef6ff' : ''"
+                 [style.opacity]="(p.calculated_stock || 0) <= 0 ? 0.5 : 1"
+                 (mouseenter)="highlightedIndex = i"
+                 (click)="selectProductOption(p)">
               <span class="pd-name">{{ p.product_name }}</span>
               <span class="pd-price">Rs. {{ p.selling_price | number:'1.0-0' }}</span>
-              <span class="pd-stock">{{ p.calculated_stock || 0 }} left</span>
+              <span class="pd-stock">{{ (p.calculated_stock || 0) <= 0 ? 'Out of stock' : (p.calculated_stock + ' left') }}</span>
             </div>
             <div class="pdrop-empty" *ngIf="productOptions.length === 0">No products found</div>
           </div>
@@ -144,12 +151,13 @@
                        style="font-size: 10px; color: #888; margin-top: 4px;">No active batches</div>
                 </td>
                 <td>
-                  <div class="stepper">
-                    <button class="st-btn" (click)="item.quantity = item.quantity > 1 ? item.quantity - 1 : 1; recalcItem(item)">−</button>
-                    <input class="st-input" type="number" [(ngModel)]="item.quantity" (input)="recalcItem(item)"/>
-                    <button class="st-btn" (click)="item.quantity = item.quantity + 1; recalcItem(item)">+</button>
-                  </div>
-                </td>
+  <div class="stepper">
+    <button class="st-btn" (click)="item.quantity = item.quantity > 1 ? item.quantity - 1 : 1; recalcItem(item)">−</button>
+    <input class="st-input" type="number" [(ngModel)]="item.quantity"
+               (input)="recalcItem(item)" placeholder="1" min="1"/>
+    <button class="st-btn" (click)="item.quantity = item.quantity + 1; recalcItem(item)">+</button>
+  </div>
+</td>
                 <td>
                   <input class="price-input" type="number" [(ngModel)]="item.unitPrice" (input)="recalcItem(item)"/>
                 </td>
@@ -197,7 +205,7 @@
               <option value="layer">🥚 Layer</option>
             </select>
             <label style="font-size:12px;color:#888;display:block;margin-bottom:4px">Target Flock/Batch</label>
-            <select class="inline-input" [(ngModel)]="internalTargetFlockId" (change)="onFormChange()">
+            <select class="inline-input" [(ngModel)]="internalTargetFlockId" (change)="errorMessage=''; onFormChange()">
               <option [ngValue]="null">Select Flock/Batch</option>
               <option *ngFor="let f of internalFlocks" [ngValue]="f.flock_id || f.batch_id">
                 {{ f.flock_name || f.batch_name }}
@@ -262,6 +270,8 @@
             Exact amount!
           </div>
         </div>
+
+        <div class="error-message" *ngIf="errorMessage" style="margin-bottom:8px;">{{ errorMessage }}</div>
 
         <!-- ── Actions ────────────────────────────────────── -->
         <div class="rblock r-actions">

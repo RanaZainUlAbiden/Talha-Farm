@@ -150,7 +150,20 @@ db.run(`CREATE TABLE IF NOT EXISTS activation (machine_id TEXT PRIMARY KEY, acti
 
 db.run(`CREATE TABLE IF NOT EXISTS categories (category_id INTEGER PRIMARY KEY AUTOINCREMENT, farm_id INTEGER NOT NULL, category_name TEXT NOT NULL, FOREIGN KEY (farm_id) REFERENCES farms(farm_id));`);
 
-db.run(`CREATE UNIQUE INDEX IF NOT EXISTS idx_categories_farm_name ON categories(farm_id, category_name);`);
+try {
+  // Remove any pre-existing duplicate categories before the unique index is created,
+  // otherwise the CREATE UNIQUE INDEX below throws and every statement after it
+  // in this function silently never runs.
+  db.run(`
+    DELETE FROM categories WHERE category_id NOT IN (
+      SELECT MIN(category_id) FROM categories GROUP BY farm_id, category_name
+    )
+  `);
+} catch (e) {}
+
+try {
+  db.run(`CREATE UNIQUE INDEX IF NOT EXISTS idx_categories_farm_name ON categories(farm_id, category_name);`);
+} catch (e) {}
 
   // ── Sales Returns Module ───────────────────────────────────
   db.run(`CREATE TABLE IF NOT EXISTS sales_returns (
@@ -189,6 +202,8 @@ db.run(`CREATE UNIQUE INDEX IF NOT EXISTS idx_categories_farm_name ON categories
     expense_id INTEGER,
     target_module TEXT,
     target_flock_id INTEGER,
+    target_type TEXT,
+    reference_id INTEGER,
     created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
     FOREIGN KEY (bill_id) REFERENCES bills(bill_id)
   );`)
@@ -356,6 +371,9 @@ async function initializeDatabase() {
     `CREATE TABLE vaccinations (vaccination_id INTEGER PRIMARY KEY AUTOINCREMENT, batch_id INTEGER, flock_id INTEGER, date DATE NOT NULL, vaccine_name TEXT NOT NULL, dose TEXT, notes TEXT, done INTEGER DEFAULT 0, FOREIGN KEY (batch_id) REFERENCES batches(batch_id), FOREIGN KEY (flock_id) REFERENCES flocks(flock_id))`,
     `INSERT INTO vaccinations (vaccination_id, batch_id, date, vaccine_name, dose, notes, done) SELECT vaccination_id, batch_id, date, vaccine_name, dose, notes, done FROM vaccinations_old`,
     `DROP TABLE vaccinations_old`,
+    `ALTER TABLE internal_transfers ADD COLUMN target_type TEXT`,
+    `ALTER TABLE internal_transfers ADD COLUMN reference_id INTEGER`,
+    `ALTER TABLE purchase_orders ADD COLUMN batch_id INTEGER`,
   ]
   
   for (const sql of alterStatements) {
@@ -539,6 +557,25 @@ function runQuery(sql, params = []) {
   }
 }
 
+
+function getLastInsertId(tableName, pk) {
+  try {
+    const idResult = db.exec('SELECT last_insert_rowid() as id')
+    if (idResult && idResult.length > 0 && idResult[0].values && idResult[0].values.length > 0) {
+      const id = idResult[0].values[0][0]
+      if (id) return id
+    }
+  } catch (e) {}
+  try {
+    const fallback = db.exec(`SELECT MAX(${pk}) as id FROM ${tableName}`)
+    if (fallback && fallback.length > 0 && fallback[0].values && fallback[0].values.length > 0) {
+      return fallback[0].values[0][0]
+    }
+  } catch (e) {}
+  return null
+}
+
+
 // =============================================
 // GET QUERY (SELECT)
 // =============================================
@@ -612,7 +649,7 @@ function addBatch(batchData) {
     stmt.run([product_id, farm_id, finalBatchCode, manufacturing_date, expiry_date, quantity, purchase_price || 0])
     stmt.free()
     
-    const batchId = db.exec('SELECT last_insert_rowid() as id')[0].values[0][0]
+    const batchId = getLastInsertId('product_batches', 'batch_id')
     addBatchTransaction(batchId, product_id, 'purchase', quantity, new Date().toISOString().split('T')[0], null, 'Initial batch addition')
     
     return { success: true, batch_id: batchId, batch_code: finalBatchCode }
@@ -668,7 +705,7 @@ function getTotalStock(productId) {
     const stmt = db.prepare(`
       SELECT COALESCE(SUM(quantity), 0) as total 
       FROM product_batches 
-      WHERE product_id = ? AND status IN ('active', 'expiring') AND quantity > 0
+      WHERE product_id = ? AND quantity > 0 AND expiry_date >= date('now')
     `)
     stmt.bind([productId])
     const result = stmt.getAsObject()
@@ -691,7 +728,6 @@ function getExpiringBatches(farmId, monthsThreshold = 3) {
       FROM product_batches b
       INNER JOIN products p ON b.product_id = p.product_id
       WHERE b.farm_id = ? 
-        AND b.status IN ('active', 'expiring')
         AND b.quantity > 0
         AND julianday(b.expiry_date) - julianday('now') <= (? * 30.44)
         AND julianday(b.expiry_date) - julianday('now') > 0
@@ -715,7 +751,6 @@ function hasExpiringBatches(productId, monthsThreshold = 3) {
       SELECT COUNT(*) as count
       FROM product_batches
       WHERE product_id = ?
-        AND status IN ('active', 'expiring')
         AND quantity > 0
         AND julianday(expiry_date) - julianday('now') <= (? * 30.44)
         AND julianday(expiry_date) - julianday('now') > 0
@@ -1171,7 +1206,7 @@ function addBankAccount(account) {
     stmt.run([farm_id, customer_id || null, bank_name, account_number || null, account_holder || null, opening_balance, opening_balance])
     stmt.free()
     
-    const bankId = db.exec('SELECT last_insert_rowid() as id')[0].values[0][0]
+    const bankId = getLastInsertId('bank_accounts', 'bank_id')
     
     if (opening_balance > 0) {
       const entry = {
@@ -1375,7 +1410,7 @@ function addExpense(expense) {
     `)
     stmt.run([farm_id, transaction_date, description, amount, category || null, payment_type || 'cash', notes || null])
     stmt.free()
-    const expenseId = db.exec('SELECT last_insert_rowid() as id')[0].values[0][0]
+    const expenseId = getLastInsertId('expense_ledger', 'expense_id')
     return { success: true, expense_id: expenseId }
   } catch (err) {
     return { success: false, error: err.message }

@@ -144,7 +144,7 @@ export class ReportComponent implements OnInit, OnDestroy {
       this.db.get(
         `SELECT e.*, l.ledger_name FROM expenses e
          LEFT JOIN ledgers l ON e.ledger_id = l.ledger_id
-         WHERE e.flock_id = ? ORDER BY e.date ASC`,
+         WHERE e.flock_id = ? AND e.module_type = 'broiler' ORDER BY e.date ASC`,
         [flockId]
       ),
       this.db.get(
@@ -159,24 +159,24 @@ export class ReportComponent implements OnInit, OnDestroy {
         [flockId]
       ),
       this.db.get(
-        `SELECT * FROM medicine_traders WHERE flock_id = ?
+        `SELECT * FROM medicine_traders WHERE flock_id = ? AND module_type = 'broiler'
          ORDER BY trader_name ASC`,
         [flockId]
       ),
       this.db.get(
         `SELECT me.*, mt.trader_name FROM medicine_entries me
          JOIN medicine_traders mt ON me.trader_id = mt.trader_id
-         WHERE me.flock_id = ? ORDER BY me.date ASC`,
+         WHERE me.flock_id = ? AND me.module_type = 'broiler' ORDER BY me.date ASC`,
         [flockId]
       ),
       this.db.get(
-        `SELECT * FROM feed_traders WHERE flock_id = ? ORDER BY trader_name ASC`,
+        `SELECT * FROM feed_traders WHERE flock_id = ? AND module_type = 'broiler' ORDER BY trader_name ASC`,
         [flockId]
       ),
       this.db.get(
         `SELECT fe.*, ft.trader_name FROM feed_entries fe
          JOIN feed_traders ft ON fe.trader_id = ft.trader_id
-         WHERE fe.flock_id = ? ORDER BY fe.date ASC`,
+         WHERE fe.flock_id = ? AND fe.module_type = 'broiler' ORDER BY fe.date ASC`,
         [flockId]
       ),
       this.db.get(
@@ -184,7 +184,7 @@ export class ReportComponent implements OnInit, OnDestroy {
         [flockId]
       ),
       this.db.get(
-        `SELECT * FROM sales WHERE flock_id = ?
+        `SELECT * FROM sales WHERE flock_id = ? AND module_type = 'broiler'
          ORDER BY date ASC`,
         [flockId]
       ),

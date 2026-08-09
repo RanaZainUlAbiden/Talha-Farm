@@ -69,6 +69,10 @@ export class MedicineComponent implements OnInit, OnDestroy {
     return this.currentFlock?.batch_id ? 'layer' : 'broiler';
   }
 
+  get targetId(): number | null {
+    return this.currentFlock?.flock_id || this.currentFlock?.batch_id || null;
+  }
+
   get traderTotal(): number {
     return this.entries.reduce((sum, e) => sum + (e.total_amount || 0), 0);
   }
@@ -112,7 +116,7 @@ export class MedicineComponent implements OnInit, OnDestroy {
       this.traders = resolved.traders || [];
 
       const cached = this.pendingState.getState('MedicineComponent');
-      if (cached && cached.flockId === this.currentFlock?.flock_id) {
+      if (cached && cached.flockId === this.targetId) {
         this.pendingRows = cached.pendingRows || [];
         if (cached.selectedTraderId) {
           this.selectedTrader = this.traders.find((t: any) => t.trader_id === cached.selectedTraderId) || null;
@@ -141,7 +145,7 @@ export class MedicineComponent implements OnInit, OnDestroy {
 
   ngOnDestroy() {
     this.pendingState.saveState('MedicineComponent', {
-      flockId: this.currentFlock?.flock_id,
+      flockId: this.targetId,
       pendingRows: this.pendingRows,
       selectedTraderId: this.selectedTrader?.trader_id
     });
@@ -158,7 +162,7 @@ export class MedicineComponent implements OnInit, OnDestroy {
        WHERE t.flock_id = ? AND t.module_type = ?
        GROUP BY t.trader_id
        ORDER BY t.trader_name ASC`,
-      [this.currentFlock.flock_id, this.moduleType]
+      [this.targetId, this.moduleType]
     );
     if (result.success) {
       this.traders = result.data;
@@ -196,7 +200,7 @@ export class MedicineComponent implements OnInit, OnDestroy {
     try {
       await this.db.run(
         `INSERT INTO medicine_traders (flock_id, trader_name, module_type) VALUES (?, ?, ?)`,
-        [this.currentFlock.flock_id, this.traderForm.trader_name.trim(), this.moduleType]
+        [this.targetId, this.traderForm.trader_name.trim(), this.moduleType]
       );
       await this.loadTraders();
     } finally {
@@ -312,7 +316,7 @@ export class MedicineComponent implements OnInit, OnDestroy {
            VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
           [
             this.selectedTrader.trader_id,
-            this.currentFlock.flock_id,
+            this.targetId,
             row.date,
             row.medicine_name,
             row.quantity,

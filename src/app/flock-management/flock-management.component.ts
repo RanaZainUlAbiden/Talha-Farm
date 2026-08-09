@@ -204,6 +204,9 @@ export class FlockManagementComponent implements OnInit {
         await this.db.run('DELETE FROM ledgers          WHERE flock_id = ?', [this.deletingId]);
         await this.db.run('DELETE FROM medicine_entries WHERE flock_id = ?', [this.deletingId]);
         await this.db.run('DELETE FROM medicine_traders WHERE flock_id = ?', [this.deletingId]);
+        await this.db.run('DELETE FROM feed_entries     WHERE flock_id = ?', [this.deletingId]);
+        await this.db.run('DELETE FROM feed_traders     WHERE flock_id = ?', [this.deletingId]);
+        await this.db.run('DELETE FROM vaccinations     WHERE flock_id = ?', [this.deletingId]);
         await this.db.run('DELETE FROM sales            WHERE flock_id = ?', [this.deletingId]);
         await this.db.run('DELETE FROM income           WHERE flock_id = ?', [this.deletingId]);
         await this.db.run('DELETE FROM balance          WHERE flock_id = ?', [this.deletingId]);

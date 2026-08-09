@@ -340,20 +340,28 @@ export class PurchaseOrdersComponent implements OnInit, OnDestroy {
 
   async saveAllRows() {
     if (!this.pendingRows.length || this.isSavingAll) return;
+
+    // Validate every row up front. If any row is invalid, stop before saving
+    // anything so we never silently drop a row the user typed data into.
+    for (let i = 0; i < this.pendingRows.length; i++) {
+      const row = this.pendingRows[i];
+      if (!row.product_id || row.quantity === null || row.quantity === undefined || row.cost_price === null || row.cost_price === undefined) {
+        this.errorMessage = `Row ${i + 1}: please fill in product, quantity and cost price.`;
+        this.cdr.detectChanges();
+        return;
+      }
+      if (Number(row.quantity) < 0 || Number(row.cost_price) < 0) {
+        this.errorMessage = `Row ${i + 1}: quantity and cost must not be negative.`;
+        this.cdr.detectChanges();
+        return;
+      }
+    }
+
     this.isSavingAll = true;
     this.errorMessage = '';
     
     try {
       for (const row of this.pendingRows) {
-        if (!row.product_id || !row.quantity || !row.cost_price) {
-          this.errorMessage = 'Please fill all fields for each row';
-          continue;
-        }
-        if (Number(row.quantity) < 0 || Number(row.cost_price) < 0) {
-          this.errorMessage = 'Quantity and cost must be positive';
-          continue;
-        }
-        
         const totalAmount = row.quantity * row.cost_price;
         const paymentType = row.payment_type || 'credit';
         
@@ -368,7 +376,10 @@ export class PurchaseOrdersComponent implements OnInit, OnDestroy {
           if (row.supplier_id && isValidPurchaseId) {
             await this.addToSupplierLedger(row.supplier_id, purchaseId, totalAmount, paymentType, row.notes);
           }
-          await this.updateInventoryWithBatch(row.product_id, row.quantity, row.cost_price);
+          const batchResult = await this.updateInventoryWithBatch(row.product_id, row.quantity, row.cost_price);
+          if (batchResult && batchResult.success && batchResult.batch_id && isValidPurchaseId) {
+            await this.db.run('UPDATE purchase_orders SET batch_id = ? WHERE purchase_id = ?', [batchResult.batch_id, purchaseId]);
+          }
         } else {
           console.error('❌ Failed to save purchase:', result.error);
           this.errorMessage = 'Failed to save purchase: ' + result.error;
@@ -409,7 +420,8 @@ export class PurchaseOrdersComponent implements OnInit, OnDestroy {
       notes: o.notes,
       old_product_id: o.product_id,
       old_quantity: o.quantity,
-      old_supplier_id: o.supplier_id
+      old_supplier_id: o.supplier_id,
+      batch_id: o.batch_id ?? null
     }; 
     this.cdr.detectChanges();
   }
@@ -430,9 +442,43 @@ export class PurchaseOrdersComponent implements OnInit, OnDestroy {
       const paymentType = this.editForm.payment_type || 'credit';
       const isPaid = paymentType?.toLowerCase() === 'cash';
       
+      let linkedBatchId: number | null = this.editForm.batch_id ?? null;
+      const productChanged = Number(this.editForm.product_id) !== Number(existing.product_id);
+
+      if (productChanged) {
+        // The old linked batch belongs to the old product — remove this order's
+        // stock from it, then create a fresh batch for the new product.
+        if (linkedBatchId) {
+          await this.adjustLinkedBatch(linkedBatchId, -Number(existing.quantity), existing.product_id);
+        } else {
+          await this.deductFromBatches(existing.product_id, Number(existing.quantity));
+        }
+        const newBatchResult = await this.updateInventoryWithBatch(this.editForm.product_id, this.editForm.quantity, this.editForm.cost_price);
+        linkedBatchId = newBatchResult && newBatchResult.success ? newBatchResult.batch_id : null;
+      } else {
+        const diff = Number(this.editForm.quantity) - Number(existing.quantity);
+
+        if (linkedBatchId) {
+          // Keep the linked batch's cost in sync with this order, then apply
+          // the quantity delta directly to it instead of guessing via FIFO.
+          await this.db.updateBatch(linkedBatchId, { purchase_price: this.editForm.cost_price });
+          if (diff !== 0) {
+            await this.adjustLinkedBatch(linkedBatchId, diff, this.editForm.product_id);
+          }
+        } else {
+          // Legacy order with no linked batch — fall back to the old FIFO behavior.
+          if (diff > 0) {
+            const newBatchResult = await this.updateInventoryWithBatch(this.editForm.product_id, diff, this.editForm.cost_price);
+            linkedBatchId = newBatchResult && newBatchResult.success ? newBatchResult.batch_id : null;
+          } else if (diff < 0) {
+            await this.deductFromBatches(this.editForm.product_id, Math.abs(diff));
+          }
+        }
+      }
+
       await this.db.run(
-        'UPDATE purchase_orders SET supplier_id=?, product_id=?, date=?, quantity=?, cost_price=?, total_amount=?, payment_type=?, notes=? WHERE purchase_id=?',
-        [newSupplierId, this.editForm.product_id, this.editForm.date, this.editForm.quantity, this.editForm.cost_price, newTotal, paymentType, this.editForm.notes, id]
+        'UPDATE purchase_orders SET supplier_id=?, product_id=?, date=?, quantity=?, cost_price=?, total_amount=?, payment_type=?, notes=?, batch_id=? WHERE purchase_id=?',
+        [newSupplierId, this.editForm.product_id, this.editForm.date, this.editForm.quantity, this.editForm.cost_price, newTotal, paymentType, this.editForm.notes, linkedBatchId, id]
       );
       
       if (oldSupplierId !== newSupplierId) {
@@ -457,14 +503,6 @@ export class PurchaseOrdersComponent implements OnInit, OnDestroy {
         );
       }
       
-      const diff = Number(this.editForm.quantity) - Number(existing.quantity);
-      
-      if (diff > 0) {
-        await this.updateInventoryWithBatch(this.editForm.product_id, diff, this.editForm.cost_price);
-      } else if (diff < 0) {
-        await this.deductFromBatches(this.editForm.product_id, Math.abs(diff));
-      }
-      
       this.editingId = null;
       await this.loadData();
       
@@ -475,13 +513,15 @@ export class PurchaseOrdersComponent implements OnInit, OnDestroy {
     }
   }
 
+  
+
   async deductFromBatches(productId: number, quantity: number) {
     try {
       const batchesResult = await this.db.getBatchesByProduct(productId, this.currentFarm.farm_id);
       if (!batchesResult.success || !batchesResult.data) return;
       
       const activeBatches = batchesResult.data
-        .filter((b: any) => (b.status === 'active' || b.status === 'expiring') && b.quantity > 0)
+        .filter((b: any) => (b.calculated_status === 'active' || b.calculated_status === 'expiring') && b.quantity > 0)
         .sort((a: any, b: any) => a.expiry_date.localeCompare(b.expiry_date));
       
       let remaining = quantity;
@@ -512,6 +552,47 @@ export class PurchaseOrdersComponent implements OnInit, OnDestroy {
     }
   }
 
+  /**
+   * Adjusts a specific batch's quantity by `delta` (positive to add stock,
+   * negative to remove). Floors at 0 so it can never go negative even if
+   * other sales have already consumed part of this batch. Returns the
+   * amount actually applied (may differ from `delta` if floored).
+   */
+  async adjustLinkedBatch(batchId: number, delta: number, productId: number): Promise<{ success: boolean; appliedDelta: number }> {
+    try {
+      const r = await this.db.get('SELECT * FROM product_batches WHERE batch_id = ?', [batchId]);
+      const batch = r.success && r.data && r.data.length > 0 ? r.data[0] : null;
+      if (!batch) {
+        return { success: false, appliedDelta: 0 };
+      }
+
+      const newQty = Math.max(0, Number(batch.quantity) + delta);
+      const appliedDelta = newQty - Number(batch.quantity);
+
+      await this.db.updateBatch(batchId, { quantity: newQty });
+
+      if (appliedDelta !== 0) {
+        await this.db.addBatchTransaction(
+          batchId,
+          productId,
+          'adjustment',
+          Math.abs(appliedDelta),
+          new Date().toISOString().split('T')[0],
+          null,
+          `Adjustment from purchase order edit (${appliedDelta > 0 ? '+' : ''}${appliedDelta})`
+        );
+      }
+
+      await this.db.updateBatchStatuses();
+      return { success: true, appliedDelta };
+    } catch (error) {
+      console.error('Error adjusting linked batch:', error);
+      return { success: false, appliedDelta: 0 };
+    }
+  }
+
+
+
   confirmDelete(id: number) { 
     this.deletingId = id; 
     this.showDeleteDialog = true; 
@@ -525,7 +606,12 @@ export class PurchaseOrdersComponent implements OnInit, OnDestroy {
         if (order.supplier_id) {
           await this.removeFromSupplierLedger(this.deletingId!, order.supplier_id);
         }
-        await this.deductFromBatches(order.product_id, order.quantity);
+        if (order.batch_id) {
+          await this.adjustLinkedBatch(order.batch_id, -Number(order.quantity), order.product_id);
+        } else {
+          // Legacy order with no linked batch — fall back to old FIFO behavior.
+          await this.deductFromBatches(order.product_id, order.quantity);
+        }
       }
       await this.db.run('DELETE FROM purchase_orders WHERE purchase_id=?', [this.deletingId]);
       this.showDeleteDialog = false;

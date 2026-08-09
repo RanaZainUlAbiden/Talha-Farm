@@ -45,6 +45,9 @@ export class SaleComponent implements OnInit, OnDestroy {
 
   brokerForm = { broker_name: '' };
 
+  // TODO: replace with real per-farm values once farms table supports them
+  private readonly farmAddress = ' Talha Protein Farm';
+  private readonly farmPhone = '0306 6908946';
   get hasPendingRows(): boolean { return this.pendingRows.length > 0; }
   getRowBirdWeight(row: any): number { return (row.load_weight || 0) - (row.empty_weight || 0); }
   getRowTotal(row: any): number { return this.getRowBirdWeight(row) * (row.rate || 0); }
@@ -113,7 +116,7 @@ export class SaleComponent implements OnInit, OnDestroy {
 
   async loadData() {
     if (!this.currentFlock) { this.sales = []; this.groupedSales = []; this.cdr.detectChanges(); return; }
-    const sr = await this.db.get('SELECT * FROM sales WHERE flock_id = ? ORDER BY date DESC, sale_id ASC', [this.currentFlock.flock_id]);
+    const sr = await this.db.get('SELECT * FROM sales WHERE flock_id = ? AND module_type = ? ORDER BY date DESC, sale_id ASC', [this.currentFlock.flock_id, 'broiler']);
     const br = await this.db.get('SELECT * FROM brokers WHERE flock_id = ? ORDER BY broker_name ASC', [this.currentFlock.flock_id]);
     this.sales = sr.success ? sr.data : []; this.brokers = br.success ? br.data : [];
     if (sr.success) this.groupSales(); else this.groupedSales = [];
@@ -143,11 +146,31 @@ export class SaleComponent implements OnInit, OnDestroy {
   removePendingRow(i: number) { this.pendingRows.splice(i, 1); }
 
   async saveAllRows() {
-    if (!this.pendingRows.length || this.isSavingAll) return; this.isSavingAll = true; const datesToSync = new Set<string>();
+    if (!this.pendingRows.length || this.isSavingAll) return;
+
+    // Validate every row up front so an invalid row is never silently
+    // skipped and then lost when pendingRows is cleared.
+    for (let i = 0; i < this.pendingRows.length; i++) {
+      const row = this.pendingRows[i];
+      if (!row.date || !row.empty_weight || !row.load_weight || !row.rate) {
+        this.validationMessage = `Row ${i + 1}: please fill in date, empty weight, load weight and rate.`;
+        this.showValidationDialog = true;
+        this.cdr.detectChanges();
+        return;
+      }
+      if (Number(row.load_weight) <= Number(row.empty_weight)) {
+        this.validationMessage = `Row ${i + 1}: load weight must be greater than empty weight.`;
+        this.showValidationDialog = true;
+        this.cdr.detectChanges();
+        return;
+      }
+    }
+
+    this.isSavingAll = true; const datesToSync = new Set<string>();
     try {
-      for (const row of this.pendingRows) { if (!row.date || !row.empty_weight || !row.load_weight || !row.rate) continue;
+      for (const row of this.pendingRows) {
         const bw = this.getRowBirdWeight(row); const total = this.getRowTotal(row);
-        await this.db.run('INSERT INTO sales (flock_id, date, vehicle_number, driver_name, driver_phone, broker, empty_weight, load_weight, bird_weight, rate, total_amount, payment_type, receipt_image) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)', [this.currentFlock.flock_id, row.date, row.vehicle_number, row.driver_name || '', row.driver_phone || '', this.getBrokerName(row.broker_id), row.empty_weight, row.load_weight, bw, row.rate, total, row.payment_type || 'cash', row.receipt_image || null]);
+        await this.db.run('INSERT INTO sales (flock_id, date, vehicle_number, driver_name, driver_phone, broker, empty_weight, load_weight, bird_weight, rate, total_amount, payment_type, receipt_image, module_type) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)', [this.currentFlock.flock_id, row.date, row.vehicle_number, row.driver_name || '', row.driver_phone || '', this.getBrokerName(row.broker_id), row.empty_weight, row.load_weight, bw, row.rate, total, row.payment_type || 'cash', row.receipt_image || null, 'broiler']);
         datesToSync.add(row.date);
       }
       for (const date of datesToSync) await this.syncIncomeForDate(date);
@@ -159,7 +182,20 @@ export class SaleComponent implements OnInit, OnDestroy {
   startEdit(sale: any) { if (this.isSaving) return; this.pendingRows = []; this.editingId = sale.sale_id; const broker = this.brokers.find(b => b.broker_name === sale.broker); this.editForm = { date: sale.date, vehicle_number: sale.vehicle_number, driver_name: sale.driver_name || '', driver_phone: sale.driver_phone || '', broker_id: broker ? broker.broker_id : null, empty_weight: sale.empty_weight, load_weight: sale.load_weight, rate: sale.rate, payment_type: sale.payment_type || 'cash', receipt_image: sale.receipt_image || null }; }
   cancelEdit() { if (!this.isSaving) { this.editingId = null; this.editForm = {}; } }
   async saveEdit(saleId: number, oldDate: string) {
-    if (this.isSaving) return; this.isSaving = true; this.editingId = null;
+    if (this.isSaving) return;
+    if (!this.editForm.date || !this.editForm.empty_weight || !this.editForm.load_weight || !this.editForm.rate || !this.editForm.broker_id) {
+      this.validationMessage = 'Please fill in date, empty weight, load weight and rate.';
+      this.showValidationDialog = true;
+      this.cdr.detectChanges();
+      return;
+    }
+    if (Number(this.editForm.load_weight) <= Number(this.editForm.empty_weight)) {
+      this.validationMessage = 'Load weight must be greater than empty weight.';
+      this.showValidationDialog = true;
+      this.cdr.detectChanges();
+      return;
+    }
+    this.isSaving = true; this.editingId = null;
     const bw = this.getEditBirdWeight(); const total = this.getEditTotal();
     try {
       await this.db.run('UPDATE sales SET date=?, vehicle_number=?, driver_name=?, driver_phone=?, broker=?, empty_weight=?, load_weight=?, bird_weight=?, rate=?, total_amount=?, payment_type=?, receipt_image=? WHERE sale_id=?', [this.editForm.date, this.editForm.vehicle_number, this.editForm.driver_name || '', this.editForm.driver_phone || '', this.getBrokerName(this.editForm.broker_id), this.editForm.empty_weight, this.editForm.load_weight, bw, this.editForm.rate, total, this.editForm.payment_type || 'cash', this.editForm.receipt_image || null, saleId]);
@@ -263,4 +299,139 @@ clearDateFilter() {
     doc.setFontSize(7.5); doc.setTextColor(...G); doc.text(footer, pw / 2, ph - 9, { align: 'center' }); doc.text('Page 1 of 1', pw / 2, ph - 4, { align: 'center' });
     doc.save(farmName + '-Broker-' + brokerName + '-Sale.pdf');
   }
+
+  // PRINT: Driver Receipt — 3-part voucher (Driver / Supervisor / Farm copy) on one page
+  async printDriverReceipt(row: any) {
+    const isSaved = row.sale_id !== undefined;
+    const brokerName = isSaved ? (row.broker || '—') : this.getBrokerName(row.broker_id);
+    const birdWeight = isSaved ? (row.bird_weight || 0) : this.getRowBirdWeight(row);
+    const totalAmount = isSaved ? (row.total_amount || 0) : this.getRowTotal(row);
+    const rate = row.rate || 0;
+    const emptyWeight = row.empty_weight || 0;
+    const loadWeight = row.load_weight || 0;
+    const paymentType = row.payment_type || 'cash';
+    const date = row.date ? String(row.date).split('T')[0] : '—';
+
+    const doc = new jsPDF();
+    const pw = doc.internal.pageSize.getWidth();
+    const ph = doc.internal.pageSize.getHeight();
+    const farmName = this.authService.getCurrentFarm()?.farm_name || 'Poultry Farm';
+    const footer = 'Software By: www.devinfantary.com  |  Contact: 0302 6938217';
+    const B: [number, number, number] = [0, 0, 0];
+    const G: [number, number, number] = [120, 120, 120];
+    const LG: [number, number, number] = [200, 200, 200];
+
+    let logoData: string | null = null;
+    let logoW = 0, logoH = 0;
+    try {
+      logoData = await this.loadImageAsBase64('report-boiler.jpeg');
+      const ip = doc.getImageProperties(logoData);
+      logoH = 16;
+      logoW = (ip.width * logoH) / ip.height;
+    } catch {}
+
+    const marginX = 12;
+    const usableHeight = ph - 16; // leave room for footer strip
+    const sectionHeight = usableHeight / 3;
+    const copyLabels = ['DRIVER COPY', 'SUPERVISOR COPY', 'FARM COPY'];
+
+    const drawVoucher = (top: number, label: string) => {
+      let y = top + 8;
+
+      // Header row: logo + farm name (left), copy label (right)
+      if (logoData) {
+        doc.addImage(logoData, 'JPEG', marginX, top + 3, logoW, logoH);
+      }
+      const textX = marginX + (logoData ? logoW + 6 : 0);
+      doc.setFont('helvetica', 'bold'); doc.setFontSize(13); doc.setTextColor(...B);
+      doc.text(farmName, textX, top + 10);
+      doc.setFont('helvetica', 'normal'); doc.setFontSize(8); doc.setTextColor(...G);
+      doc.text(this.farmAddress, textX, top + 15);
+      doc.text('Phone: ' + this.farmPhone, textX, top + 19);
+
+      doc.setFont('helvetica', 'bold'); doc.setFontSize(10); doc.setTextColor(...B);
+      doc.text(label, pw - marginX, top + 8, { align: 'right' });
+      doc.setFont('helvetica', 'normal'); doc.setFontSize(8); doc.setTextColor(...G);
+      doc.text('Date: ' + date, pw - marginX, top + 13, { align: 'right' });
+
+      y = top + 24;
+      doc.setDrawColor(...B); doc.setLineWidth(0.3);
+      doc.line(marginX, y, pw - marginX, y);
+      y += 6;
+
+      // Two-column compact details
+      const leftCol: [string, string][] = [
+        ['Vehicle #', row.vehicle_number || '—'],
+        ['Driver Name', row.driver_name || '—'],
+        ['Driver Phone', row.driver_phone || '—'],
+        ['Broker', brokerName],
+      ];
+      const rightCol: [string, string][] = [
+        ['Empty Wt', emptyWeight.toFixed(0) + ' kg'],
+        ['Load Wt', loadWeight.toFixed(0) + ' kg'],
+        ['Bird Wt', birdWeight.toFixed(0) + ' kg'],
+        ['Rate', 'Rs. ' + rate.toLocaleString()],
+      ];
+
+      doc.setFontSize(9);
+      let ly = y, ry = y;
+      for (const [lbl, val] of leftCol) {
+        doc.setFont('helvetica', 'normal'); doc.setTextColor(...G);
+        doc.text(lbl + ':', marginX, ly);
+        doc.setFont('helvetica', 'bold'); doc.setTextColor(...B);
+        doc.text(String(val), marginX + 32, ly);
+        ly += 5.5;
+      }
+      const rightX = pw / 2 + 4;
+      for (const [lbl, val] of rightCol) {
+        doc.setFont('helvetica', 'normal'); doc.setTextColor(...G);
+        doc.text(lbl + ':', rightX, ry);
+        doc.setFont('helvetica', 'bold'); doc.setTextColor(...B);
+        doc.text(String(val), rightX + 28, ry);
+        ry += 5.5;
+      }
+
+      y = Math.max(ly, ry) + 2;
+
+      // Total amount + payment type — emphasized line
+      doc.setDrawColor(...LG); doc.setLineWidth(0.2);
+      doc.line(marginX, y, pw - marginX, y);
+      y += 6;
+      doc.setFont('helvetica', 'bold'); doc.setFontSize(11); doc.setTextColor(...B);
+      doc.text('Total: Rs. ' + totalAmount.toLocaleString(), marginX, y);
+      doc.setFont('helvetica', 'normal'); doc.setFontSize(9); doc.setTextColor(...G);
+      doc.text('Payment: ' + paymentType.toUpperCase(), pw - marginX, y, { align: 'right' });
+
+      // Signatures
+      const sigY = top + sectionHeight - 8;
+      doc.setDrawColor(...B); doc.setLineWidth(0.2);
+      doc.setFontSize(7.5); doc.setTextColor(...G);
+      doc.text('_______________________', marginX, sigY);
+      doc.text('Driver Signature', marginX, sigY + 4);
+      doc.text('_______________________', pw - marginX - 45, sigY);
+      doc.text('Authorized Signature', pw - marginX - 45, sigY + 4);
+    };
+
+    for (let i = 0; i < 3; i++) {
+      const top = i * sectionHeight;
+      drawVoucher(top, copyLabels[i]);
+      if (i < 2) {
+        doc.setDrawColor(...LG);
+        doc.setLineWidth(0.3);
+        (doc as any).setLineDashPattern([2, 1.5], 0);
+        doc.line(marginX - 4, top + sectionHeight, pw - marginX + 4, top + sectionHeight);
+        (doc as any).setLineDashPattern([], 0);
+        doc.setFontSize(6.5); doc.setTextColor(...G);
+        doc.text('✂ cut here', pw / 2, top + sectionHeight - 1, { align: 'center' });
+      }
+    }
+
+    doc.setFontSize(6.5); doc.setTextColor(...G);
+    doc.text(footer, pw / 2, ph - 3, { align: 'center' });
+
+    doc.save(farmName + '-Driver-Receipt-' + (row.vehicle_number || 'vehicle') + '-' + date + '.pdf');
+  }
+
+
+
 }

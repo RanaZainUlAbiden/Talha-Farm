@@ -145,7 +145,29 @@ export class DatabaseService {
     const hasTransactions = checkResult.success && checkResult.data && checkResult.data.length > 0 && checkResult.data[0].count > 0;
 
     if (hasTransactions) {
-      return this.run('UPDATE product_batches SET status = "depleted" WHERE batch_id = ?', [batchId]);
+      // A soft delete must actually remove the stock, not just relabel it —
+      // otherwise quantity-driven stock calculations (getTotalStock, etc.)
+      // keep counting it as if nothing happened. Zero the quantity and log
+      // the removal so there's still an audit trail.
+      const batchResult = await this.get('SELECT product_id, quantity FROM product_batches WHERE batch_id = ?', [batchId]);
+      const batch = batchResult.success && batchResult.data && batchResult.data.length > 0 ? batchResult.data[0] : null;
+      const qty = batch ? Number(batch.quantity) : 0;
+
+      const result = await this.run('UPDATE product_batches SET status = "depleted", quantity = 0 WHERE batch_id = ?', [batchId]);
+
+      if (batch && qty > 0) {
+        await this.addBatchTransaction(
+          batchId,
+          batch.product_id,
+          'adjustment',
+          qty,
+          new Date().toISOString().split('T')[0],
+          null,
+          'Batch deleted — stock zeroed'
+        );
+      }
+
+      return result;
     } else {
       return this.run('DELETE FROM product_batches WHERE batch_id = ?', [batchId]);
     }
@@ -157,8 +179,8 @@ export class DatabaseService {
       `SELECT COALESCE(SUM(quantity), 0) as total 
        FROM product_batches 
        WHERE product_id = ? 
-         AND (status = 'active' OR status = 'expiring' OR status IS NULL OR status = '')
-         AND quantity > 0`,
+         AND quantity > 0
+         AND expiry_date >= date('now')`,
       [productId]
     );
     return result.success && result.data && result.data.length > 0 ? result.data[0].total : 0;
@@ -191,7 +213,6 @@ export class DatabaseService {
       FROM product_batches b
       INNER JOIN products p ON b.product_id = p.product_id
       WHERE b.farm_id = ? 
-        AND (b.status = 'active' OR b.status = 'expiring' OR b.status IS NULL OR b.status = '')
         AND b.quantity > 0
         AND julianday(b.expiry_date) - julianday('now') <= (? * 30.44)
         AND julianday(b.expiry_date) - julianday('now') > 0
@@ -205,7 +226,6 @@ export class DatabaseService {
       `SELECT COUNT(*) as count
        FROM product_batches
        WHERE product_id = ?
-         AND (status = 'active' OR status = 'expiring' OR status IS NULL OR status = '')
          AND quantity > 0
          AND julianday(expiry_date) - julianday('now') <= (? * 30.44)
          AND julianday(expiry_date) - julianday('now') > 0`,

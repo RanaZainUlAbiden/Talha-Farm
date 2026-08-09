@@ -1,4 +1,4 @@
-import { Component, OnInit, ChangeDetectorRef, HostListener, OnDestroy } from '@angular/core';
+import { Component, OnInit, ChangeDetectorRef, HostListener, OnDestroy, ViewChild, ViewChildren, QueryList, ElementRef } from '@angular/core';
 import { CommonModule } from '@angular/common';
 import { FormsModule } from '@angular/forms';
 import { Router } from '@angular/router';
@@ -46,6 +46,11 @@ export class SalesOrdersComponent implements OnInit, OnDestroy {
   productSearchTerm: string = '';
   productOptions: any[] = [];
   showProductDropdown: boolean = false;
+  highlightedIndex: number = -1;
+
+  @ViewChild('productSearchInput') productSearchInputRef!: ElementRef<HTMLInputElement>;
+  @ViewChild('paidAmountInput') paidAmountInputRef!: ElementRef<HTMLInputElement>;
+  @ViewChildren('qtyInput') qtyInputs!: QueryList<ElementRef<HTMLInputElement>>;
 
   customerType: 'walkin' | 'regular' | 'internal' = 'walkin';
   selectedCustomerId: number | null = null;
@@ -230,20 +235,12 @@ export class SalesOrdersComponent implements OnInit, OnDestroy {
 
   // ── SEARCH METHODS (FIXED) ─────────────────────────────────
 
-  /**
-   * 🔥 FIXED: Real-time search with proper filtering
-   * Triggered on input change and Enter key
-   */
   onBillSearch() {
-    // Use setTimeout to ensure the model is updated
     setTimeout(() => {
       this.applySearch();
     }, 0);
   }
 
-  /**
-   * Apply the search filter to bills
-   */
   private applySearch() {
     const term = this.billSearchTerm?.toLowerCase().trim() || '';
     
@@ -274,9 +271,6 @@ export class SalesOrdersComponent implements OnInit, OnDestroy {
     console.log(`🔍 Search term: "${term}", Found: ${this.filteredBills.length} bills`);
   }
 
-  /**
-   * 🔥 NEW: Clear search and reset results
-   */
   clearSearch() {
     this.billSearchTerm = '';
     this.filteredBills = [...this.allBills];
@@ -391,7 +385,7 @@ export class SalesOrdersComponent implements OnInit, OnDestroy {
     
     if (type === 'internal') { 
       await this.loadInternalTargets(); 
-      this.paidAmount = this.cartSubtotal; // same default as walkin
+      this.paidAmount = this.cartSubtotal;
     } else if (type === 'walkin') { 
       this.paidAmount = this.cartSubtotal; 
     } else { 
@@ -540,6 +534,7 @@ export class SalesOrdersComponent implements OnInit, OnDestroy {
     if (!term) { 
       this.productOptions = []; 
       this.showProductDropdown = false; 
+      this.highlightedIndex = -1;
       return; 
     }
     
@@ -549,20 +544,96 @@ export class SalesOrdersComponent implements OnInit, OnDestroy {
       (p.unit && p.unit.toLowerCase().includes(term))
     );
     
+    this.highlightedIndex = this.productOptions.length > 0 ? 0 : -1;
     this.showProductDropdown = true; 
     this.cdr.detectChanges();
     this.onFormChange();
+  }
+
+  onProductSearchKeydown(event: KeyboardEvent) {
+    if (!this.showProductDropdown || this.productOptions.length === 0) {
+      if (event.key === 'Tab') {
+        event.preventDefault();
+        this.focusPaidAmount();
+      }
+      return;
+    }
+
+    if (event.key === 'ArrowDown') {
+      event.preventDefault();
+      this.highlightedIndex = Math.min(this.highlightedIndex + 1, this.productOptions.length - 1);
+    } else if (event.key === 'ArrowUp') {
+      event.preventDefault();
+      this.highlightedIndex = Math.max(this.highlightedIndex - 1, 0);
+    } else if (event.key === 'Enter') {
+      event.preventDefault();
+      const index = this.highlightedIndex >= 0 ? this.highlightedIndex : 0;
+      const product = this.productOptions[index];
+      if (product) this.selectProductOption(product);
+    } else if (event.key === 'Tab') {
+      event.preventDefault();
+      this.focusPaidAmount();
+    } else if (event.key === 'Escape') {
+      this.showProductDropdown = false;
+      this.highlightedIndex = -1;
+    }
+  }
+
+  private focusPaidAmount() {
+    this.showProductDropdown = false;
+    setTimeout(() => {
+      this.paidAmountInputRef?.nativeElement?.focus();
+      this.paidAmountInputRef?.nativeElement?.select();
+    }, 0);
+  }
+
+  private focusLastQtyInput() {
+    setTimeout(() => {
+      const inputs = this.qtyInputs?.toArray();
+      if (inputs && inputs.length > 0) {
+        const last = inputs[inputs.length - 1];
+        last.nativeElement.focus();
+        last.nativeElement.select();
+      }
+    }, 0);
+  }
+
+  onQtyKeydown(event: KeyboardEvent) {
+    if (event.key === 'Enter') {
+      event.preventDefault();
+      setTimeout(() => {
+        this.productSearchInputRef?.nativeElement?.focus();
+      }, 0);
+    }
   }
 
   @HostListener('document:click', ['$event'])
   onDocumentClick(event: MouseEvent) { 
     if (!(event.target as HTMLElement).closest('.psearch-wrap')) { 
       this.showProductDropdown = false; 
+      this.highlightedIndex = -1;
       this.cdr.detectChanges(); 
     } 
   }
 
   async selectProductOption(product: any) {
+    const availableStock = await this.getAvailableStock(product.product_id);
+    const existingForCheck = this.gridItems.find(i => i.productId === product.product_id);
+    const alreadyInCart = existingForCheck ? existingForCheck.quantity : 0;
+
+    if (availableStock <= 0) {
+      this.errorMessage = `${product.product_name} is out of stock.`;
+      this.showProductDropdown = false;
+      this.cdr.detectChanges();
+      return;
+    }
+    if (alreadyInCart + 1 > availableStock) {
+      this.errorMessage = `${product.product_name} has only ${availableStock} in stock.`;
+      this.showProductDropdown = false;
+      this.cdr.detectChanges();
+      return;
+    }
+
     const previousTotal = this.cartSubtotal;
     const existing = this.gridItems.find(i => i.productId === product.product_id);
     if (existing) { 
@@ -582,7 +653,7 @@ export class SalesOrdersComponent implements OnInit, OnDestroy {
       const batchesResult = await this.db.getBatchesByProduct(product.product_id, this.currentFarm.farm_id);
       if (batchesResult.success && batchesResult.data) {
         newItem.batches = batchesResult.data
-          .filter((b: any) => (b.status === 'active' || b.status === 'expiring') && b.quantity > 0)
+          .filter((b: any) => (b.calculated_status === 'active' || b.calculated_status === 'expiring') && b.quantity > 0)
           .sort((a: any, b: any) => (a.expiry_date || '').localeCompare(b.expiry_date || ''));
           
         if (newItem.batches.length > 0) {
@@ -596,15 +667,26 @@ export class SalesOrdersComponent implements OnInit, OnDestroy {
     this.productSearchTerm = ''; 
     this.productOptions = []; 
     this.showProductDropdown = false;
+    this.highlightedIndex = -1;
     this.syncPaidAmountWithTotal(previousTotal);
     this.errorMessage = ''; 
     this.cdr.detectChanges();
     this.onFormChange();
+    this.focusLastQtyInput();
   }
 
   recalcItem(item: any) { 
     const previousTotal = this.cartSubtotal;
     if (item.quantity < 1) item.quantity = 1; 
+
+    const product = this.products.find(p => p.product_id === item.productId);
+    const maxStock = product ? (product.calculated_stock || 0) : null;
+    if (maxStock !== null && item.quantity > maxStock) {
+      item.quantity = maxStock > 0 ? maxStock : 1;
+      this.errorMessage = `${item.productName} has only ${maxStock} in stock.`;
+      this.cdr.detectChanges();
+    }
+
     item.totalPrice = item.quantity * item.unitPrice; 
     this.syncPaidAmountWithTotal(previousTotal);
     this.onFormChange();
@@ -640,7 +722,6 @@ export class SalesOrdersComponent implements OnInit, OnDestroy {
 
   private syncPaidAmountWithTotal(previousTotal: number = this.lastCartSubtotal) {
     const total = this.cartSubtotal;
-    // Always sync if user hadn't manually diverged
     if (this.paidAmount === previousTotal || this.paidAmount === 0) {
       this.paidAmount = total;
     } else if (this.isEditMode && this.paidAmount === previousTotal) {
@@ -683,7 +764,6 @@ export class SalesOrdersComponent implements OnInit, OnDestroy {
   async addToCustomerLedger(customerId: number, billId: number, totalAmount: number, paidAmount: number, billNumber: string) {
     if (!customerId) return;
     
-    // Add bill entry (debit = total amount)
     await this.db.addCustomerLedgerEntry({ 
       customer_id: customerId, 
       transaction_date: new Date().toISOString().split('T')[0], 
@@ -694,7 +774,6 @@ export class SalesOrdersComponent implements OnInit, OnDestroy {
       reference_id: billId 
     });
     
-    // Add payment entry (credit = paid amount) ONLY if paidAmount > 0
     if (paidAmount > 0) {
       await this.db.addCustomerLedgerEntry({ 
         customer_id: customerId, 
@@ -720,78 +799,89 @@ export class SalesOrdersComponent implements OnInit, OnDestroy {
 
   private async restoreBillStock(billId: number) {
     const existingItems = await this.getBillItems(billId);
-    
-    // Get all batch transactions for this bill to know exactly which batches were deducted
-    const transactions = await this.db.get('SELECT * FROM batch_transactions WHERE reference_id = ? AND type = "sale"', [billId]);
-    const batchTrans = transactions.success && transactions.data ? transactions.data : [];
+    const today = new Date().toISOString().split('T')[0];
 
-    for (const item of existingItems) {
-      if (item.product_id) {
-        const today = new Date().toISOString().split('T')[0]; 
-        
-        // Find if we have specific transactions for this product
-        const itemTrans = batchTrans.filter((t: any) => t.product_id === item.product_id);
-        
-        if (itemTrans.length > 0) {
-          // Restore to exactly the batches that were deducted!
-          for (const t of itemTrans) {
-            const batchResult = await this.db.get('SELECT * FROM product_batches WHERE batch_id = ?', [t.batch_id]);
-            if (batchResult.success && batchResult.data && batchResult.data.length > 0) {
-              const targetBatch = batchResult.data[0];
-              await this.db.updateBatch(targetBatch.batch_id, { quantity: (targetBatch.quantity || 0) + t.quantity });
-              await this.db.addBatchTransaction(
-                targetBatch.batch_id, 
-                item.product_id, 
-                'return', 
-                t.quantity, 
-                today, 
-                billId, 
-                `Restored from deleted/edited sale`
-              );
-            }
-          }
+    // 🔥 FIX: compute the NET outstanding quantity per batch (sale − return)
+    // for this bill, not the raw sum of every 'sale' transaction ever logged
+    // against it. A bill edited more than once accumulates a 'sale' entry
+    // and a 'return' entry on every edit — summing only 'sale' rows without
+    // subtracting the matching 'return' rows causes stock that was already
+    // restored in a previous edit to be restored AGAIN, inflating stock
+    // with phantom units on every subsequent edit.
+    const netResult = await this.db.get(
+      `SELECT batch_id, product_id,
+              SUM(CASE WHEN type = 'sale' THEN quantity WHEN type = 'return' THEN -quantity ELSE 0 END) as net_qty
+       FROM batch_transactions
+       WHERE reference_id = ? AND type IN ('sale', 'return')
+       GROUP BY batch_id, product_id
+       HAVING net_qty > 0`,
+      [billId]
+    );
+    const netRows = netResult.success && netResult.data ? netResult.data : [];
+
+    if (netRows.length > 0) {
+      for (const row of netRows) {
+        if (!row.batch_id) continue;
+        const batchResult = await this.db.get('SELECT * FROM product_batches WHERE batch_id = ?', [row.batch_id]);
+        if (batchResult.success && batchResult.data && batchResult.data.length > 0) {
+          const targetBatch = batchResult.data[0];
+          await this.db.updateBatch(targetBatch.batch_id, { quantity: (targetBatch.quantity || 0) + row.net_qty });
+          await this.db.addBatchTransaction(
+            targetBatch.batch_id,
+            row.product_id,
+            'return',
+            row.net_qty,
+            today,
+            billId,
+            `Restored from deleted/edited sale`
+          );
+        }
+      }
+    } else {
+      // Legacy bill with no tracked batch_transactions — fall back to
+      // restoring against any available batch for each item.
+      for (const item of existingItems) {
+        if (!item.product_id) continue;
+
+        const batchesResult = await this.db.getBatchesByProduct(item.product_id, this.currentFarm.farm_id);
+        let targetBatch = null;
+
+        if (batchesResult.success && batchesResult.data && batchesResult.data.length > 0) {
+          targetBatch = batchesResult.data.find((b: any) => b.calculated_status === 'active') || batchesResult.data[0];
+        }
+
+        if (targetBatch) {
+          await this.db.updateBatch(targetBatch.batch_id, { quantity: (targetBatch.quantity || 0) + item.quantity });
+          await this.db.addBatchTransaction(
+            targetBatch.batch_id,
+            item.product_id,
+            'return',
+            item.quantity,
+            today,
+            billId,
+            `Restored from deleted/edited sale`
+          );
         } else {
-          // Fallback if no transactions found (e.g., old data before batch tracking)
-          const batchesResult = await this.db.getBatchesByProduct(item.product_id, this.currentFarm.farm_id);
-          let targetBatch = null;
-          
-          if (batchesResult.success && batchesResult.data && batchesResult.data.length > 0) {
-            targetBatch = batchesResult.data.find((b: any) => b.status === 'active') || batchesResult.data[0];
-          }
-
-          if (targetBatch) {
-            await this.db.updateBatch(targetBatch.batch_id, { quantity: (targetBatch.quantity || 0) + item.quantity });
+          const oneYearLater = new Date();
+          oneYearLater.setFullYear(oneYearLater.getFullYear() + 1);
+          const batchResult = await this.db.addBatch({
+            product_id: item.product_id,
+            farm_id: this.currentFarm.farm_id,
+            manufacturing_date: today,
+            expiry_date: oneYearLater.toISOString().split('T')[0],
+            quantity: item.quantity,
+            purchase_price: 0
+          });
+          if (batchResult.success && batchResult.batch_id) {
             await this.db.addBatchTransaction(
-              targetBatch.batch_id, 
-              item.product_id, 
-              'return', 
-              item.quantity, 
-              today, 
-              billId, 
+              batchResult.batch_id,
+              item.product_id,
+              'return',
+              item.quantity,
+              today,
+              billId,
               `Restored from deleted/edited sale`
             );
-          } else {
-            const oneYearLater = new Date(); 
-            oneYearLater.setFullYear(oneYearLater.getFullYear() + 1);
-            const batchResult = await this.db.addBatch({ 
-              product_id: item.product_id, 
-              farm_id: this.currentFarm.farm_id, 
-              manufacturing_date: today, 
-              expiry_date: oneYearLater.toISOString().split('T')[0], 
-              quantity: item.quantity, 
-              purchase_price: 0 
-            });
-            if (batchResult.success && batchResult.batch_id) {
-              await this.db.addBatchTransaction(
-                batchResult.batch_id, 
-                item.product_id, 
-                'return', 
-                item.quantity, 
-                today, 
-                billId, 
-                `Restored from deleted/edited sale`
-              );
-            }
           }
         }
       }
@@ -800,10 +890,19 @@ export class SalesOrdersComponent implements OnInit, OnDestroy {
 
   private async cleanupInternalTransfers(billId: number) {
     try {
-      const oldTransfers = await this.db.get('SELECT expense_id FROM internal_transfers WHERE bill_id=?', [billId]);
+      const oldTransfers = await this.db.get('SELECT * FROM internal_transfers WHERE bill_id=?', [billId]);
       if (oldTransfers.success && oldTransfers.data) {
         for (const t of oldTransfers.data) {
-          if (t.expense_id) {
+          const targetType = t.target_type || (t.expense_id ? 'expense' : null);
+          const refId = t.reference_id || t.expense_id;
+
+          if (targetType === 'medicine' && refId) {
+            await this.db.run('DELETE FROM medicine_entries WHERE entry_id=?', [refId]);
+          } else if (targetType === 'feed' && refId) {
+            await this.db.run('DELETE FROM feed_entries WHERE entry_id=?', [refId]);
+          } else if (targetType === 'vaccination' && refId) {
+            await this.db.run('DELETE FROM vaccinations WHERE vaccination_id=?', [refId]);
+          } else if (t.expense_id) {
             await this.db.run('DELETE FROM expenses WHERE expense_id=?', [t.expense_id]);
           }
         }
@@ -820,13 +919,12 @@ export class SalesOrdersComponent implements OnInit, OnDestroy {
       if (!batchesResult.success || !batchesResult.data) return;
       
       let activeBatches = batchesResult.data
-        .filter((b: any) => (b.status === 'active' || b.status === 'expiring') && b.quantity > 0)
+        .filter((b: any) => (b.calculated_status === 'active' || b.calculated_status === 'expiring') && b.quantity > 0)
         .sort((a: any, b: any) => (a.expiry_date || '').localeCompare(b.expiry_date || ''));
         
       if (selectedBatchId) {
         const selectedBatch = activeBatches.find((b: any) => b.batch_id === selectedBatchId);
         if (selectedBatch) {
-          // Put the selected batch first, so it deducts from there before falling back to FIFO
           activeBatches = [selectedBatch, ...activeBatches.filter((b: any) => b.batch_id !== selectedBatchId)];
         }
       }
@@ -886,8 +984,20 @@ export class SalesOrdersComponent implements OnInit, OnDestroy {
       let effectivePaid = 0;
       let bankDeductAmount = 0;
       let paymentType = 'cash';
-      
-      if (this.paymentMethod === 'bank' && this.selectedCustomerId) {
+
+      if (this.customerType === 'internal') {
+        paymentType = 'internal';
+        effectivePaid = 0;
+
+        if (oldBill?.payment_type === 'bank') {
+          const bankApplied = await this.applyBankPaymentChange(oldBill, oldBill.customer_id, 0, billNumber);
+          if (!bankApplied) {
+            this.isSubmitting = false;
+            this.cdr.detectChanges();
+            return null;
+          }
+        }
+      } else if (this.paymentMethod === 'bank' && this.selectedCustomerId) {
         paymentType = 'bank';
         effectivePaid = clampPaidAmount(this.paidAmount);
         bankDeductAmount = effectivePaid;
@@ -928,7 +1038,6 @@ export class SalesOrdersComponent implements OnInit, OnDestroy {
         savedBillId = this.editingBillId;
         if (oldBill?.customer_id) await this.removeFromCustomerLedger(this.editingBillId, oldBill.customer_id);
         
-        // Clean up old internal transfers and associated expenses
         await this.cleanupInternalTransfers(this.editingBillId);
         
         await this.restoreBillStock(this.editingBillId);
@@ -981,52 +1090,62 @@ export class SalesOrdersComponent implements OnInit, OnDestroy {
         for (const item of this.gridItems) {
           const desc = item.productName + ' × ' + item.quantity;
           const todayDate = new Date().toISOString().split('T')[0];
-          
+
           const productRes = await this.db.get('SELECT category FROM products WHERE product_id=?', [item.productId]);
           const category = (productRes.success && productRes.data.length > 0) ? (productRes.data[0].category || '').toLowerCase() : '';
-          
+
           let expenseId = null;
+          let targetType = 'expense';
+          let referenceId = null;
 
           if (category === 'medicine') {
-            let traderRes = await this.db.get('SELECT trader_id FROM medicine_traders WHERE flock_id=? AND trader_name=?', [this.internalTargetFlockId, 'Internal Distribution']);
+            targetType = 'medicine';
+            let traderRes = await this.db.get('SELECT trader_id FROM medicine_traders WHERE flock_id=? AND module_type=? AND trader_name=?', [this.internalTargetFlockId, this.internalTargetModule, 'Internal Distribution']);
             let traderId = null;
             if (traderRes.success && traderRes.data.length > 0) {
               traderId = traderRes.data[0].trader_id;
             } else {
-              const newTrader = await this.db.run('INSERT INTO medicine_traders (flock_id, trader_name) VALUES (?, ?)', [this.internalTargetFlockId, 'Internal Distribution']);
+              const newTrader = await this.db.run('INSERT INTO medicine_traders (flock_id, trader_name, module_type) VALUES (?, ?, ?)', [this.internalTargetFlockId, 'Internal Distribution', this.internalTargetModule]);
               traderId = newTrader.lastId;
             }
             if (traderId) {
-              await this.db.run('INSERT INTO medicine_entries (trader_id, flock_id, date, medicine_name, quantity, price_per_unit, total_amount) VALUES (?,?,?,?,?,?,?)', 
-                [traderId, this.internalTargetFlockId, todayDate, item.productName, item.quantity, item.unitPrice, item.totalPrice]);
+              const entryResult = await this.db.run('INSERT INTO medicine_entries (trader_id, flock_id, date, medicine_name, quantity, price_per_unit, total_amount, module_type) VALUES (?,?,?,?,?,?,?,?)',
+                [traderId, this.internalTargetFlockId, todayDate, item.productName, item.quantity, item.unitPrice, item.totalPrice, this.internalTargetModule]);
+              referenceId = entryResult.lastId;
             }
           } else if (category === 'feed') {
-            let traderRes = await this.db.get('SELECT trader_id FROM feed_traders WHERE flock_id=? AND trader_name=?', [this.internalTargetFlockId, 'Internal Distribution']);
+            targetType = 'feed';
+            let traderRes = await this.db.get('SELECT trader_id FROM feed_traders WHERE flock_id=? AND module_type=? AND trader_name=?', [this.internalTargetFlockId, this.internalTargetModule, 'Internal Distribution']);
             let traderId = null;
             if (traderRes.success && traderRes.data.length > 0) {
               traderId = traderRes.data[0].trader_id;
             } else {
-              const newTrader = await this.db.run('INSERT INTO feed_traders (flock_id, trader_name) VALUES (?, ?)', [this.internalTargetFlockId, 'Internal Distribution']);
+              const newTrader = await this.db.run('INSERT INTO feed_traders (flock_id, trader_name, module_type) VALUES (?, ?, ?)', [this.internalTargetFlockId, 'Internal Distribution', this.internalTargetModule]);
               traderId = newTrader.lastId;
             }
             if (traderId) {
-              await this.db.run('INSERT INTO feed_entries (trader_id, flock_id, date, feed_name, quantity, price_per_unit, total_amount) VALUES (?,?,?,?,?,?,?)', 
-                [traderId, this.internalTargetFlockId, todayDate, item.productName, item.quantity, item.unitPrice, item.totalPrice]);
+              const entryResult = await this.db.run('INSERT INTO feed_entries (trader_id, flock_id, date, feed_name, quantity, price_per_unit, total_amount, module_type) VALUES (?,?,?,?,?,?,?,?)',
+                [traderId, this.internalTargetFlockId, todayDate, item.productName, item.quantity, item.unitPrice, item.totalPrice, this.internalTargetModule]);
+              referenceId = entryResult.lastId;
             }
           } else if (category === 'vaccine' || category === 'vaccination') {
-             await this.db.run('INSERT INTO vaccinations (batch_id, flock_id, date, vaccine_name, dose, notes, done) VALUES (?,?,?,?,?,?,?)', 
+            targetType = 'vaccination';
+            const vaccResult = await this.db.run('INSERT INTO vaccinations (batch_id, flock_id, date, vaccine_name, dose, notes, done) VALUES (?,?,?,?,?,?,?)',
                 [this.internalTargetModule === 'layer' ? this.internalTargetFlockId : null, this.internalTargetModule === 'broiler' ? this.internalTargetFlockId : null, todayDate, item.productName, '1', 'Internal Transfer', 1]);
+            referenceId = vaccResult.lastId;
           } else {
+            targetType = 'expense';
             const expenseResult = await this.db.run(
               'INSERT INTO expenses (flock_id, date, description, amount, module_type) VALUES (?,?,?,?,?)',
               [this.internalTargetFlockId, todayDate, desc, item.totalPrice, this.internalTargetModule]
             );
             expenseId = expenseResult.lastId;
+            referenceId = expenseId;
           }
-          
+
           await this.db.run(
-            'INSERT INTO internal_transfers (bill_id, expense_id, target_module, target_flock_id) VALUES (?,?,?,?)',
-            [savedBillId, expenseId, this.internalTargetModule, this.internalTargetFlockId]
+            'INSERT INTO internal_transfers (bill_id, expense_id, target_module, target_flock_id, target_type, reference_id) VALUES (?,?,?,?,?,?)',
+            [savedBillId, expenseId, this.internalTargetModule, this.internalTargetFlockId, targetType, referenceId]
           );
         }
       }
@@ -1048,61 +1167,67 @@ export class SalesOrdersComponent implements OnInit, OnDestroy {
     }
     return savedBillId;
   }
-// ── DELETE METHODS (FIXED) ────────────────────────────────────
 
-/**
- * 🔥 FIXED: Delete button click handler
- * Prevents event bubbling and immediately shows the dialog
- */
-confirmDeleteBill(event: Event, billId: number) { 
-  // Stop event from bubbling to parent (bill-item)
-  event.stopPropagation();
-  event.preventDefault();
-  
-  console.log('🗑️ Delete clicked for bill:', billId);
-  
-  // Set the delete ID and show dialog
-  this.deletingBillId = billId;
-  this.showDeleteDialog = true;
-  
-  // Force change detection
-  this.cdr.detectChanges();
-}
+  // ── DELETE METHODS (FIXED) ────────────────────────────────────
 
-async onDeleteConfirmed() {
-  if (!this.deletingBillId) return;
-  
-  console.log('✅ Delete confirmed for bill:', this.deletingBillId);
-  
-  try {
-    const bill = this.allBills.find(b => b.bill_id === this.deletingBillId);
-    if (bill?.customer_id) {
-      await this.removeFromCustomerLedger(this.deletingBillId, bill.customer_id);
-    }
+  confirmDeleteBill(event: Event, billId: number) { 
+    event.stopPropagation();
+    event.preventDefault();
     
-    // Clean up internal transfers and associated expenses
-    await this.cleanupInternalTransfers(this.deletingBillId);
+    console.log('🗑️ Delete clicked for bill:', billId);
     
-    await this.restoreBillStock(this.deletingBillId);
-    await this.db.run('DELETE FROM bill_items WHERE bill_id=?', [this.deletingBillId]);
-    await this.db.run('DELETE FROM bills WHERE bill_id=?', [this.deletingBillId]);
+    this.deletingBillId = billId;
+    this.showDeleteDialog = true;
     
-    this.showDeleteDialog = false; 
-    this.deletingBillId = null; 
-    await this.loadData();
-  } catch (error: any) { 
-    this.errorMessage = 'Error deleting: ' + error.message; 
-    console.error('Delete error:', error);
-    this.showDeleteDialog = false;
     this.cdr.detectChanges();
   }
-}
 
-onDeleteCancelled() { 
-  this.showDeleteDialog = false; 
-  this.deletingBillId = null; 
-  this.cdr.detectChanges();
-}
+  async onDeleteConfirmed() {
+    if (!this.deletingBillId) return;
+    
+    console.log('✅ Delete confirmed for bill:', this.deletingBillId);
+    
+    try {
+      const bill = this.allBills.find(b => b.bill_id === this.deletingBillId);
+
+      // 🔥 FIX: refund the customer's bank if this bill was paid via bank —
+      // otherwise the deducted amount is lost with no trace once the bill
+      // (and its reference) is gone.
+      if (bill?.payment_type === 'bank' && bill.customer_id && Number(bill.amount_paid) > 0) {
+        const refundOk = await this.applyBankPaymentChange(bill, bill.customer_id, 0, bill.bill_number);
+        if (!refundOk) {
+          this.cdr.detectChanges();
+          return;
+        }
+      }
+
+      if (bill?.customer_id) {
+        await this.removeFromCustomerLedger(this.deletingBillId, bill.customer_id);
+      }
+      
+      await this.cleanupInternalTransfers(this.deletingBillId);
+      
+      await this.restoreBillStock(this.deletingBillId);
+      await this.db.run('DELETE FROM bill_items WHERE bill_id=?', [this.deletingBillId]);
+      await this.db.run('DELETE FROM bills WHERE bill_id=?', [this.deletingBillId]);
+      
+      this.showDeleteDialog = false; 
+      this.deletingBillId = null; 
+      await this.loadData();
+    } catch (error: any) { 
+      this.errorMessage = 'Error deleting: ' + error.message; 
+      console.error('Delete error:', error);
+      this.showDeleteDialog = false;
+      this.cdr.detectChanges();
+    }
+  }
+
+  onDeleteCancelled() { 
+    this.showDeleteDialog = false; 
+    this.deletingBillId = null; 
+    this.cdr.detectChanges();
+  }
+
   async saveAndPrint() { 
     const billId = await this.saveBill(); 
     if (billId == null) return; 
