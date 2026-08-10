@@ -10,11 +10,12 @@ import { ConfirmDialogComponent } from '../shared/components/confirm-dialog/conf
 import { jsPDF } from 'jspdf';
 import autoTable from 'jspdf-autotable';
 import { PaginationComponent } from '../shared/components/pagination/pagination.component';
+import { DeleteCodeDialogComponent } from '../shared/components/delete-code-dialog/delete-code-dialog.component';
 
 @Component({
   selector: 'app-sales-orders',
   standalone: true,
-  imports: [CommonModule, FormsModule, DateOnlyPipe, ConfirmDialogComponent, PaginationComponent],
+  imports: [CommonModule, FormsModule, DateOnlyPipe, ConfirmDialogComponent, PaginationComponent, DeleteCodeDialogComponent],
   templateUrl: './sales-orders.component.html',
   styleUrl: './sales-orders.component.scss'
 })
@@ -30,6 +31,7 @@ export class SalesOrdersComponent implements OnInit, OnDestroy {
   isEditMode: boolean = false;
   editingBillId: number | null = null;
   showDeleteDialog: boolean = false;
+  showDeleteCodeDialog: boolean = false;
   deletingBillId: number | null = null;
   errorMessage: string = '';
   isLoading: boolean = true;
@@ -1177,8 +1179,20 @@ export class SalesOrdersComponent implements OnInit, OnDestroy {
     console.log('🗑️ Delete clicked for bill:', billId);
     
     this.deletingBillId = billId;
-    this.showDeleteDialog = true;
+    this.showDeleteCodeDialog = true;
     
+    this.cdr.detectChanges();
+  }
+
+  onDeleteCodeVerified() {
+    this.showDeleteCodeDialog = false;
+    this.showDeleteDialog = true;
+    this.cdr.detectChanges();
+  }
+
+  onDeleteCodeCancelled() {
+    this.showDeleteCodeDialog = false;
+    this.deletingBillId = null;
     this.cdr.detectChanges();
   }
 

@@ -169,6 +169,10 @@
   </div>
 </div>
 
+<app-delete-code-dialog
+  *ngIf="showDeleteCodeDialog"
+  (verified)="onDeleteCodeVerified()"
+  (cancelled)="onDeleteCodeCancelled()"/>
 <app-confirm-dialog
   *ngIf="showDeleteDialog"
   title="Delete Expense"

@@ -6,14 +6,25 @@ declare global {
       dbRun: (sql: string, params?: any[]) => Promise<any>;
       dbGet: (sql: string, params?: any[]) => Promise<any>;
       getMachineId: () => Promise<string>;
+      backupDatabase: () => Promise<any>;
+restoreDatabase: () => Promise<any>;
     };
   }
 }
+
+
 
 @Injectable({
   providedIn: 'root'
 })
 export class DatabaseService {
+  async backupDatabase(): Promise<any> {
+    return window.electronAPI.backupDatabase();
+  }
+
+  async restoreDatabase(): Promise<any> {
+    return window.electronAPI.restoreDatabase();
+  }
 
   constructor(private zone: NgZone) {}
 
@@ -26,6 +37,7 @@ export class DatabaseService {
         .catch((err: any) => this.zone.run(() => reject(err)));
     });
   }
+
 
   get(sql: string, params: any[] = []): Promise<any> {
     return new Promise((resolve, reject) => {

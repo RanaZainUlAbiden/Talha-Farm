@@ -9,6 +9,13 @@ let db = null
 // =============================================
 function createTables(db) {
   // ── Core ───────────────────────────────────────────────
+  db.run(`CREATE TABLE IF NOT EXISTS app_settings (
+  farm_id INTEGER NOT NULL,
+  key TEXT NOT NULL,
+  value TEXT,
+  PRIMARY KEY (farm_id, key),
+  FOREIGN KEY (farm_id) REFERENCES farms(farm_id)
+);`);
   db.run(`CREATE TABLE IF NOT EXISTS farms (farm_id INTEGER PRIMARY KEY AUTOINCREMENT, farm_name TEXT NOT NULL, password_hash TEXT NOT NULL, business_type TEXT DEFAULT 'broiler', created_at DATETIME DEFAULT CURRENT_TIMESTAMP);`)
   db.run(`CREATE TABLE IF NOT EXISTS flocks (flock_id INTEGER PRIMARY KEY AUTOINCREMENT, farm_id INTEGER NOT NULL, flock_name TEXT NOT NULL, start_date DATE NOT NULL, end_date DATE, status TEXT DEFAULT 'active', FOREIGN KEY (farm_id) REFERENCES farms(farm_id));`)
   db.run(`CREATE TABLE IF NOT EXISTS ledgers (ledger_id INTEGER PRIMARY KEY AUTOINCREMENT, flock_id INTEGER NOT NULL, ledger_name TEXT NOT NULL, created_at DATETIME DEFAULT CURRENT_TIMESTAMP, FOREIGN KEY (flock_id) REFERENCES flocks(flock_id));`)
@@ -1523,11 +1530,38 @@ function deleteCategory(categoryId) {
   }
 }
 
+function getAppSetting(farmId, key) {
+  try {
+    const stmt = db.prepare('SELECT value FROM app_settings WHERE farm_id = ? AND key = ?');
+    stmt.bind([farmId, key]);
+    const result = stmt.step() ? stmt.getAsObject() : null;
+    stmt.free();
+    return { success: true, value: result ? result.value : null };
+  } catch (err) {
+    return { success: false, error: err.message };
+  }
+}
+
+function setAppSetting(farmId, key, value) {
+  try {
+    db.run(
+      `INSERT INTO app_settings (farm_id, key, value) VALUES (?, ?, ?)
+       ON CONFLICT(farm_id, key) DO UPDATE SET value = excluded.value`,
+      [farmId, key, value]
+    );
+    return { success: true };
+  } catch (err) {
+    return { success: false, error: err.message };
+  }
+}
+
 
 
 
 
 module.exports = { 
+  getAppSetting,
+setAppSetting,
   initializeDatabase, 
   runQuery, 
   getQuery,

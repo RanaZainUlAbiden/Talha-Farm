@@ -7,11 +7,12 @@ import { AuthService } from '../../shared/services/auth.service';
 import { ConfirmDialogComponent } from '../../shared/components/confirm-dialog/confirm-dialog.component';
 import { jsPDF } from 'jspdf';
 import autoTable from 'jspdf-autotable';
+import { DeleteCodeDialogComponent } from '../../shared/components/delete-code-dialog/delete-code-dialog.component';
 
 @Component({
   selector: 'app-supplier-ledger',
   standalone: true,
-  imports: [CommonModule, FormsModule, ConfirmDialogComponent],
+  imports: [CommonModule, FormsModule, ConfirmDialogComponent, DeleteCodeDialogComponent],
   templateUrl: './supplier-ledger.component.html',
   styleUrl: './supplier-ledger.component.scss'
 })
@@ -33,6 +34,7 @@ export class SupplierLedgerComponent implements OnInit {
   isSubmitting = false;
   
   showDeleteDialog = false;
+  showDeleteCodeDialog: boolean = false;
   deletingEntryId: number | null = null;
 
   constructor(
@@ -222,7 +224,17 @@ export class SupplierLedgerComponent implements OnInit {
 
   confirmDeleteEntry(entryId: number) {
     this.deletingEntryId = entryId;
+    this.showDeleteCodeDialog = true;
+  }
+
+  onDeleteCodeVerified() {
+    this.showDeleteCodeDialog = false;
     this.showDeleteDialog = true;
+  }
+
+  onDeleteCodeCancelled() {
+    this.showDeleteCodeDialog = false;
+    this.deletingEntryId = null;
   }
 
   async onDeleteConfirmed() {

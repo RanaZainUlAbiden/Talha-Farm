@@ -8,6 +8,14 @@ contextBridge.exposeInMainWorld('electronAPI', {
   // System information
   getMachineId: () => ipcRenderer.invoke('get-machine-id'),
 
+  // App settings (used for the delete-code PIN)
+  getAppSetting: (farmId, key) => ipcRenderer.invoke('get-app-setting', farmId, key),
+  setAppSetting: (farmId, key, value) => ipcRenderer.invoke('set-app-setting', farmId, key, value),
+
+  // Database backup / restore
+  backupDatabase: () => ipcRenderer.invoke('backup-database'),
+  restoreDatabase: () => ipcRenderer.invoke('restore-database'),
+
   // License operations
   license: {
     getActivation: () => ipcRenderer.invoke('license-get'),

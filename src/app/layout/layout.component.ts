@@ -336,4 +336,17 @@ export class LayoutComponent implements OnInit, OnDestroy {
     this.pendingState.clearAll();
     this.authService.logout();
   }
+  async backupDatabase() {
+    const result = await this.db.backupDatabase();
+    if (result.success) {
+      alert('Backup saved to: ' + result.path);
+    } else if (!result.cancelled) {
+      alert('Backup failed: ' + (result.error || 'Unknown error'));
+    }
+  }
+
+  async restoreDatabase() {
+    await this.db.restoreDatabase();
+    // App relaunches automatically on success
+  }
 }

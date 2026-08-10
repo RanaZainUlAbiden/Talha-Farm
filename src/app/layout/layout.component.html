@@ -67,7 +67,19 @@
       <div class="license-status-collapsed" *ngIf="sidebarCollapsed" [title]="licenseStatus">
         <span class="status-icon-small">{{ isLicenseActivated ? '✅' : (showLicenseWarning ? '⚠️' : '🚀') }}</span>
       </div>
+
+
       
+      <div class="nav-item" (click)="backupDatabase()"
+        [title]="sidebarCollapsed ? 'Backup Database' : ''">
+        <span class="nav-icon">💾</span>
+        <span class="nav-label" *ngIf="!sidebarCollapsed">Backup</span>
+      </div>
+      <div class="nav-item" (click)="restoreDatabase()"
+        [title]="sidebarCollapsed ? 'Restore Database' : ''">
+        <span class="nav-icon">♻️</span>
+        <span class="nav-label" *ngIf="!sidebarCollapsed">Restore</span>
+      </div>
       <div class="nav-item logout" (click)="logout()"
         [title]="sidebarCollapsed ? 'Logout' : ''">
         <span class="nav-icon">🚪</span>

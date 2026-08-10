@@ -129,6 +129,76 @@ ipcMain.handle('db-run', async (event, sql, params) => {
   return runQuery(sql, params)
 })
 
+const { getAppSetting, setAppSetting } = require('./database')
+
+ipcMain.handle('get-app-setting', async (event, farmId, key) => {
+  return getAppSetting(farmId, key)
+})
+ipcMain.handle('backup-database', async () => {
+  try {
+    const dbPath = path.join(app.getPath('userData'), 'sng_farm.db')
+    const { canceled, filePath } = await dialog.showSaveDialog(mainWindow, {
+      title: 'Save Database Backup',
+      defaultPath: `sng_farm_backup_${new Date().toISOString().split('T')[0]}.db`,
+      filters: [{ name: 'Database Backup', extensions: ['db'] }]
+    })
+    if (canceled || !filePath) return { success: false, cancelled: true }
+
+    const fs = require('fs')
+    fs.copyFileSync(dbPath, filePath)
+    return { success: true, path: filePath }
+  } catch (err) {
+    return { success: false, error: err.message }
+  }
+})
+
+ipcMain.handle('restore-database', async () => {
+  try {
+    const { canceled, filePaths } = await dialog.showOpenDialog(mainWindow, {
+      title: 'Select Database Backup to Restore',
+      filters: [{ name: 'Database Backup', extensions: ['db'] }],
+      properties: ['openFile']
+    })
+    if (canceled || !filePaths || filePaths.length === 0) return { success: false, cancelled: true }
+
+    const confirm = await dialog.showMessageBox(mainWindow, {
+      type: 'warning',
+      title: 'Confirm Restore',
+      message: 'This will replace ALL current data with the selected backup.\n\nThis cannot be undone. Continue?',
+      buttons: ['Cancel', 'Restore'],
+      defaultId: 0,
+      cancelId: 0
+    })
+    if (confirm.response !== 1) return { success: false, cancelled: true }
+
+    const fs = require('fs')
+    const dbPath = path.join(app.getPath('userData'), 'sng_farm.db')
+
+    // Safety net: back up the current (about-to-be-replaced) file first
+    const safetyPath = dbPath + '.pre-restore.' + Date.now() + '.bak'
+    try { fs.copyFileSync(dbPath, safetyPath) } catch (e) {}
+
+    fs.copyFileSync(filePaths[0], dbPath)
+
+    await dialog.showMessageBox(mainWindow, {
+      type: 'info',
+      title: 'Restore Complete',
+      message: 'Database restored successfully. The application will now restart.',
+      buttons: ['OK']
+    })
+
+    app.relaunch()
+    isQuitting = true
+    app.quit()
+    return { success: true }
+  } catch (err) {
+    return { success: false, error: err.message }
+  }
+})
+
+ipcMain.handle('set-app-setting', async (event, farmId, key, value) => {
+  return setAppSetting(farmId, key, value)
+})
 ipcMain.handle('db-get', async (event, sql, params) => {
   return getQuery(sql, params)
 })

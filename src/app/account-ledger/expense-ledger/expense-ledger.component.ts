@@ -7,11 +7,12 @@ import { AuthService } from '../../shared/services/auth.service';
 import { ConfirmDialogComponent } from '../../shared/components/confirm-dialog/confirm-dialog.component';
 import { jsPDF } from 'jspdf';
 import autoTable from 'jspdf-autotable';
+import { DeleteCodeDialogComponent } from '../../shared/components/delete-code-dialog/delete-code-dialog.component';
 
 @Component({
   selector: 'app-expense-ledger',
   standalone: true,
-  imports: [CommonModule, FormsModule, ConfirmDialogComponent],
+  imports: [CommonModule, FormsModule, ConfirmDialogComponent, DeleteCodeDialogComponent],
   templateUrl: './expense-ledger.component.html',
   styleUrl: './expense-ledger.component.scss'
 })
@@ -43,6 +44,7 @@ export class ExpenseLedgerComponent implements OnInit {
 
   // ── Delete ─────────────────────────────────────────────────
   showDeleteDialog = false;
+  showDeleteCodeDialog: boolean = false;
   deletingId: number | null = null;
   isSubmitting = false;
 
@@ -221,7 +223,17 @@ export class ExpenseLedgerComponent implements OnInit {
 
   confirmDelete(id: number) {
     this.deletingId = id;
+    this.showDeleteCodeDialog = true;
+  }
+
+  onDeleteCodeVerified() {
+    this.showDeleteCodeDialog = false;
     this.showDeleteDialog = true;
+  }
+
+  onDeleteCodeCancelled() {
+    this.showDeleteCodeDialog = false;
+    this.deletingId = null;
   }
 
   async onDeleteConfirmed() {
