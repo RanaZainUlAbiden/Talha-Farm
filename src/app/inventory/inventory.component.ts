@@ -36,6 +36,8 @@ dbCategories: any[] = [];
 
 
   showCategoryModal = false;
+  showDeleteCategoryDialog = false;
+  deletingCategoryId: number | null = null;
   newCategoryName = '';
   categoryError = '';
 
@@ -189,6 +191,25 @@ await this.loadCategories();
   await this.loadCategories();
   this.closeCategoryModal();
 }
+
+confirmDeleteCategory(cat: any) {
+    this.deletingCategoryId = cat.category_id;
+    this.showDeleteCategoryDialog = true;
+  }
+
+  async onDeleteCategoryConfirmed() {
+    if (!this.deletingCategoryId) return;
+    await this.db.deleteCategory(this.deletingCategoryId);
+    this.showDeleteCategoryDialog = false;
+    this.deletingCategoryId = null;
+    await this.loadCategories();
+    this.cdr.detectChanges();
+  }
+
+  onDeleteCategoryCancelled() {
+    this.showDeleteCategoryDialog = false;
+    this.deletingCategoryId = null;
+  }
 
   onFormChange(): void {
     if (this.showNewRow) {

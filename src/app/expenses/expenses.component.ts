@@ -198,7 +198,8 @@ export class ExpensesComponent implements OnInit, OnDestroy {
       amount: null,
       ledger_id: 'other',
       payment_type: 'cash',
-      bill_available: 'No'
+      bill_available: 'No',
+      receipt_image: null
     };
   }
 
@@ -235,8 +236,8 @@ export class ExpensesComponent implements OnInit, OnDestroy {
 
         // 1. Insert expense
         await this.db.run(
-          `INSERT INTO expenses (flock_id, ledger_id, date, description, amount, payment_type, bill_available)
-           VALUES (?, ?, ?, ?, ?, ?, ?)`,
+          `INSERT INTO expenses (flock_id, ledger_id, date, description, amount, payment_type, bill_available, receipt_image)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
           [
             this.currentFlock.flock_id,
             ledgerId,
@@ -244,7 +245,8 @@ export class ExpensesComponent implements OnInit, OnDestroy {
             row.description,
             row.amount,
             row.payment_type || 'cash',
-            row.bill_available
+            row.bill_available,
+            row.receipt_image || null
           ]
         );
 
@@ -296,6 +298,32 @@ export class ExpensesComponent implements OnInit, OnDestroy {
     this.pendingRows = [];
   }
 
+
+  onFileSelected(event: any, target: any) {
+    const file = event.target.files?.[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = () => {
+      const img = new Image();
+      img.onload = () => {
+        const canvas = document.createElement('canvas');
+        const maxWidth = 800;
+        let w = img.width, h = img.height;
+        if (w > maxWidth) { h = (h * maxWidth) / w; w = maxWidth; }
+        canvas.width = w; canvas.height = h;
+        canvas.getContext('2d')!.drawImage(img, 0, 0, w, h);
+        target.receipt_image = canvas.toDataURL('image/jpeg', 0.7);
+        this.cdr.detectChanges();
+      };
+      img.src = reader.result as string;
+    };
+    reader.readAsDataURL(file);
+  }
+
+  openImage(base64: string) {
+    const win = window.open('', '_blank');
+    if (win) win.document.write('<img src="' + base64 + '" style="max-width:100%;">');
+  }
   // ── Edit ───────────────────────────────────────────────────
   startEdit(expense: any) {
     if (this.isSaving) return;
@@ -308,6 +336,7 @@ export class ExpensesComponent implements OnInit, OnDestroy {
       ledger_id: expense.ledger_id ? expense.ledger_id : 'other',
       payment_type: expense.payment_type || 'cash',
       bill_available: expense.bill_available,
+      receipt_image: expense.receipt_image || null,
       ledger_entry_id: expense.ledger_entry_id,
       old_ledger_id: expense.ledger_id  // Track original ledger
     };
@@ -333,7 +362,7 @@ export class ExpensesComponent implements OnInit, OnDestroy {
       // 1. Update expense record
       await this.db.run(
         `UPDATE expenses SET date = ?, description = ?, amount = ?,
-          ledger_id = ?, payment_type = ?, bill_available = ?
+          ledger_id = ?, payment_type = ?, bill_available = ?, receipt_image = ?
          WHERE expense_id = ?`,
         [
           this.editForm.date,
@@ -342,6 +371,7 @@ export class ExpensesComponent implements OnInit, OnDestroy {
           newLedgerId,
           this.editForm.payment_type || 'cash',
           this.editForm.bill_available,
+          this.editForm.receipt_image || null,
           expenseId
         ]
       );

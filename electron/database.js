@@ -22,9 +22,9 @@ function createTables(db) {
   db.run(`CREATE TABLE IF NOT EXISTS expenses (expense_id INTEGER PRIMARY KEY AUTOINCREMENT, flock_id INTEGER NOT NULL, ledger_id INTEGER, ledger_entry_id INTEGER, date DATE NOT NULL, description TEXT, amount REAL NOT NULL, bill_available TEXT DEFAULT 'No', payment_type TEXT DEFAULT 'cash', module_type TEXT DEFAULT 'broiler', FOREIGN KEY (flock_id) REFERENCES flocks(flock_id), FOREIGN KEY (ledger_id) REFERENCES ledgers(ledger_id), FOREIGN KEY (ledger_entry_id) REFERENCES ledger_entries(entry_id));`)
   db.run(`CREATE TABLE IF NOT EXISTS ledger_entries (entry_id INTEGER PRIMARY KEY AUTOINCREMENT, ledger_id INTEGER NOT NULL, flock_id INTEGER NOT NULL, date DATE NOT NULL, description TEXT, amount REAL NOT NULL, type TEXT DEFAULT 'debit', source TEXT DEFAULT 'manual', FOREIGN KEY (ledger_id) REFERENCES ledgers(ledger_id), FOREIGN KEY (flock_id) REFERENCES flocks(flock_id));`)
   db.run(`CREATE TABLE IF NOT EXISTS medicine_traders (trader_id INTEGER PRIMARY KEY AUTOINCREMENT, flock_id INTEGER NOT NULL, trader_name TEXT NOT NULL, module_type TEXT DEFAULT 'broiler', FOREIGN KEY (flock_id) REFERENCES flocks(flock_id));`)
-  db.run(`CREATE TABLE IF NOT EXISTS medicine_entries (entry_id INTEGER PRIMARY KEY AUTOINCREMENT, trader_id INTEGER NOT NULL, flock_id INTEGER NOT NULL, date DATE NOT NULL, medicine_name TEXT NOT NULL, quantity REAL NOT NULL, price_per_unit REAL NOT NULL, total_amount REAL NOT NULL, module_type TEXT DEFAULT 'broiler', FOREIGN KEY (trader_id) REFERENCES medicine_traders(trader_id), FOREIGN KEY (flock_id) REFERENCES flocks(flock_id));`)
+  db.run(`CREATE TABLE IF NOT EXISTS medicine_entries (entry_id INTEGER PRIMARY KEY AUTOINCREMENT, trader_id INTEGER NOT NULL, flock_id INTEGER NOT NULL, date DATE NOT NULL, medicine_name TEXT NOT NULL, quantity REAL NOT NULL, price_per_unit REAL NOT NULL, total_amount REAL NOT NULL, module_type TEXT DEFAULT 'broiler', bill_id INTEGER, bill_number TEXT, FOREIGN KEY (trader_id) REFERENCES medicine_traders(trader_id), FOREIGN KEY (flock_id) REFERENCES flocks(flock_id));`)
   db.run(`CREATE TABLE IF NOT EXISTS feed_traders (trader_id INTEGER PRIMARY KEY AUTOINCREMENT, flock_id INTEGER NOT NULL, trader_name TEXT NOT NULL, module_type TEXT DEFAULT 'broiler', FOREIGN KEY (flock_id) REFERENCES flocks(flock_id));`)
-  db.run(`CREATE TABLE IF NOT EXISTS feed_entries (entry_id INTEGER PRIMARY KEY AUTOINCREMENT, trader_id INTEGER NOT NULL, flock_id INTEGER NOT NULL, date DATE NOT NULL, feed_name TEXT NOT NULL, quantity REAL NOT NULL, price_per_unit REAL NOT NULL, total_amount REAL NOT NULL, module_type TEXT DEFAULT 'broiler', FOREIGN KEY (trader_id) REFERENCES feed_traders(trader_id), FOREIGN KEY (flock_id) REFERENCES flocks(flock_id));`)
+  db.run(`CREATE TABLE IF NOT EXISTS feed_entries (entry_id INTEGER PRIMARY KEY AUTOINCREMENT, trader_id INTEGER NOT NULL, flock_id INTEGER NOT NULL, date DATE NOT NULL, feed_name TEXT NOT NULL, quantity REAL NOT NULL, price_per_unit REAL NOT NULL, total_amount REAL NOT NULL, module_type TEXT DEFAULT 'broiler', bill_id INTEGER, bill_number TEXT, FOREIGN KEY (trader_id) REFERENCES feed_traders(trader_id), FOREIGN KEY (flock_id) REFERENCES flocks(flock_id));`)
   db.run(`CREATE TABLE IF NOT EXISTS sales (sale_id INTEGER PRIMARY KEY AUTOINCREMENT, flock_id INTEGER NOT NULL, date DATE NOT NULL, vehicle_number TEXT, broker TEXT, empty_weight REAL, load_weight REAL, bird_weight REAL, rate REAL NOT NULL, total_amount REAL NOT NULL, payment_type TEXT DEFAULT 'cash', driver_name TEXT DEFAULT '', driver_phone TEXT DEFAULT '', receipt_image TEXT, module_type TEXT DEFAULT 'broiler', FOREIGN KEY (flock_id) REFERENCES flocks(flock_id));`)
   db.run(`CREATE TABLE IF NOT EXISTS income (income_id INTEGER PRIMARY KEY AUTOINCREMENT, flock_id INTEGER NOT NULL, date DATE NOT NULL, description TEXT, amount REAL NOT NULL, source TEXT DEFAULT 'manual', module_type TEXT DEFAULT 'broiler', FOREIGN KEY (flock_id) REFERENCES flocks(flock_id));`)
   db.run(`CREATE TABLE IF NOT EXISTS flock_health (health_id INTEGER PRIMARY KEY AUTOINCREMENT, flock_id INTEGER NOT NULL, week_number INTEGER NOT NULL, total_birds INTEGER NOT NULL, mortality INTEGER DEFAULT 0, feed_used REAL DEFAULT 0, avg_weight REAL DEFAULT 0, fcr REAL DEFAULT 0, FOREIGN KEY (flock_id) REFERENCES flocks(flock_id));`)
@@ -35,7 +35,7 @@ db.run(`CREATE TABLE IF NOT EXISTS activation (machine_id TEXT PRIMARY KEY, acti
   db.run(`CREATE TABLE IF NOT EXISTS batches (batch_id INTEGER PRIMARY KEY AUTOINCREMENT, farm_id INTEGER NOT NULL, batch_name TEXT NOT NULL, start_date DATE NOT NULL, initial_birds INTEGER NOT NULL, breed TEXT, status TEXT DEFAULT 'active', FOREIGN KEY (farm_id) REFERENCES farms(farm_id));`)
   db.run(`CREATE TABLE IF NOT EXISTS egg_collection (collection_id INTEGER PRIMARY KEY AUTOINCREMENT, batch_id INTEGER NOT NULL, date DATE NOT NULL, total_eggs INTEGER DEFAULT 0, broken_eggs INTEGER DEFAULT 0, small_grade INTEGER DEFAULT 0, medium_grade INTEGER DEFAULT 0, large_grade INTEGER DEFAULT 0, xl_grade INTEGER DEFAULT 0, FOREIGN KEY (batch_id) REFERENCES batches(batch_id));`)
   db.run(`CREATE TABLE IF NOT EXISTS egg_sales (egg_sale_id INTEGER PRIMARY KEY AUTOINCREMENT, batch_id INTEGER NOT NULL, date DATE NOT NULL, customer_name TEXT, grade TEXT, quantity INTEGER NOT NULL, rate_per_egg REAL NOT NULL, total_amount REAL NOT NULL, payment_type TEXT DEFAULT 'cash', FOREIGN KEY (batch_id) REFERENCES batches(batch_id));`)
-  db.run(`CREATE TABLE IF NOT EXISTS vaccinations (vaccination_id INTEGER PRIMARY KEY AUTOINCREMENT, batch_id INTEGER, flock_id INTEGER, date DATE NOT NULL, vaccine_name TEXT NOT NULL, dose TEXT, notes TEXT, done INTEGER DEFAULT 0, FOREIGN KEY (batch_id) REFERENCES batches(batch_id), FOREIGN KEY (flock_id) REFERENCES flocks(flock_id));`)
+  db.run(`CREATE TABLE IF NOT EXISTS vaccinations (vaccination_id INTEGER PRIMARY KEY AUTOINCREMENT, batch_id INTEGER, flock_id INTEGER, date DATE NOT NULL, vaccine_name TEXT NOT NULL, dose TEXT, notes TEXT, cost REAL DEFAULT 0, done INTEGER DEFAULT 0, bill_id INTEGER, bill_number TEXT, FOREIGN KEY (batch_id) REFERENCES batches(batch_id), FOREIGN KEY (flock_id) REFERENCES flocks(flock_id));`)
   db.run(`CREATE TABLE IF NOT EXISTS layer_mortality (mortality_id INTEGER PRIMARY KEY AUTOINCREMENT, batch_id INTEGER NOT NULL, date DATE NOT NULL, count INTEGER NOT NULL, reason TEXT, FOREIGN KEY (batch_id) REFERENCES batches(batch_id));`)
 
   // ── Distribution Module ─────────────────────────────────
@@ -155,22 +155,10 @@ db.run(`CREATE TABLE IF NOT EXISTS activation (machine_id TEXT PRIMARY KEY, acti
     FOREIGN KEY (farm_id) REFERENCES farms(farm_id)
   );`)
 
-db.run(`CREATE TABLE IF NOT EXISTS categories (category_id INTEGER PRIMARY KEY AUTOINCREMENT, farm_id INTEGER NOT NULL, category_name TEXT NOT NULL, FOREIGN KEY (farm_id) REFERENCES farms(farm_id));`);
-
-try {
-  // Remove any pre-existing duplicate categories before the unique index is created,
-  // otherwise the CREATE UNIQUE INDEX below throws and every statement after it
-  // in this function silently never runs.
-  db.run(`
-    DELETE FROM categories WHERE category_id NOT IN (
-      SELECT MIN(category_id) FROM categories GROUP BY farm_id, category_name
-    )
-  `);
-} catch (e) {}
-
-try {
-  db.run(`CREATE UNIQUE INDEX IF NOT EXISTS idx_categories_farm_name ON categories(farm_id, category_name);`);
-} catch (e) {}
+db.run(`CREATE TABLE IF NOT EXISTS categories (category_id INTEGER PRIMARY KEY AUTOINCREMENT, farm_id INTEGER NOT NULL, category_name TEXT NOT NULL, category_type TEXT DEFAULT 'product', FOREIGN KEY (farm_id) REFERENCES farms(farm_id));`);
+// Dedupe + unique index (scoped per category_type, so "other" can exist once for
+// products and once for expenses without colliding) is handled below in the
+// alterStatements block so it runs correctly on both fresh and existing installs.
 
   // ── Sales Returns Module ───────────────────────────────────
   db.run(`CREATE TABLE IF NOT EXISTS sales_returns (
@@ -187,6 +175,58 @@ try {
     FOREIGN KEY (farm_id) REFERENCES farms(farm_id),
     FOREIGN KEY (bill_id) REFERENCES bills(bill_id)
   );`)
+
+  db.run(`CREATE TABLE IF NOT EXISTS purchase_returns (
+    return_id INTEGER PRIMARY KEY AUTOINCREMENT,
+    farm_id INTEGER NOT NULL,
+    purchase_id INTEGER NOT NULL,
+    return_number TEXT NOT NULL,
+    return_date DATE NOT NULL,
+    quantity REAL NOT NULL,
+    return_amount REAL NOT NULL,
+    refund_method TEXT DEFAULT 'cash',
+    reason TEXT,
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (farm_id) REFERENCES farms(farm_id),
+    FOREIGN KEY (purchase_id) REFERENCES purchase_orders(purchase_id)
+  );`)
+
+  db.run(`CREATE INDEX IF NOT EXISTS idx_purchase_returns_farm ON purchase_returns(farm_id);`)
+  db.run(`CREATE INDEX IF NOT EXISTS idx_purchase_returns_purchase ON purchase_returns(purchase_id);`)
+  db.run(`CREATE TABLE IF NOT EXISTS labour (
+    labour_id INTEGER PRIMARY KEY AUTOINCREMENT,
+    farm_id INTEGER NOT NULL,
+    labour_name TEXT NOT NULL,
+    phone TEXT,
+    role TEXT,
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (farm_id) REFERENCES farms(farm_id)
+  );`)
+  db.run(`CREATE TABLE IF NOT EXISTS labour_payments (
+    payment_id INTEGER PRIMARY KEY AUTOINCREMENT,
+    labour_id INTEGER NOT NULL,
+    flock_id INTEGER NOT NULL,
+    date DATE NOT NULL,
+    description TEXT,
+    amount REAL NOT NULL,
+    payment_type TEXT DEFAULT 'cash',
+    module_type TEXT DEFAULT 'broiler',
+    FOREIGN KEY (labour_id) REFERENCES labour(labour_id)
+  );`)
+  db.run(`CREATE INDEX IF NOT EXISTS idx_labour_farm ON labour(farm_id);`)
+  db.run(`CREATE INDEX IF NOT EXISTS idx_labour_payments_flock ON labour_payments(flock_id, module_type);`)
+  db.run(`CREATE TABLE IF NOT EXISTS hen_sales (
+    hen_sale_id INTEGER PRIMARY KEY AUTOINCREMENT,
+    batch_id INTEGER NOT NULL,
+    date DATE NOT NULL,
+    customer_name TEXT,
+    quantity INTEGER NOT NULL,
+    rate_per_hen REAL NOT NULL,
+    total_amount REAL NOT NULL,
+    payment_type TEXT DEFAULT 'cash',
+    FOREIGN KEY (batch_id) REFERENCES batches(batch_id)
+  );`)
+  db.run(`CREATE INDEX IF NOT EXISTS idx_hen_sales_batch ON hen_sales(batch_id);`)
 
   db.run(`CREATE TABLE IF NOT EXISTS sales_return_items (
     item_id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -242,7 +282,7 @@ try {
 // ATTEMPT TO RECOVER DATA FROM CORRUPTED DB
 // =============================================
 function attemptRecovery(dbPath, oldDb, SQL) {
-  const tables = ['farms', 'flocks', 'ledgers', 'expenses', 'ledger_entries', 'medicine_traders', 'medicine_entries', 'feed_traders', 'feed_entries', 'sales', 'income', 'flock_health', 'balance', 'brokers', 'activation', 'batches', 'egg_collection', 'egg_sales', 'vaccinations', 'layer_mortality', 'products', 'customers', 'suppliers', 'purchase_orders', 'sales_orders', 'customer_payments', 'product_batches', 'batch_transactions', 'customer_ledger', 'supplier_ledger', 'bank_accounts', 'bank_ledger', 'expense_ledger', 'categories', 'sales_returns', 'sales_return_items', 'internal_transfers']
+  const tables = ['farms', 'flocks', 'ledgers', 'expenses', 'ledger_entries', 'medicine_traders', 'medicine_entries', 'feed_traders', 'feed_entries', 'sales', 'income', 'flock_health', 'balance', 'brokers', 'activation', 'batches', 'egg_collection', 'egg_sales', 'vaccinations', 'layer_mortality', 'products', 'customers', 'suppliers', 'purchase_orders', 'sales_orders', 'customer_payments', 'product_batches', 'batch_transactions', 'customer_ledger', 'supplier_ledger', 'bank_accounts', 'bank_ledger', 'expense_ledger', 'categories', 'sales_returns', 'sales_return_items', 'internal_transfers','purchase_returns','labour', 'labour_payments', 'hen_sales']
   
   const newDb = new SQL.Database()
   createTables(newDb)
@@ -343,6 +383,10 @@ async function initializeDatabase() {
   createTables(db)
 
   const alterStatements = [
+    `ALTER TABLE batches ADD COLUMN end_date DATE`,
+        `ALTER TABLE purchase_orders ADD COLUMN status TEXT DEFAULT 'completed'`,
+    `ALTER TABLE expenses ADD COLUMN receipt_image TEXT`,
+    `ALTER TABLE purchase_orders ADD COLUMN receipt_image TEXT`,
 `ALTER TABLE activation ADD COLUMN activation_cycle INTEGER DEFAULT 0`,
     `ALTER TABLE activation ADD COLUMN trial_start_date TEXT`,
 `ALTER TABLE activation ADD COLUMN last_launch_date TEXT`,
@@ -373,14 +417,22 @@ async function initializeDatabase() {
     `ALTER TABLE bank_ledger ADD COLUMN transaction_number TEXT`,
     // 🔥 Make vaccinations work for both Broiler and Layer
     `ALTER TABLE vaccinations ADD COLUMN flock_id INTEGER`,
+    `ALTER TABLE vaccinations ADD COLUMN cost REAL DEFAULT 0`,
     // Ensure batch_id can be null in vaccinations if it was previously NOT NULL
     `ALTER TABLE vaccinations RENAME TO vaccinations_old`,
-    `CREATE TABLE vaccinations (vaccination_id INTEGER PRIMARY KEY AUTOINCREMENT, batch_id INTEGER, flock_id INTEGER, date DATE NOT NULL, vaccine_name TEXT NOT NULL, dose TEXT, notes TEXT, done INTEGER DEFAULT 0, FOREIGN KEY (batch_id) REFERENCES batches(batch_id), FOREIGN KEY (flock_id) REFERENCES flocks(flock_id))`,
+    `CREATE TABLE vaccinations (vaccination_id INTEGER PRIMARY KEY AUTOINCREMENT, batch_id INTEGER, flock_id INTEGER, date DATE NOT NULL, vaccine_name TEXT NOT NULL, dose TEXT, notes TEXT, cost REAL DEFAULT 0, done INTEGER DEFAULT 0, FOREIGN KEY (batch_id) REFERENCES batches(batch_id), FOREIGN KEY (flock_id) REFERENCES flocks(flock_id))`,
     `INSERT INTO vaccinations (vaccination_id, batch_id, date, vaccine_name, dose, notes, done) SELECT vaccination_id, batch_id, date, vaccine_name, dose, notes, done FROM vaccinations_old`,
     `DROP TABLE vaccinations_old`,
     `ALTER TABLE internal_transfers ADD COLUMN target_type TEXT`,
     `ALTER TABLE internal_transfers ADD COLUMN reference_id INTEGER`,
     `ALTER TABLE purchase_orders ADD COLUMN batch_id INTEGER`,
+    `ALTER TABLE categories ADD COLUMN category_type TEXT DEFAULT 'product'`,
+    `ALTER TABLE medicine_entries ADD COLUMN bill_id INTEGER`,
+    `ALTER TABLE medicine_entries ADD COLUMN bill_number TEXT`,
+    `ALTER TABLE feed_entries ADD COLUMN bill_id INTEGER`,
+    `ALTER TABLE feed_entries ADD COLUMN bill_number TEXT`,
+    `ALTER TABLE vaccinations ADD COLUMN bill_id INTEGER`,
+    `ALTER TABLE vaccinations ADD COLUMN bill_number TEXT`,
   ]
   
   for (const sql of alterStatements) {
@@ -400,6 +452,26 @@ async function initializeDatabase() {
         WHERE e.ledger_id IS NOT NULL
       )
     `)
+  } catch(e) {}
+
+  try {
+    db.run(`DROP INDEX IF EXISTS idx_categories_farm_name`)
+  } catch(e) {}
+
+  try {
+    db.run(`UPDATE categories SET category_type = 'product' WHERE category_type IS NULL`)
+  } catch(e) {}
+
+  try {
+    db.run(`
+      DELETE FROM categories WHERE category_id NOT IN (
+        SELECT MIN(category_id) FROM categories GROUP BY farm_id, category_type, category_name
+      )
+    `)
+  } catch(e) {}
+
+  try {
+    db.run(`CREATE UNIQUE INDEX IF NOT EXISTS idx_categories_farm_type_name ON categories(farm_id, category_type, category_name)`)
   } catch(e) {}
 
   try {
@@ -472,9 +544,13 @@ function saveDatabase(dbPath) {
 // RUN QUERY (INSERT/UPDATE/DELETE) - FIXED
 // =============================================
 const PRIMARY_KEY_MAP = {
+  purchase_returns: 'return_id',
+  labour: 'labour_id',
+  labour_payments: 'payment_id',
   purchase_orders: 'purchase_id',
   sales_orders: 'order_id',
   product_batches: 'batch_id',
+  hen_sales: 'hen_sale_id',
   batch_transactions: 'transaction_id',
   customer_ledger: 'ledger_id',
   supplier_ledger: 'ledger_id',

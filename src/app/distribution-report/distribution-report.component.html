@@ -68,8 +68,8 @@
     <div class="sections-panel-header">
       <span class="sections-title">📋 Sections to Include in PDF</span>
       <div class="sections-bulk">
-        <button class="bulk-btn" (click)="sections.inventory=true; sections.purchases=true; sections.sales=true; sections.expenses=true; sections.summary=true; savePreferences()">All</button>
-        <button class="bulk-btn" (click)="sections.inventory=false; sections.purchases=false; sections.sales=false; sections.expenses=false; sections.summary=false; savePreferences()">None</button>
+        <button class="bulk-btn" (click)="sections.inventory=true; sections.purchases=true; sections.purchaseReturns=true; sections.sales=true; sections.returns=true; sections.expenses=true; sections.summary=true; savePreferences()">All</button>
+        <button class="bulk-btn" (click)="sections.inventory=false; sections.purchases=false; sections.purchaseReturns=false; sections.sales=false; sections.returns=false; sections.expenses=false; sections.summary=false; savePreferences()">None</button>
       </div>
     </div>
 
@@ -98,6 +98,24 @@
         <span class="checkbox-info">
           <span class="checkbox-label">Purchases</span>
           <span class="checkbox-meta">{{ totalPurchasesCount }} orders — Rs. {{ totalPurchases | number:'1.0-0' }}</span>
+        </span>
+      </label>
+
+      <label class="section-checkbox" [class.checked]="sections.returns">
+        <input type="checkbox" [(ngModel)]="sections.returns" (change)="savePreferences()" />
+        <span class="checkbox-icon">↩</span>
+        <span class="checkbox-info">
+          <span class="checkbox-label">Sales Returns</span>
+          <span class="checkbox-meta">{{ totalReturnsCount }} returns — Rs. {{ totalReturns | number:'1.0-0' }}</span>
+        </span>
+      </label>
+
+      <label class="section-checkbox" [class.checked]="sections.purchaseReturns">
+        <input type="checkbox" [(ngModel)]="sections.purchaseReturns" (change)="savePreferences()" />
+        <span class="checkbox-icon">↩</span>
+        <span class="checkbox-info">
+          <span class="checkbox-label">Purchase Returns</span>
+          <span class="checkbox-meta">{{ totalPurchaseReturnsCount }} returns — Rs. {{ totalPurchaseReturns | number:'1.0-0' }}</span>
         </span>
       </label>
 
@@ -271,6 +289,90 @@
         <tr class="total-row">
           <td colspan="4"><strong>Total Expenses</strong></td>
           <td class="amount"><strong>Rs. {{ totalExpenses | number:'1.0-0' }}</strong></td>
+        </tr>
+      </tbody>
+    </table>
+  </div>
+
+  <!-- Sales Returns Table -->
+  <div class="table-card" *ngIf="!isLoading && sections.returns">
+    <h4>↩ Sales Returns</h4>
+    <div class="empty-state" *ngIf="filteredReturns.length === 0">
+      <p>No sales returns recorded yet.</p>
+    </div>
+    <table *ngIf="filteredReturns.length > 0">
+      <thead>
+        <tr>
+          <th>Date</th>
+          <th>Return #</th>
+          <th>Bill #</th>
+          <th>Customer</th>
+          <th>Amount</th>
+          <th>Refund</th>
+          <th>Method</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr *ngFor="let r of filteredReturns">
+          <td>{{ r.return_date | date:'dd-MM-yyyy' }}</td>
+          <td class="bill-number">{{ r.return_number }}</td>
+          <td>{{ r.bill_number || '—' }}</td>
+          <td>{{ r.customer_name || 'Walk-in' }}</td>
+          <td class="amount">Rs. {{ r.return_amount | number:'1.0-0' }}</td>
+          <td>Rs. {{ r.refund_amount | number:'1.0-0' }}</td>
+          <td>
+            <span class="payment-badge" [class.cash]="r.refund_method === 'cash'">
+              {{ r.refund_method || 'cash' }}
+            </span>
+          </td>
+        </tr>
+        <tr class="total-row">
+          <td colspan="4"><strong>Total Sales Returns</strong></td>
+          <td class="amount"><strong>Rs. {{ totalReturns | number:'1.0-0' }}</strong></td>
+          <td colspan="2"></td>
+        </tr>
+      </tbody>
+    </table>
+  </div>
+
+  <!-- Purchase Returns Table -->
+  <div class="table-card" *ngIf="!isLoading && sections.purchaseReturns">
+    <h4>↩ Purchase Returns</h4>
+    <div class="empty-state" *ngIf="filteredPurchaseReturns.length === 0">
+      <p>No purchase returns recorded yet.</p>
+    </div>
+    <table *ngIf="filteredPurchaseReturns.length > 0">
+      <thead>
+        <tr>
+          <th>Date</th>
+          <th>Return #</th>
+          <th>Product</th>
+          <th>Supplier</th>
+          <th>Qty</th>
+          <th>Amount</th>
+          <th>Method</th>
+          <th>Reason</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr *ngFor="let r of filteredPurchaseReturns">
+          <td>{{ r.return_date | date:'dd-MM-yyyy' }}</td>
+          <td class="bill-number">{{ r.return_number }}</td>
+          <td class="product-name">{{ r.product_name || '—' }}</td>
+          <td>{{ r.supplier_name || '—' }}</td>
+          <td>{{ r.quantity }}</td>
+          <td class="amount">Rs. {{ r.return_amount | number:'1.0-0' }}</td>
+          <td>
+            <span class="payment-badge" [class.cash]="r.refund_method === 'cash'">
+              {{ r.refund_method || 'cash' }}
+            </span>
+          </td>
+          <td>{{ r.reason || '—' }}</td>
+        </tr>
+        <tr class="total-row">
+          <td colspan="5"><strong>Total Purchase Returns</strong></td>
+          <td class="amount"><strong>Rs. {{ totalPurchaseReturns | number:'1.0-0' }}</strong></td>
+          <td colspan="2"></td>
         </tr>
       </tbody>
     </table>

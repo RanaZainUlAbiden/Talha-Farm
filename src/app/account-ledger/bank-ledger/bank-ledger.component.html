@@ -57,7 +57,7 @@
             <td>
               <button class="btn-view-ledger" (click)="selectBank(b)">View Ledger</button>
               <button class="btn-edit" (click)="openBankForm(b)">✏️</button>
-              <button class="btn-delete" (click)="confirmDelete(b.bank_id, 'bank')">🗑️</button>
+              <!-- <button class="btn-delete" (click)="confirmDelete(b.bank_id, 'bank')">🗑️</button> -->
             </td>
           </tr>
           <tr *ngIf="bankAccounts.length === 0">
@@ -128,12 +128,12 @@
             <td class="withdrawal" *ngIf="entry.credit > 0">Rs. {{ entry.credit | number:'1.0-0' }}</td>
             <td class="withdrawal" *ngIf="entry.credit === 0">—</td>
             <td class="balance" [class.negative]="entry.balance < 0">Rs. {{ entry.balance | number:'1.0-0' }}</td>
-            <td>
-              <button class="btn-delete" (click)="confirmDelete(entry.ledger_id, 'entry')">🗑️</button>
-            </td>
+            <!-- <td> -->
+              <!-- <button class="btn-delete" (click)="confirmDelete(entry.ledger_id, 'entry')">🗑️</button> -->
+            <!-- </td> -->
           </tr>
           <tr *ngIf="filteredLedgerEntries.length === 0">
-            <td colspan="7" class="empty-row">
+            <td colspan="6" class="empty-row">
               {{ transactionNumberSearch ? 'No transactions found matching "' + transactionNumberSearch + '"' : 'No transactions found' }}
             </td>
           </tr>

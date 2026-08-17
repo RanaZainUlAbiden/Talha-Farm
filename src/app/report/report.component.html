@@ -50,8 +50,8 @@
       <div class="sections-panel-header">
         <span class="sections-title">📋 Sections to Include in PDF</span>
         <div class="sections-bulk">
-          <button class="bulk-btn" (click)="sections.expenses=true; sections.ledgers=true; sections.medicine=true; sections.feed=true; sections.vaccinations=true; sections.sales=true; sections.income=true; sections.health=true; sections.profitLoss=true; savePreferences()">All</button>
-          <button class="bulk-btn" (click)="sections.expenses=false; sections.ledgers=false; sections.medicine=false; sections.feed=false; sections.vaccinations=false; sections.sales=false; sections.income=false; sections.health=false; sections.profitLoss=false; savePreferences()">None</button>
+          <button class="bulk-btn" (click)="sections.expenses=true; sections.ledgers=true; sections.medicine=true; sections.feed=true; sections.vaccinations=true; sections.sales=true; sections.income=true; sections.health=true; sections.labour=true; sections.profitLoss=true; savePreferences()">All</button>
+          <button class="bulk-btn" (click)="sections.expenses=false; sections.ledgers=false; sections.medicine=false; sections.feed=false; sections.vaccinations=false; sections.sales=false; sections.income=false; sections.health=false; sections.labour=false; sections.profitLoss=false; savePreferences()">None</button>
         </div>
       </div>
 
@@ -71,7 +71,7 @@
           <span class="checkbox-icon">📒</span>
           <span class="checkbox-info">
             <span class="checkbox-label">Ledgers</span>
-            <span class="checkbox-meta">{{ ledgers.length }} ledgers</span>
+            <span class="checkbox-meta">{{ ledgers.length }} ledgers — Rs. {{ totalLedgerDebit | number:'1.0-0' }} debit</span>
           </span>
         </label>
 
@@ -80,7 +80,7 @@
           <span class="checkbox-icon">💊</span>
           <span class="checkbox-info">
             <span class="checkbox-label">Medicine</span>
-            <span class="checkbox-meta">{{ traders.length }} traders</span>
+            <span class="checkbox-meta">{{ traders.length }} traders — Rs. {{ totalMedicine | number:'1.0-0' }}</span>
           </span>
         </label>
 
@@ -89,7 +89,16 @@
           <span class="checkbox-icon">🌾</span>
           <span class="checkbox-info">
             <span class="checkbox-label">Feed</span>
-            <span class="checkbox-meta">{{ feedTraders.length }} traders</span>
+            <span class="checkbox-meta">{{ feedTraders.length }} traders — Rs. {{ totalFeed | number:'1.0-0' }}</span>
+          </span>
+        </label>
+
+        <label class="section-checkbox" [class.checked]="sections.labour">
+          <input type="checkbox" [(ngModel)]="sections.labour" (change)="savePreferences()" />
+          <span class="checkbox-icon">👷</span>
+          <span class="checkbox-info">
+            <span class="checkbox-label">Labour</span>
+            <span class="checkbox-meta">{{ labourPayments.length }} payments — Rs. {{ totalLabour | number:'1.0-0' }}</span>
           </span>
         </label>
 
@@ -98,7 +107,7 @@
           <span class="checkbox-icon">💉</span>
           <span class="checkbox-info">
             <span class="checkbox-label">Vaccinations</span>
-            <span class="checkbox-meta">{{ vaccinations.length }} records</span>
+            <span class="checkbox-meta">{{ vaccinations.length }} records — Rs. {{ totalVaccinationCost | number:'1.0-0' }}</span>
           </span>
         </label>
 

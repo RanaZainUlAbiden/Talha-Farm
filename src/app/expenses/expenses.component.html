@@ -76,6 +76,7 @@
           <th>Amount (Rs.)</th>
           <th>Payment</th>
           <th>Bill</th>
+          <th>Photo</th>
           <th>Actions</th>
         </tr>
       </thead>
@@ -123,6 +124,11 @@
               <option value="No">No</option>
             </select>
           </td>
+          <td>
+            <button class="btn-upload-photo" type="button" (click)="fileInput.click()" title="Upload photo">📷</button>
+            <input type="file" #fileInput hidden accept="image/*" (change)="onFileSelected($event, row)"/>
+            <div class="photo-thumb" *ngIf="row.receipt_image" (click)="openImage(row.receipt_image)"><img [src]="row.receipt_image"/></div>
+          </td>
           <td class="actions">
             <button class="btn-remove-row"
               (click)="removePendingRow(i)"
@@ -158,6 +164,7 @@
                 {{ expense.bill_available }}
               </span>
             </td>
+            <td><div class="photo-thumb" *ngIf="expense.receipt_image" (click)="openImage(expense.receipt_image)"><img [src]="expense.receipt_image" title="Click to view full"/></div></td>
             <td class="actions">
               <button
                 class="btn-edit"
@@ -210,6 +217,12 @@
                 <option value="No">No</option>
               </select>
             </td>
+            <td>
+              <button class="btn-upload-photo" type="button" (click)="editFileInput.click()" title="Change photo">📷</button>
+              <input type="file" #editFileInput hidden accept="image/*" (change)="onFileSelected($event, editForm)"/>
+              <div class="photo-thumb" *ngIf="editForm.receipt_image" (click)="openImage(editForm.receipt_image)"><img [src]="editForm.receipt_image"/></div>
+              <button class="btn-remove-photo" *ngIf="editForm.receipt_image" (click)="editForm.receipt_image = null">✕</button>
+            </td>
             <td class="actions">
               <button
                 class="btn-save"
@@ -233,7 +246,7 @@
         <tr>
           <td colspan="4" class="total-label">Total</td>
           <td class="total-amount">Rs. {{ totalExpenses | number:'1.0-0' }}</td>
-          <td colspan="3"></td>
+          <td colspan="4"></td>
         </tr>
       </tfoot>
     </table>

@@ -25,7 +25,7 @@
     <div class="summary-grid">
       <div class="summary-card">
         <span class="summary-label">Eligible Bills</span>
-        <strong>{{ bills.length }}</strong>
+        <strong>{{ filteredBills.length }}</strong>
       </div>
       <div class="summary-card">
         <span class="summary-label">Total Returns</span>
@@ -39,6 +39,22 @@
 
     <!-- Bills Table -->
     <div class="section-title">Bills Available for Return</div>
+
+    <div class="search-container" style="margin-bottom: 12px;">
+      <div class="search-box">
+        <span class="search-icon">🔍</span>
+        <input
+          type="text"
+          class="search-input"
+          placeholder="Search by bill number or customer..."
+          [(ngModel)]="billSearchTerm"
+          (ngModelChange)="filterBills()"
+        />
+        <button class="search-clear" *ngIf="billSearchTerm" (click)="clearBillSearch()">✕</button>
+      </div>
+      <span class="search-results" *ngIf="billSearchTerm">Found {{ filteredBills.length }} result(s)</span>
+    </div>
+
     <div class="table-card">
       <table>
         <thead>
@@ -54,7 +70,7 @@
           </tr>
         </thead>
         <tbody>
-          <tr *ngFor="let bill of bills">
+          <tr *ngFor="let bill of filteredBills">
             <td class="strong bill-num">{{ bill.bill_number }}</td>
             <td>{{ bill.bill_date | dateOnly }}</td>
             <td>{{ bill.customer_name || '—' }}</td>
@@ -75,6 +91,9 @@
                 ↩ Return
               </button>
             </td>
+          </tr>
+          <tr *ngIf="filteredBills.length === 0 && bills.length > 0">
+            <td colspan="8" class="empty-row">No bills found matching "{{ billSearchTerm }}"</td>
           </tr>
           <tr *ngIf="bills.length === 0">
             <td colspan="8" class="empty-row">No bills available for return.</td>
@@ -97,6 +116,7 @@
             <th class="text-right">Refund</th>
             <th>Method</th>
             <th>Reason</th>
+            <th>Action</th>
           </tr>
         </thead>
         <tbody>
@@ -113,6 +133,10 @@
               </span>
             </td>
             <td class="reason-cell">{{ r.reason || '—' }}</td>
+            <td>
+              <button class="btn-return" *ngIf="canEditReturn(r)" (click)="editReturn(r)">✎ Edit</button>
+              <span *ngIf="!canEditReturn(r)" class="reason-cell" title="This bill has more than one return, so it can't be edited from here.">—</span>
+            </td>
           </tr>
         </tbody>
       </table>
@@ -131,6 +155,7 @@
         <span class="badge" [ngClass]="'badge-' + (selectedBill.status || 'completed')">
           {{ selectedBill.status || 'completed' }}
         </span>
+        <span class="badge badge-bank" *ngIf="editingReturnId">Editing {{ editingReturnNumber }}</span>
       </div>
       <div class="bill-info-amounts">
         <span>Original: <strong>Rs. {{ selectedBill.total_amount | number:'1.0-0' }}</strong></span>
@@ -215,7 +240,7 @@
         class="btn-save"
         [disabled]="isSaving || totalReturnAmount <= 0"
         (click)="saveReturn()">
-        <span *ngIf="!isSaving">✔ Save Return</span>
+        <span *ngIf="!isSaving">✔ {{ editingReturnId ? 'Update Return' : 'Save Return' }}</span>
         <span *ngIf="isSaving">Saving...</span>
       </button>
     </div>

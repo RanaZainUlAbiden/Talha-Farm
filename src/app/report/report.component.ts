@@ -33,6 +33,7 @@ export class ReportComponent implements OnInit, OnDestroy {
   sales: any[] = [];
   income: any[] = [];
   health: any[] = [];
+  labourPayments: any[] = [];
   isGenerating = false;
   private subs = new Subscription();
   private reportLoadToken = 0;
@@ -47,6 +48,7 @@ export class ReportComponent implements OnInit, OnDestroy {
     sales: true,
     income: true,
     health: true,
+    labour: true,
     profitLoss: true
   };
 
@@ -63,8 +65,28 @@ export class ReportComponent implements OnInit, OnDestroy {
   get totalSaleAmount(): number {
     return this.sales.reduce((s, sale) => s + (sale.total_amount || 0), 0);
   }
+  get totalMedicine(): number {
+    return this.medicineEntries.reduce((s, e) => s + (e.total_amount || 0), 0);
+  }
+  get totalFeed(): number {
+    return this.feedEntries.reduce((s, e) => s + (e.total_amount || 0), 0);
+  }
+  get totalVaccinationCost(): number {
+    return this.vaccinations.reduce((s, v) => s + (v.cost || 0), 0);
+  }
+  get totalLabour(): number {
+    return this.labourPayments.reduce((s, p) => s + (p.amount || 0), 0);
+  }
+  get totalLedgerDebit(): number {
+    // Only entries NOT already sourced from Expenses — those are already
+    // counted in totalExpenses, so including them here would subtract the
+    // same cost twice.
+    return this.ledgerEntries
+      .filter(e => e.type === 'debit' && e.source !== 'expense')
+      .reduce((s, e) => s + (e.amount || 0), 0);
+  }
   get profitLoss(): number {
-    return this.totalIncome - this.totalExpenses;
+    return this.totalIncome - this.totalExpenses - this.totalMedicine - this.totalFeed - this.totalVaccinationCost - this.totalLabour - this.totalLedgerDebit;
   }
 
   constructor(
@@ -92,6 +114,7 @@ export class ReportComponent implements OnInit, OnDestroy {
       this.sales            = resolved.sales            || [];
       this.income           = resolved.income           || [];
       this.health           = resolved.health           || [];
+      this.labourPayments   = resolved.labourPayments    || [];
     }
 
     this.loadPreferences();
@@ -123,6 +146,7 @@ export class ReportComponent implements OnInit, OnDestroy {
       this.sales = [];
       this.income = [];
       this.health = [];
+      this.labourPayments = [];
       this.cdr.detectChanges();
       return;
     }
@@ -139,7 +163,8 @@ export class ReportComponent implements OnInit, OnDestroy {
       vaccinations,
       sales,
       income,
-      health
+      health,
+      labourPayments
     ] = await Promise.all([
       this.db.get(
         `SELECT e.*, l.ledger_name FROM expenses e
@@ -197,6 +222,12 @@ export class ReportComponent implements OnInit, OnDestroy {
         `SELECT * FROM flock_health WHERE flock_id = ?
          ORDER BY week_number ASC`,
         [flockId]
+      ),
+      this.db.get(
+        `SELECT lp.*, l.labour_name FROM labour_payments lp
+         JOIN labour l ON lp.labour_id = l.labour_id
+         WHERE lp.flock_id = ? AND lp.module_type = 'broiler' ORDER BY lp.date ASC`,
+        [flockId]
       )
     ]);
 
@@ -213,6 +244,7 @@ export class ReportComponent implements OnInit, OnDestroy {
     this.sales = sales.success ? sales.data : [];
     this.income = income.success ? income.data : [];
     this.health = health.success ? health.data : [];
+    this.labourPayments = labourPayments.success ? labourPayments.data : [];
     this.cdr.detectChanges();
   }
 
@@ -375,18 +407,20 @@ try {
   doc.addImage(imgData, 'JPEG', 14, coverY, logoWidth, logoHeight);
 
   doc.setFont('helvetica', 'bold');
-  doc.setFontSize(20);
+  doc.setFontSize(17);
   doc.setTextColor(...BLACK);
-  doc.text('FARM REPORT', textX, coverY + 8);
+  doc.text('TALHA PROTEIN FARMS', textX, coverY + 8);
 
   doc.setFont('helvetica', 'normal');
-  doc.setFontSize(12);
+  doc.setFontSize(9);
   doc.setTextColor(...GRAY);
-  doc.text(farmName, textX, coverY + 16);
+  doc.text('Chak No 392 JB, Chatala, Toba Tek Singh', textX, coverY + 14);
+  doc.text('Muhammad Tariq: 0321-7546630', textX, coverY + 19);
+  doc.text('Ghulam Abbas: 0322-7778826', textX, coverY + 24);
 
   doc.setFontSize(10);
-  doc.text('Flock: ' + flockName, textX, coverY + 23);
-  doc.text('Generated: ' + today, textX, coverY + 30);
+  doc.text('Flock: ' + flockName, textX, coverY + 30);
+  doc.text('Generated: ' + today, textX, coverY + 35);
 
   coverY += logoHeight + 8;
 } catch {}
@@ -409,6 +443,11 @@ coverY += 8;
       const summaryLines: [string, string][] = [
         ['Total Income',     `Rs. ${this.totalIncome.toLocaleString()}`],
         ['Total Expenses',   `Rs. ${this.totalExpenses.toLocaleString()}`],
+        ['Medicine Cost',    `Rs. ${this.totalMedicine.toLocaleString()}`],
+        ['Feed Cost',        `Rs. ${this.totalFeed.toLocaleString()}`],
+        ['Vaccination Cost', `Rs. ${this.totalVaccinationCost.toLocaleString()}`],
+        ['Labour Cost',      `Rs. ${this.totalLabour.toLocaleString()}`],
+        ['Ledger Debit',     `Rs. ${this.totalLedgerDebit.toLocaleString()}`],
         [this.profitLoss >= 0 ? 'Net Profit' : 'Net Loss',
                              `Rs. ${Math.abs(this.profitLoss).toLocaleString()}`],
         ['Total Weight Sold',`${this.totalSaleWeight.toFixed(0)} kg`],
@@ -445,7 +484,7 @@ coverY += 8;
           doc.setFontSize(8);
           doc.setFont('helvetica', 'normal');
           doc.setTextColor(...GRAY);
-          doc.text(farmName, 14, 9);
+          doc.text('Talha Protein Farms', 14, 9);
           doc.text(flockName, pageWidth / 2, 9, { align: 'center' });
           doc.text(today, pageWidth - 14, 9, { align: 'right' });
 
@@ -577,19 +616,42 @@ coverY += 8;
       }
 
       // ════════════════════════════════════════════════════════
+      // LABOUR
+      // ════════════════════════════════════════════════════════
+      if (this.sections.labour && this.labourPayments.length > 0) {
+        addPage('Labour Payments');
+        bwTable(
+          y,
+          [['Date', 'Labour', 'Description', 'Payment Type', 'Amount (Rs.)']],
+          this.labourPayments.map(p => [
+            formatDate(p.date),
+            p.labour_name || '—',
+            p.description || '—',
+            p.payment_type === 'cash' ? 'Cash' : 'Credit',
+            (p.amount || 0).toLocaleString()
+          ]),
+          [['', '', '', 'Total', this.totalLabour.toLocaleString()]],
+          4
+        );
+      }
+
+      // ════════════════════════════════════════════════════════
       // VACCINATIONS
       // ════════════════════════════════════════════════════════
       if (this.sections.vaccinations && this.vaccinations.length > 0) {
         addPage('Vaccinations');
         bwTable(
           y,
-          [['Date', 'Vaccine', 'Dose', 'Notes']],
+          [['Date', 'Vaccine', 'Dose', 'Notes', 'Cost (Rs.)']],
           this.vaccinations.map(v => [
             formatDate(v.date),
             v.vaccine_name || '—',
             v.dose || '—',
-            v.notes || '—'
-          ])
+            v.notes || '—',
+            (v.cost || 0).toLocaleString()
+          ]),
+          [['', '', '', 'Total', this.totalVaccinationCost.toLocaleString()]],
+          4
         );
       }
 
@@ -641,8 +703,13 @@ coverY += 8;
           y,
           [],
           [
-            ['Total Income',   `Rs. ${this.totalIncome.toLocaleString()}`],
-            ['Total Expenses', `Rs. ${this.totalExpenses.toLocaleString()}`],
+            ['Total Income',     `Rs. ${this.totalIncome.toLocaleString()}`],
+            ['Total Expenses',   `Rs. ${this.totalExpenses.toLocaleString()}`],
+            ['Medicine Cost',    `Rs. ${this.totalMedicine.toLocaleString()}`],
+            ['Feed Cost',        `Rs. ${this.totalFeed.toLocaleString()}`],
+            ['Vaccination Cost', `Rs. ${this.totalVaccinationCost.toLocaleString()}`],
+            ['Labour Cost',      `Rs. ${this.totalLabour.toLocaleString()}`],
+            ['Ledger Debit',     `Rs. ${this.totalLedgerDebit.toLocaleString()}`],
             [
               this.profitLoss >= 0 ? 'NET PROFIT' : 'NET LOSS',
               `Rs. ${Math.abs(this.profitLoss).toLocaleString()}`

@@ -29,14 +29,18 @@ export class EggSalesComponent implements OnInit, OnDestroy {
   isSaving = false;
   isSavingAll = false;
   errorMessage = '';
+  defaultRate: number | null = null;
 
   // Available (sellable) eggs per batch = collected (total - broken) minus already sold.
   availableByBatch: { [batchId: number]: number } = {};
   collectedByBatch: { [batchId: number]: number } = {};
+  // 🔥 NEW: per-grade tracking, so a sale of "small" eggs can't oversell
+  // against total stock when only some of that stock is actually small.
+  availableByGrade: { [batchId: number]: { small: number; medium: number; large: number; xl: number } } = {};
   private editOriginalQty = 0;
   private editOriginalBatch: any = null;
   private editOriginalDate: string = '';
-
+private editOriginalGrade: string = '';
   currentPage = 1;
   pageSize = 20;
 
@@ -81,6 +85,15 @@ export class EggSalesComponent implements OnInit, OnDestroy {
     return Math.max(0, this.availableByBatch[batchId] ?? 0);
   }
 
+  // 🔥 NEW: available stock for a specific grade. "mixed" sales aren't tied
+  // to one grade, so they fall back to the overall batch total.
+  getAvailableForGrade(batchId: number, grade: string): number {
+    if (!grade || grade === 'mixed') return this.getAvailableEggs(batchId);
+    const g = this.availableByGrade[batchId];
+    if (!g) return 0;
+    return Math.max(0, (g as any)[grade] ?? 0);
+  }
+
   @HostListener('window:keydown', ['$event'])
   handleKeyboard(event: KeyboardEvent) {
     if (event.ctrlKey && event.key === 'a') { event.preventDefault(); this.addPendingRow(); }
@@ -93,7 +106,10 @@ export class EggSalesComponent implements OnInit, OnDestroy {
     this.currentFarm = this.authService.getCurrentFarm();
     this.loadData();
     const cached = this.pendingState.getState('EggSalesComponent');
-    if (cached?.farmId === this.currentFarm?.farm_id) this.pendingRows = cached.pendingRows || [];
+    if (cached?.farmId === this.currentFarm?.farm_id) {
+      this.pendingRows = cached.pendingRows || [];
+      this.defaultRate = cached.defaultRate || null;
+    }
     this.applyActiveBatch(this.flockService.getCurrentFlock());
     this.subs.add(
       this.flockService.currentFlock$.subscribe(flock => this.applyActiveBatch(flock))
@@ -102,7 +118,7 @@ export class EggSalesComponent implements OnInit, OnDestroy {
 
   ngOnDestroy() {
     this.subs.unsubscribe();
-    this.pendingState.saveState('EggSalesComponent', { farmId: this.currentFarm?.farm_id, pendingRows: this.pendingRows });
+    this.pendingState.saveState('EggSalesComponent', { farmId: this.currentFarm?.farm_id, pendingRows: this.pendingRows, defaultRate: this.defaultRate });
   }
 
   private applyActiveBatch(flock: any) {
@@ -122,6 +138,7 @@ export class EggSalesComponent implements OnInit, OnDestroy {
 
     // Recompute available eggs per active batch: collected sellable eggs minus sold.
     this.availableByBatch = {};
+    this.availableByGrade = {};
     for (const b of this.batches) {
       const colRes = await this.db.get(
         `SELECT COALESCE(SUM(total_eggs - broken_eggs), 0) AS collected FROM egg_collection WHERE batch_id = ?`,
@@ -135,13 +152,47 @@ export class EggSalesComponent implements OnInit, OnDestroy {
       const sold = soldRes.success ? Number(soldRes.data[0]?.sold || 0) : 0;
       this.collectedByBatch[b.batch_id] = collected;
       this.availableByBatch[b.batch_id] = collected - sold;
+
+      // 🔥 NEW: per-grade collected totals, from the actual grade columns
+      // recorded at collection time — this is the piece that was never
+      // being checked before.
+      const gradeColRes = await this.db.get(
+        `SELECT COALESCE(SUM(small_grade),0) AS small, COALESCE(SUM(medium_grade),0) AS medium,
+                COALESCE(SUM(large_grade),0) AS large, COALESCE(SUM(xl_grade),0) AS xl
+         FROM egg_collection WHERE batch_id = ?`,
+        [b.batch_id]
+      );
+      // 🔥 NEW: per-grade sold totals — "mixed" sales are excluded here since
+      // they don't commit to a specific grade.
+      const gradeSoldRes = await this.db.get(
+        `SELECT grade, COALESCE(SUM(quantity),0) AS qty FROM egg_sales
+         WHERE batch_id = ? AND grade IN ('small','medium','large','xl')
+         GROUP BY grade`,
+        [b.batch_id]
+      );
+
+      const gc = gradeColRes.success && gradeColRes.data[0] ? gradeColRes.data[0] : { small: 0, medium: 0, large: 0, xl: 0 };
+      const soldMap: any = { small: 0, medium: 0, large: 0, xl: 0 };
+      if (gradeSoldRes.success && gradeSoldRes.data) {
+        for (const row of gradeSoldRes.data) {
+          if (soldMap[row.grade] !== undefined) soldMap[row.grade] = Number(row.qty) || 0;
+        }
+      }
+
+      this.availableByGrade[b.batch_id] = {
+        small: Number(gc.small || 0) - soldMap.small,
+        medium: Number(gc.medium || 0) - soldMap.medium,
+        large: Number(gc.large || 0) - soldMap.large,
+        xl: Number(gc.xl || 0) - soldMap.xl
+      };
     }
     this.cdr.detectChanges();
   }
 
   getBatchName(id: number) { return this.batches.find(b => b.batch_id === id)?.batch_name || '—'; }
 
-  makeNewRow() { return { batch_id: this.selectedBatchFilter !== 'all' ? Number(this.selectedBatchFilter) : (this.batches[0]?.batch_id || null), date: new Date().toISOString().split('T')[0], customer_name: '', grade: 'mixed', quantity: null, rate_per_egg: null, amount: null, payment_type: 'cash' }; }
+  makeNewRow() { return { batch_id: this.selectedBatchFilter !== 'all' ? Number(this.selectedBatchFilter) : (this.batches[0]?.batch_id || null), date: new Date().toISOString().split('T')[0], customer_name: '', grade: 'mixed', quantity: null, rate_per_egg: this.defaultRate, amount: null, payment_type: 'cash' }; }
+  applyDefaultRateToAll() { if (this.defaultRate !== null) { this.pendingRows.forEach(row => { row.rate_per_egg = this.defaultRate; }); } }
 
   addPendingRow() { if (!this.isSaving) { this.editingId = null; this.pendingRows.push(this.makeNewRow()); } }
   addRowAfter(i: number) { this.pendingRows.splice(i + 1, 0, this.makeNewRow()); }
@@ -152,7 +203,10 @@ export class EggSalesComponent implements OnInit, OnDestroy {
     this.errorMessage = '';
 
     // Validate every row before saving any (presence, negatives, stock).
-    const remaining: { [batchId: number]: number } = {};
+    // 🔥 FIX: check against grade-specific stock, not just the batch total —
+    // otherwise selling more "small" eggs than were ever collected as small
+    // was silently allowed as long as the batch's overall total covered it.
+    const remaining: { [key: string]: number } = {};
     for (const row of this.pendingRows) {
       const qty = Number(row.quantity);
       const rate = Number(row.rate_per_egg);
@@ -164,12 +218,14 @@ export class EggSalesComponent implements OnInit, OnDestroy {
         this.errorMessage = 'Quantity must be greater than 0 and rate cannot be negative.';
         this.cdr.detectChanges(); return;
       }
-      const avail = remaining[row.batch_id] ?? this.getAvailableEggs(row.batch_id);
+      const key = `${row.batch_id}_${row.grade}`;
+      const avail = remaining[key] ?? this.getAvailableForGrade(row.batch_id, row.grade);
       if (qty > avail) {
-        this.errorMessage = `Only ${avail} egg(s) available for ${this.getBatchName(row.batch_id)}.`;
+        const gradeLabel = row.grade === 'mixed' ? '' : ` (${row.grade})`;
+        this.errorMessage = `Only ${avail} egg(s)${gradeLabel} available for ${this.getBatchName(row.batch_id)}.`;
         this.cdr.detectChanges(); return;
       }
-      remaining[row.batch_id] = avail - qty;
+      remaining[key] = avail - qty;
     }
 
     this.isSavingAll = true;
@@ -197,6 +253,7 @@ export class EggSalesComponent implements OnInit, OnDestroy {
     this.editOriginalQty = Number(s.quantity) || 0;
     this.editOriginalBatch = s.batch_id;
     this.editOriginalDate = s.date;
+    this.editOriginalGrade = s.grade;
     this.editForm = { batch_id: s.batch_id, date: s.date, customer_name: s.customer_name, grade: s.grade, quantity: s.quantity, rate_per_egg: s.rate_per_egg, amount: s.total_amount, payment_type: s.payment_type };
   }
 
@@ -214,13 +271,15 @@ export class EggSalesComponent implements OnInit, OnDestroy {
       this.errorMessage = 'Quantity must be greater than 0 and rate cannot be negative.'; this.cdr.detectChanges(); return;
     }
     // The eggs already booked to this sale are available again while editing it,
-    // but only for the batch they were originally booked against.
-    const currentAvail = this.availableByBatch[this.editForm.batch_id] || 0;
-    const allowed = currentAvail +
-      (String(this.editForm.batch_id) === String(this.editOriginalBatch) ? this.editOriginalQty : 0);
-      
+    // but only for the batch AND grade they were originally booked against.
+    const currentAvail = this.getAvailableForGrade(this.editForm.batch_id, this.editForm.grade);
+    const sameBatchAndGrade = String(this.editForm.batch_id) === String(this.editOriginalBatch)
+      && this.editForm.grade === this.editOriginalGrade;
+    const allowed = currentAvail + (sameBatchAndGrade ? this.editOriginalQty : 0);
+
     if (qty > allowed) {
-      this.errorMessage = `Only ${allowed} egg(s) available for ${this.getBatchName(this.editForm.batch_id)}.`;
+      const gradeLabel = this.editForm.grade === 'mixed' ? '' : ` (${this.editForm.grade})`;
+      this.errorMessage = `Only ${allowed} egg(s)${gradeLabel} available for ${this.getBatchName(this.editForm.batch_id)}.`;
       this.cdr.detectChanges(); return;
     }
     this.isSaving = true; this.editingId = null;

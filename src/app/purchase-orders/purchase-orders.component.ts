@@ -200,7 +200,8 @@ export class PurchaseOrdersComponent implements OnInit, OnDestroy {
       quantity: null, 
       cost_price: null, 
       payment_type: 'cash', 
-      notes: '' 
+      notes: '',
+      receipt_image: null
     }; 
   }
 
@@ -245,6 +246,34 @@ export class PurchaseOrdersComponent implements OnInit, OnDestroy {
     }
     this.onFormChange();
   }
+
+  onFileSelected(event: any, target: any) {
+    const file = event.target.files?.[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = () => {
+      const img = new Image();
+      img.onload = () => {
+        const canvas = document.createElement('canvas');
+        const maxWidth = 800;
+        let w = img.width, h = img.height;
+        if (w > maxWidth) { h = (h * maxWidth) / w; w = maxWidth; }
+        canvas.width = w; canvas.height = h;
+        canvas.getContext('2d')!.drawImage(img, 0, 0, w, h);
+        target.receipt_image = canvas.toDataURL('image/jpeg', 0.7);
+        this.onFormChange();
+        this.cdr.detectChanges();
+      };
+      img.src = reader.result as string;
+    };
+    reader.readAsDataURL(file);
+  }
+
+  openImage(base64: string) {
+    const win = window.open('', '_blank');
+    if (win) win.document.write('<img src="' + base64 + '" style="max-width:100%;">');
+  }
+
 
   // ── BATCH OPERATIONS ─────────────────────────────────────
 
@@ -366,8 +395,8 @@ export class PurchaseOrdersComponent implements OnInit, OnDestroy {
         const paymentType = row.payment_type || 'credit';
         
         const result = await this.db.run(
-          'INSERT INTO purchase_orders (farm_id, supplier_id, product_id, date, quantity, cost_price, total_amount, payment_type, notes) VALUES (?,?,?,?,?,?,?,?,?)',
-          [this.currentFarm.farm_id, row.supplier_id, row.product_id, row.date, row.quantity, row.cost_price, totalAmount, paymentType, row.notes]
+          'INSERT INTO purchase_orders (farm_id, supplier_id, product_id, date, quantity, cost_price, total_amount, payment_type, notes, receipt_image) VALUES (?,?,?,?,?,?,?,?,?,?)',
+          [this.currentFarm.farm_id, row.supplier_id, row.product_id, row.date, row.quantity, row.cost_price, totalAmount, paymentType, row.notes, row.receipt_image || null]
         );
         
         if (result.success) {
@@ -418,6 +447,7 @@ export class PurchaseOrdersComponent implements OnInit, OnDestroy {
       cost_price: o.cost_price, 
       payment_type: o.payment_type, 
       notes: o.notes,
+      receipt_image: o.receipt_image || null,
       old_product_id: o.product_id,
       old_quantity: o.quantity,
       old_supplier_id: o.supplier_id,
@@ -477,8 +507,8 @@ export class PurchaseOrdersComponent implements OnInit, OnDestroy {
       }
 
       await this.db.run(
-        'UPDATE purchase_orders SET supplier_id=?, product_id=?, date=?, quantity=?, cost_price=?, total_amount=?, payment_type=?, notes=?, batch_id=? WHERE purchase_id=?',
-        [newSupplierId, this.editForm.product_id, this.editForm.date, this.editForm.quantity, this.editForm.cost_price, newTotal, paymentType, this.editForm.notes, linkedBatchId, id]
+        'UPDATE purchase_orders SET supplier_id=?, product_id=?, date=?, quantity=?, cost_price=?, total_amount=?, payment_type=?, notes=?, batch_id=?, receipt_image=? WHERE purchase_id=?',
+        [newSupplierId, this.editForm.product_id, this.editForm.date, this.editForm.quantity, this.editForm.cost_price, newTotal, paymentType, this.editForm.notes, linkedBatchId, this.editForm.receipt_image || null, id]
       );
       
       if (oldSupplierId !== newSupplierId) {

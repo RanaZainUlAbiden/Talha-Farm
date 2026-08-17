@@ -34,7 +34,7 @@ export class BatchManagementComponent implements OnInit {
     return this.batches.slice(start, start + this.pageSize);
   }
 
-  newRow = { batch_name: '', start_date: new Date().toISOString().split('T')[0], initial_birds: null, breed: '', status: 'active' };
+  newRow = { batch_name: '', start_date: new Date().toISOString().split('T')[0], end_date: '', initial_birds: null, breed: '', status: 'active' };
 
   constructor(
     private db: DatabaseService,
@@ -61,9 +61,25 @@ export class BatchManagementComponent implements OnInit {
     if (this.isSaving) return;
     this.editingId = null;
     this.errorMessage = '';
-    this.newRow = { batch_name: '', start_date: new Date().toISOString().split('T')[0], initial_birds: null, breed: '', status: 'active' };
+    this.newRow = { batch_name: '', start_date: new Date().toISOString().split('T')[0], end_date: '', initial_birds: null, breed: '', status: 'active' };
     this.showNewRow = true;
     this.cdr.detectChanges();
+  }
+
+  onStatusChangeForNew() {
+    if (this.newRow.status === 'closed' && !this.newRow.end_date) {
+      this.newRow.end_date = new Date().toISOString().split('T')[0];
+    } else if (this.newRow.status === 'active') {
+      this.newRow.end_date = '';
+    }
+  }
+
+  onStatusChangeForEdit() {
+    if (this.editForm.status === 'closed' && !this.editForm.end_date) {
+      this.editForm.end_date = new Date().toISOString().split('T')[0];
+    } else if (this.editForm.status === 'active') {
+      this.editForm.end_date = '';
+    }
   }
 
   async saveNewRow() {
@@ -78,8 +94,8 @@ export class BatchManagementComponent implements OnInit {
     this.errorMessage = '';
     try {
       await this.db.run(
-        `INSERT INTO batches (farm_id, batch_name, start_date, initial_birds, breed, status) VALUES (?, ?, ?, ?, ?, ?)`,
-        [this.currentFarm.farm_id, this.newRow.batch_name.trim(), this.newRow.start_date, this.newRow.initial_birds || 0, this.newRow.breed || '', this.newRow.status]
+        `INSERT INTO batches (farm_id, batch_name, start_date, end_date, initial_birds, breed, status) VALUES (?, ?, ?, ?, ?, ?, ?)`,
+        [this.currentFarm.farm_id, this.newRow.batch_name.trim(), this.newRow.start_date, this.newRow.end_date || null, this.newRow.initial_birds || 0, this.newRow.breed || '', this.newRow.status]
       );
       await this.loadBatches();
       this.flockService.notifyBatchesChanged();
@@ -92,6 +108,8 @@ export class BatchManagementComponent implements OnInit {
     }
   }
 
+
+
   cancelNewRow() {
     if (!this.isSaving) this.showNewRow = false;
   }
@@ -101,7 +119,7 @@ export class BatchManagementComponent implements OnInit {
     this.showNewRow = false;
     this.errorMessage = '';
     this.editingId = batch.batch_id;
-    this.editForm = { batch_name: batch.batch_name, start_date: batch.start_date, initial_birds: batch.initial_birds, breed: batch.breed || '', status: batch.status };
+    this.editForm = { batch_name: batch.batch_name, start_date: batch.start_date, end_date: batch.end_date || '', initial_birds: batch.initial_birds, breed: batch.breed || '', status: batch.status };
   }
 
   cancelEdit() {
@@ -122,8 +140,8 @@ export class BatchManagementComponent implements OnInit {
     this.errorMessage = '';
     try {
       await this.db.run(
-        `UPDATE batches SET batch_name = ?, start_date = ?, initial_birds = ?, breed = ?, status = ? WHERE batch_id = ?`,
-        [this.editForm.batch_name.trim(), this.editForm.start_date, this.editForm.initial_birds || 0, this.editForm.breed || '', this.editForm.status, batchId]
+        `UPDATE batches SET batch_name = ?, start_date = ?, end_date = ?, initial_birds = ?, breed = ?, status = ? WHERE batch_id = ?`,
+        [this.editForm.batch_name.trim(), this.editForm.start_date, this.editForm.end_date || null, this.editForm.initial_birds || 0, this.editForm.breed || '', this.editForm.status, batchId]
       );
       this.editForm = {};
       await this.loadBatches();

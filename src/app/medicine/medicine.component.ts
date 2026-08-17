@@ -88,7 +88,7 @@ export class MedicineComponent implements OnInit, OnDestroy {
   @HostListener('window:keydown', ['$event'])
   handleKeyboard(event: KeyboardEvent) {
     if (!this.selectedTrader) return;
-    
+
     if (event.ctrlKey && event.key === 'a') {
       const activeTag = (event.target as HTMLElement)?.tagName;
       if (activeTag === 'INPUT' || activeTag === 'TEXTAREA') return;
@@ -107,7 +107,7 @@ export class MedicineComponent implements OnInit, OnDestroy {
     private route: ActivatedRoute,
     private cdr: ChangeDetectorRef,
     private pendingState: PendingStateService
-  ) {}
+  ) { }
 
   ngOnInit() {
     const resolved = this.route.snapshot.data['data'];
@@ -213,7 +213,7 @@ export class MedicineComponent implements OnInit, OnDestroy {
     if (this.isSaving) return;
     this.deletingTraderId = traderId;
     this.showDeleteTraderDialog = true;
-      this.cdr.detectChanges();  // ✅ ADD THIS LINE
+    this.cdr.detectChanges();  // ✅ ADD THIS LINE
 
   }
 
@@ -329,7 +329,7 @@ export class MedicineComponent implements OnInit, OnDestroy {
       }
 
       this.pendingRows = invalidRows;
-      
+
       if (insertedCount > 0) {
         await this.loadEntries();
         await this.loadTraders();

@@ -15,6 +15,8 @@ import { DateOnlyPipe } from '../shared/pipes/date-format.pipe';
 export class SalesReturnsComponent implements OnInit {
   currentFarm: any = null;
   bills: any[] = [];
+  filteredBills: any[] = [];
+  billSearchTerm: string = '';
   returns: any[] = [];
   selectedBill: any = null;
   returnRows: any[] = [];
@@ -25,6 +27,9 @@ export class SalesReturnsComponent implements OnInit {
   isSaving = false;
   errorMessage = '';
   successMessage = '';
+
+  editingReturnId: number | null = null;
+  editingReturnNumber: string = '';
 
   constructor(
     private db: DatabaseService,
@@ -89,6 +94,8 @@ export class SalesReturnsComponent implements OnInit {
         )
       ]);
       this.bills = billsResult.success ? billsResult.data : [];
+      this.filteredBills = [...this.bills];
+      if (this.billSearchTerm) this.filterBills();
       this.returns = returnsResult.success ? returnsResult.data : [];
     } catch (error: any) {
       this.errorMessage = 'Failed to load returns: ' + error.message;
@@ -123,13 +130,191 @@ export class SalesReturnsComponent implements OnInit {
     this.cdr.detectChanges();
   }
 
+  filterBills() {
+    const term = this.billSearchTerm.trim().toLowerCase();
+    if (!term) {
+      this.filteredBills = [...this.bills];
+      this.cdr.detectChanges();
+      return;
+    }
+    this.filteredBills = this.bills.filter(b =>
+      (b.bill_number || '').toLowerCase().includes(term) ||
+      (b.customer_name || '').toLowerCase().includes(term)
+    );
+    this.cdr.detectChanges();
+  }
+
+  clearBillSearch() {
+    this.billSearchTerm = '';
+    this.filteredBills = [...this.bills];
+    this.cdr.detectChanges();
+  }
+
   clearSelection() {
     this.selectedBill = null;
     this.returnRows = [];
     this.reason = '';
+    this.editingReturnId = null;
+    this.editingReturnNumber = '';
     this.errorMessage = '';
     this.successMessage = '';
+    this.filterBills();
     this.cdr.detectChanges();
+  }
+
+  // A return can only be edited when it's the sole return on its bill —
+  // once a bill has more than one return, figuring out which portion of
+  // the bill's current paid/total belongs to which return is ambiguous,
+  // and guessing wrong would corrupt the ledger silently.
+  canEditReturn(ret: any): boolean {
+    return this.returns.filter(r => r.bill_id === ret.bill_id).length === 1;
+  }
+
+  // ── Edit Return ──────────────────────────────────────────────
+  // Populates the return form with the original return's data so the user
+  // can correct a mistaken quantity. Nothing in the database changes until
+  // Save is actually pressed — backing out via "Back to Bills" leaves the
+  // original return exactly as it was.
+
+  async editReturn(ret: any) {
+    this.errorMessage = '';
+    this.successMessage = '';
+
+    if (!this.canEditReturn(ret)) {
+      this.errorMessage = `Return ${ret.return_number} can't be edited because this bill has more than one return on it.`;
+      this.cdr.detectChanges();
+      return;
+    }
+
+    const billResult = await this.db.get(`SELECT * FROM bills WHERE bill_id = ?`, [ret.bill_id]);
+    const bill = billResult.success && billResult.data && billResult.data.length > 0 ? billResult.data[0] : null;
+    if (!bill) {
+      this.errorMessage = 'Could not load the original bill for this return.';
+      this.cdr.detectChanges();
+      return;
+    }
+
+    const returnItemsResult = await this.db.get(
+      `SELECT * FROM sales_return_items WHERE return_id = ?`,
+      [ret.return_id]
+    );
+    const returnedItems = returnItemsResult.success ? returnItemsResult.data : [];
+    const returnedByBillItemId = new Map<number, any>(returnedItems.map((i: any) => [i.bill_item_id, i]));
+
+    const currentItemsResult = await this.db.get(
+      `SELECT * FROM bill_items WHERE bill_id = ?`,
+      [ret.bill_id]
+    );
+    const currentItems = currentItemsResult.success ? currentItemsResult.data : [];
+
+    const rows: any[] = [];
+
+    // Lines still present on the bill: add back the previously-returned
+    // quantity so the max shown is the original quantity sold, not just
+    // what's currently left after the return.
+    for (const cur of currentItems) {
+      const prevReturned = returnedByBillItemId.get(cur.item_id);
+      const prevQty = prevReturned ? Number(prevReturned.quantity) : 0;
+      rows.push({
+        bill_item_id: cur.item_id,
+        product_id: cur.product_id,
+        product_name: cur.product_name,
+        sold_quantity: (Number(cur.quantity) || 0) + prevQty,
+        unit_price: Number(cur.unit_price) || 0,
+        return_quantity: prevQty > 0 ? prevQty : null
+      });
+      if (prevReturned) returnedByBillItemId.delete(cur.item_id);
+    }
+
+    // Lines that were fully returned last time (no longer on the bill at all)
+    for (const [, item] of returnedByBillItemId) {
+      rows.push({
+        bill_item_id: item.bill_item_id,
+        product_id: item.product_id,
+        product_name: item.product_name,
+        sold_quantity: Number(item.quantity),
+        unit_price: Number(item.unit_price),
+        return_quantity: Number(item.quantity)
+      });
+    }
+
+    this.returnRows = rows;
+    // Display totals as they were BEFORE this return, since editing means
+    // starting from the original sale again. The real database values get
+    // recomputed correctly once Save reverses and reapplies.
+    this.selectedBill = {
+      ...bill,
+      total_amount: Number(bill.total_amount) + Number(ret.return_amount),
+      amount_paid: Number(bill.amount_paid) + Number(ret.refund_amount)
+    };
+    this.returnDate = ret.return_date;
+    this.reason = ret.reason || '';
+    this.refundMethod = ret.refund_method === 'bank' ? 'bank' : 'cash';
+    this.editingReturnId = ret.return_id;
+    this.editingReturnNumber = ret.return_number;
+    this.cdr.detectChanges();
+  }
+
+  // Undoes a previously-saved return: restores bill_items quantities,
+  // deducts back out the stock that was restored to batches, removes the
+  // bank refund entry (if any), and deletes the return's own rows. Returns
+  // the bill row as it now stands, post-restoration.
+  private async reverseReturnEffects(ret: any): Promise<any> {
+    const itemsResult = await this.db.get(
+      `SELECT * FROM sales_return_items WHERE return_id = ?`,
+      [ret.return_id]
+    );
+    const items = itemsResult.success ? itemsResult.data : [];
+
+    for (const item of items) {
+      const existing = await this.db.get(`SELECT * FROM bill_items WHERE item_id = ?`, [item.bill_item_id]);
+      if (existing.success && existing.data && existing.data.length > 0) {
+        const cur = existing.data[0];
+        const restoredQty = (Number(cur.quantity) || 0) + Number(item.quantity);
+        await this.db.run(
+          `UPDATE bill_items SET quantity = ?, total_price = ? WHERE item_id = ?`,
+          [restoredQty, restoredQty * Number(item.unit_price), item.bill_item_id]
+        );
+      } else {
+        await this.db.run(
+          `INSERT INTO bill_items (bill_id, product_id, product_name, quantity, unit_price, total_price) VALUES (?,?,?,?,?,?)`,
+          [item.bill_id, item.product_id, item.product_name, item.quantity, item.unit_price, Number(item.quantity) * Number(item.unit_price)]
+        );
+      }
+
+      if (item.product_id) {
+        const restoreTx = await this.db.get(
+          `SELECT * FROM batch_transactions WHERE reference_id = ? AND product_id = ? AND type = 'return'`,
+          [ret.return_id, item.product_id]
+        );
+        for (const tx of restoreTx.success ? restoreTx.data : []) {
+          const batchResult = await this.db.get('SELECT * FROM product_batches WHERE batch_id = ?', [tx.batch_id]);
+          if (batchResult.success && batchResult.data && batchResult.data.length > 0) {
+            const batch = batchResult.data[0];
+            const newQty = Math.max(0, (Number(batch.quantity) || 0) - Number(tx.quantity));
+            await this.db.updateBatch(batch.batch_id, { quantity: newQty });
+            await this.db.addBatchTransaction(
+              batch.batch_id, item.product_id, 'sale', Number(tx.quantity),
+              this.returnDate, ret.bill_id, `Reversed for edit of ${ret.return_number}`
+            );
+          }
+        }
+      }
+    }
+
+    if (ret.refund_method === 'bank' && Number(ret.refund_amount) > 0) {
+      await this.db.run(
+        `DELETE FROM bank_ledger WHERE reference_type = 'return' AND reference_id = ?`,
+        [ret.bill_id]
+      );
+    }
+
+    await this.db.run(`DELETE FROM sales_return_items WHERE return_id = ?`, [ret.return_id]);
+    await this.db.run(`DELETE FROM sales_returns WHERE return_id = ?`, [ret.return_id]);
+    await this.db.updateBatchStatuses();
+
+    const freshBill = await this.db.get(`SELECT * FROM bills WHERE bill_id = ?`, [ret.bill_id]);
+    return freshBill.success && freshBill.data && freshBill.data.length > 0 ? freshBill.data[0] : null;
   }
 
   // ── Save Return ───────────────────────────────────────────────
@@ -137,7 +322,9 @@ export class SalesReturnsComponent implements OnInit {
   async saveReturn() {
     if (!this.selectedBill || this.isSaving) return;
 
-    // Validate rows
+    // Validate rows — a return can never exceed what was actually sold on
+    // that line (checked here in code, not just via the input's HTML max,
+    // which a user could bypass by typing a value directly).
     const rows = this.returnRows.filter(row => (Number(row.return_quantity) || 0) > 0);
     if (rows.length === 0) {
       this.errorMessage = 'Enter at least one return quantity.';
@@ -156,6 +343,35 @@ export class SalesReturnsComponent implements OnInit {
     this.successMessage = '';
 
     try {
+      // If editing an existing return, undo its effects first so the bill
+      // is back to its pre-return state, then fall through to the normal
+      // save logic below as if this were a brand-new return.
+      if (this.editingReturnId) {
+        const originalReturn = this.returns.find(r => r.return_id === this.editingReturnId);
+        if (!originalReturn) throw new Error('Original return record not found.');
+        const restoredBill = await this.reverseReturnEffects(originalReturn);
+        if (!restoredBill) throw new Error('Failed to restore the bill before applying the edit.');
+        this.selectedBill = restoredBill;
+
+        // sold_quantity ceilings were computed against the pre-restore state
+        // for display purposes — refresh them against the now-restored
+        // bill_items so validation and stock math both use current numbers.
+        const refreshedItems = await this.db.get(`SELECT * FROM bill_items WHERE bill_id = ?`, [this.selectedBill.bill_id]);
+        const byId = new Map<number, any>((refreshedItems.success ? refreshedItems.data : []).map((i: any) => [i.item_id, i]));
+        for (const row of this.returnRows) {
+          const match = byId.get(row.bill_item_id);
+          if (match) {
+            row.bill_item_id = match.item_id;
+            row.sold_quantity = Number(match.quantity);
+          }
+        }
+        for (const row of rows) {
+          if (Number(row.return_quantity) > row.sold_quantity) {
+            throw new Error(`Return qty for "${row.product_name}" exceeds what's available (${row.sold_quantity}).`);
+          }
+        }
+      }
+
       const returnNumber  = await this.getNextReturnNumber();
       const returnAmount  = this.totalReturnAmount;
       const oldPaid       = Number(this.selectedBill.amount_paid) || 0;
@@ -226,7 +442,9 @@ export class SalesReturnsComponent implements OnInit {
         await this.rebuildInternalTransferExpenses(this.selectedBill.bill_id);
       }
 
-      this.successMessage = `Return ${returnNumber} saved successfully.`;
+      this.successMessage = this.editingReturnId
+        ? `Return updated (was ${this.editingReturnNumber}, now ${returnNumber}).`
+        : `Return ${returnNumber} saved successfully.`;
       this.clearSelection();
       await this.loadData();
     } catch (error: any) {
@@ -382,6 +600,9 @@ export class SalesReturnsComponent implements OnInit {
       : null;
     if (!transfer) return;
 
+    const billRow = await this.db.get('SELECT bill_number FROM bills WHERE bill_id = ?', [billId]);
+    const billNumber = billRow.success && billRow.data && billRow.data.length ? billRow.data[0].bill_number : null;
+
     // 🔥 FIX: clean up whichever table each transfer actually points at
     // (medicine_entries / feed_entries / vaccinations / expenses), same
     // logic as cleanupInternalTransfers() in sales-orders.component.ts.
@@ -417,6 +638,8 @@ export class SalesReturnsComponent implements OnInit {
       [billId]
     );
 
+    const billTag = billNumber ? ` (Bill #${billNumber})` : '';
+
     for (const item of itemsResult.success ? itemsResult.data : []) {
       const productRes = item.product_id
         ? await this.db.get('SELECT category FROM products WHERE product_id = ?', [item.product_id])
@@ -445,8 +668,8 @@ export class SalesReturnsComponent implements OnInit {
         }
         if (traderId) {
           const entryResult = await this.db.run(
-            'INSERT INTO medicine_entries (trader_id, flock_id, date, medicine_name, quantity, price_per_unit, total_amount, module_type) VALUES (?,?,?,?,?,?,?,?)',
-            [traderId, transfer.target_flock_id, this.returnDate, item.product_name, item.quantity, item.unit_price, item.total_price, transfer.target_module]
+            'INSERT INTO medicine_entries (trader_id, flock_id, date, medicine_name, quantity, price_per_unit, total_amount, module_type, bill_id, bill_number) VALUES (?,?,?,?,?,?,?,?,?,?)',
+            [traderId, transfer.target_flock_id, this.returnDate, item.product_name + billTag, item.quantity, item.unit_price, item.total_price, transfer.target_module, billId, billNumber]
           );
           referenceId = entryResult.lastId;
         }
@@ -466,19 +689,19 @@ export class SalesReturnsComponent implements OnInit {
         }
         if (traderId) {
           const entryResult = await this.db.run(
-            'INSERT INTO feed_entries (trader_id, flock_id, date, feed_name, quantity, price_per_unit, total_amount, module_type) VALUES (?,?,?,?,?,?,?,?)',
-            [traderId, transfer.target_flock_id, this.returnDate, item.product_name, item.quantity, item.unit_price, item.total_price, transfer.target_module]
+            'INSERT INTO feed_entries (trader_id, flock_id, date, feed_name, quantity, price_per_unit, total_amount, module_type, bill_id, bill_number) VALUES (?,?,?,?,?,?,?,?,?,?)',
+            [traderId, transfer.target_flock_id, this.returnDate, item.product_name + billTag, item.quantity, item.unit_price, item.total_price, transfer.target_module, billId, billNumber]
           );
           referenceId = entryResult.lastId;
         }
       } else if (category === 'vaccine' || category === 'vaccination') {
         targetType = 'vaccination';
         const vaccResult = await this.db.run(
-          'INSERT INTO vaccinations (batch_id, flock_id, date, vaccine_name, dose, notes, done) VALUES (?,?,?,?,?,?,?)',
+          'INSERT INTO vaccinations (batch_id, flock_id, date, vaccine_name, dose, notes, done, bill_id, bill_number) VALUES (?,?,?,?,?,?,?,?,?)',
           [
             transfer.target_module === 'layer' ? transfer.target_flock_id : null,
             transfer.target_module === 'broiler' ? transfer.target_flock_id : null,
-            this.returnDate, item.product_name, '1', 'Internal Transfer (adjusted after return)', 1
+            this.returnDate, item.product_name, '1', 'Internal Transfer (adjusted after return)' + billTag, 1, billId, billNumber
           ]
         );
         referenceId = vaccResult.lastId;
@@ -486,7 +709,7 @@ export class SalesReturnsComponent implements OnInit {
         targetType = 'expense';
         const expenseResult = await this.db.run(
           'INSERT INTO expenses (flock_id, date, description, amount, module_type) VALUES (?, ?, ?, ?, ?)',
-          [transfer.target_flock_id, this.returnDate, `${item.product_name} x ${item.quantity}`, item.total_price, transfer.target_module]
+          [transfer.target_flock_id, this.returnDate, `${item.product_name} x ${item.quantity}${billTag}`, item.total_price, transfer.target_module]
         );
         expenseId = expenseResult.lastId;
         referenceId = expenseId;

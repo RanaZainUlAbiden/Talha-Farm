@@ -989,7 +989,12 @@ export class SalesOrdersComponent implements OnInit, OnDestroy {
 
       if (this.customerType === 'internal') {
         paymentType = 'internal';
-        effectivePaid = 0;
+        // 🔥 FIX: internal/Own Farm transfers have no outstanding receivable —
+        // the cost is already recognized as an expense in the target module,
+        // so the bill itself should be treated as fully paid, not stuck at
+        // amount_paid=0 forever (which made every internal bill show
+        // "Unpaid" permanently with no way to change it).
+        effectivePaid = totalAmount;
 
         if (oldBill?.payment_type === 'bank') {
           const bankApplied = await this.applyBankPaymentChange(oldBill, oldBill.customer_id, 0, billNumber);
@@ -1090,7 +1095,8 @@ export class SalesOrdersComponent implements OnInit, OnDestroy {
       
       if (this.customerType === 'internal' && savedBillId && this.internalTargetFlockId) {
         for (const item of this.gridItems) {
-          const desc = item.productName + ' × ' + item.quantity;
+          const billTag = billNumber ? ` (Bill #${billNumber})` : '';
+          const desc = item.productName + ' × ' + item.quantity + billTag;
           const todayDate = new Date().toISOString().split('T')[0];
 
           const productRes = await this.db.get('SELECT category FROM products WHERE product_id=?', [item.productId]);
@@ -1111,8 +1117,8 @@ export class SalesOrdersComponent implements OnInit, OnDestroy {
               traderId = newTrader.lastId;
             }
             if (traderId) {
-              const entryResult = await this.db.run('INSERT INTO medicine_entries (trader_id, flock_id, date, medicine_name, quantity, price_per_unit, total_amount, module_type) VALUES (?,?,?,?,?,?,?,?)',
-                [traderId, this.internalTargetFlockId, todayDate, item.productName, item.quantity, item.unitPrice, item.totalPrice, this.internalTargetModule]);
+              const entryResult = await this.db.run('INSERT INTO medicine_entries (trader_id, flock_id, date, medicine_name, quantity, price_per_unit, total_amount, module_type, bill_id, bill_number) VALUES (?,?,?,?,?,?,?,?,?,?)',
+                [traderId, this.internalTargetFlockId, todayDate, item.productName + billTag, item.quantity, item.unitPrice, item.totalPrice, this.internalTargetModule, savedBillId, billNumber]);
               referenceId = entryResult.lastId;
             }
           } else if (category === 'feed') {
@@ -1126,14 +1132,14 @@ export class SalesOrdersComponent implements OnInit, OnDestroy {
               traderId = newTrader.lastId;
             }
             if (traderId) {
-              const entryResult = await this.db.run('INSERT INTO feed_entries (trader_id, flock_id, date, feed_name, quantity, price_per_unit, total_amount, module_type) VALUES (?,?,?,?,?,?,?,?)',
-                [traderId, this.internalTargetFlockId, todayDate, item.productName, item.quantity, item.unitPrice, item.totalPrice, this.internalTargetModule]);
+              const entryResult = await this.db.run('INSERT INTO feed_entries (trader_id, flock_id, date, feed_name, quantity, price_per_unit, total_amount, module_type, bill_id, bill_number) VALUES (?,?,?,?,?,?,?,?,?,?)',
+                [traderId, this.internalTargetFlockId, todayDate, item.productName + billTag, item.quantity, item.unitPrice, item.totalPrice, this.internalTargetModule, savedBillId, billNumber]);
               referenceId = entryResult.lastId;
             }
           } else if (category === 'vaccine' || category === 'vaccination') {
             targetType = 'vaccination';
-            const vaccResult = await this.db.run('INSERT INTO vaccinations (batch_id, flock_id, date, vaccine_name, dose, notes, done) VALUES (?,?,?,?,?,?,?)',
-                [this.internalTargetModule === 'layer' ? this.internalTargetFlockId : null, this.internalTargetModule === 'broiler' ? this.internalTargetFlockId : null, todayDate, item.productName, '1', 'Internal Transfer', 1]);
+            const vaccResult = await this.db.run('INSERT INTO vaccinations (batch_id, flock_id, date, vaccine_name, dose, notes, cost, done, bill_id, bill_number) VALUES (?,?,?,?,?,?,?,?,?,?)',
+                [this.internalTargetModule === 'layer' ? this.internalTargetFlockId : null, this.internalTargetModule === 'broiler' ? this.internalTargetFlockId : null, todayDate, item.productName, String(item.quantity), 'Internal Transfer' + billTag, item.totalPrice, 1, savedBillId, billNumber]);
             referenceId = vaccResult.lastId;
           } else {
             targetType = 'expense';
@@ -1255,27 +1261,79 @@ export class SalesOrdersComponent implements OnInit, OnDestroy {
     const billItems = items.success ? items.data : [];
     const doc = new jsPDF(); 
     const pw = doc.internal.pageSize.getWidth(); 
+    const ph = doc.internal.pageSize.getHeight();
     const B: [number,number,number] = [0,0,0];
-    const farmName = this.currentFarm?.farm_name || 'Farm'; 
     let y = 20;
-    
-    doc.setFont('helvetica', 'bold'); 
-    doc.setFontSize(18); 
+
+    try {
+      const bgData = await this.loadImageAsBase64('reportimage.png');
+      const bgProps = doc.getImageProperties(bgData);
+      const bgW = 120;
+      const bgH = (bgProps.height * bgW) / bgProps.width;
+      doc.saveGraphicsState();
+      doc.setGState(new (doc as any).GState({ opacity: 0.08 }));
+      doc.addImage(bgData, 'PNG', (pw - bgW) / 2, (ph - bgH) / 2, bgW, bgH);
+      doc.restoreGraphicsState();
+    } catch {}
+
+    try {
+      const logoData = await this.loadImageAsBase64('report-boiler.jpeg');
+      const logoProps = doc.getImageProperties(logoData);
+      const logoHeight = 30;
+      const logoWidth = (logoProps.width * logoHeight) / logoProps.height;
+      const textX = 14 + logoWidth + 10;
+
+      doc.addImage(logoData, 'JPEG', 14, y, logoWidth, logoHeight);
+
+      doc.setFont('helvetica', 'bold');
+      doc.setFontSize(15);
+      doc.setTextColor(...B);
+      doc.text('TALHA POULTRY FEEDS AND CHICKS', textX, y + 7);
+
+      doc.setFont('helvetica', 'normal');
+      doc.setFontSize(9);
+      doc.setTextColor(100, 100, 100);
+      doc.text('Shop # 33 Jinnah Market Akal Wala Road, Toba Tek Singh', textX, y + 13);
+      doc.text('Proprietor: Muhammad Tariq 0321-7546630', textX, y + 18);
+      doc.text('Managing Director: Ghulam Abbas 0322-7778826', textX, y + 23);
+
+      y += logoHeight + 6;
+    } catch {
+      doc.setFont('helvetica', 'bold');
+      doc.setFontSize(15);
+      doc.setTextColor(...B);
+      doc.text('TALHA POULTRY FEEDS AND CHICKS', pw / 2, y, { align: 'center' });
+      y += 6;
+      doc.setFont('helvetica', 'normal');
+      doc.setFontSize(9);
+      doc.setTextColor(100, 100, 100);
+      doc.text('Shop # 33 Jinnah Market Akal Wala Road, Toba Tek Singh', pw / 2, y, { align: 'center' });
+      y += 5;
+      doc.text('Proprietor: Muhammad Tariq — 0321-7546630', pw / 2, y, { align: 'center' });
+      y += 4.5;
+      doc.text('Managing Director: Ghulam Abbas — 0322-7778826', pw / 2, y, { align: 'center' });
+      y += 8;
+    }
+
+    doc.setDrawColor(...B);
+    doc.setLineWidth(0.5);
+    doc.line(14, y, pw - 14, y);
+    y += 8;
+
+    doc.setFont('helvetica', 'bold');
+    doc.setFontSize(12);
     doc.setTextColor(...B);
-    doc.text(farmName.toUpperCase(), pw / 2, y, { align: 'center' }); 
+    doc.text('Sales Receipt', pw / 2, y, { align: 'center' });
     y += 8;
-    doc.setFontSize(12); 
-    doc.text('Sales Receipt', pw / 2, y, { align: 'center' }); 
-    y += 8;
-    doc.setFont('helvetica', 'normal'); 
+    doc.setFont('helvetica', 'normal');
     doc.setFontSize(10);
-    doc.text('Bill #: ' + bill.bill_number, 14, y); 
-    doc.text('Date: ' + bill.bill_date, pw - 14, y, { align: 'right' }); 
+    doc.text('Bill #: ' + bill.bill_number, 14, y);
+    doc.text('Date: ' + bill.bill_date, pw - 14, y, { align: 'right' });
     y += 6;
-    doc.text('Customer: ' + (bill.customer_name || 'Walk-in'), 14, y); 
+    doc.text('Customer: ' + (bill.customer_name || 'Walk-in'), 14, y);
     y += 4;
-    doc.setDrawColor(...B); 
-    doc.line(14, y, pw - 14, y); 
+    doc.setDrawColor(...B);
+    doc.line(14, y, pw - 14, y);
     y += 6;
     
     autoTable(doc, { 
@@ -1300,6 +1358,38 @@ export class SalesOrdersComponent implements OnInit, OnDestroy {
     doc.setFont('helvetica', 'normal'); 
     doc.setTextColor(120,120,120);
     doc.text('Software By: www.devinfantary.com  |  Contact: 0302 6938217', pw / 2, 290, { align: 'center' });
-    doc.save(bill.bill_number + '.pdf');
+    await this.printPdf(doc, bill.bill_number + '.pdf');
+  }
+
+  private async printPdf(doc: jsPDF, filename: string) {
+    try {
+      const dataUri = doc.output('datauristring');
+      const base64 = dataUri.split(',')[1];
+      const result = await (window as any).electronAPI.printPdfBase64(base64);
+      if (!result || !result.success) {
+        console.error('Print failed, falling back to save:', result?.error);
+        doc.save(filename);
+      }
+    } catch (e) {
+      console.error('Print error, falling back to save:', e);
+      doc.save(filename);
+    }
+  }
+
+  private loadImageAsBase64(url: string): Promise<string> {
+    return new Promise((resolve, reject) => {
+      const img = new Image();
+      img.crossOrigin = 'anonymous';
+      img.onload = () => {
+        const canvas = document.createElement('canvas');
+        canvas.width = img.width;
+        canvas.height = img.height;
+        canvas.getContext('2d')!.drawImage(img, 0, 0);
+        resolve(canvas.toDataURL('image/jpeg'));
+      };
+      img.onerror = () => reject(new Error('Logo load failed'));
+      img.src = url;
+    });
   }
 }
+

@@ -27,7 +27,19 @@ export class ExpenseLedgerComponent implements OnInit {
   filterDateFrom: string = '';
   filterDateTo: string = '';
   filterCategory: string = '';
-  categories: string[] = ['Rent', 'Tea', 'Land', 'Utilities', 'Salary', 'Maintenance', 'Transport', 'Office', 'Other'];
+
+  // ── Categories (DB-backed, CRUD) ─────────────────────────
+  private readonly SEED_CATEGORIES = ['Rent', 'Tea', 'Land', 'Utilities', 'Salary', 'Maintenance', 'Transport', 'Office', 'Other'];
+  dbCategories: any[] = [];
+  get categories(): string[] {
+    return this.dbCategories.map((c: any) => c.category_name);
+  }
+
+  showCategoryModal = false;
+  showDeleteCategoryDialog = false;
+  deletingCategoryId: number | null = null;
+  newCategoryName = '';
+  categoryError = '';
 
   // ── Form ──────────────────────────────────────────────────
   showForm = false;
@@ -55,9 +67,10 @@ export class ExpenseLedgerComponent implements OnInit {
     private cdr: ChangeDetectorRef
   ) {}
 
-  ngOnInit() {
+  async ngOnInit() {
     this.currentFarm = this.authService.getCurrentFarm();
     this.expenseForm.transaction_date = new Date().toISOString().split('T')[0];
+    await this.loadCategories();
     this.loadExpenses();
   }
 
@@ -78,6 +91,80 @@ export class ExpenseLedgerComponent implements OnInit {
       this.isLoading = false;
       this.cdr.detectChanges();
     }
+  }
+
+  // ── CATEGORY MANAGEMENT ──────────────────────────────────
+
+  private async loadCategories(): Promise<void> {
+    try {
+      const result = await this.db.getCategories(this.currentFarm.farm_id, 'expense');
+      this.dbCategories = result.success ? result.data : [];
+      if (this.dbCategories.length === 0) {
+        // First run — seed with the original preset list, preserving case so any
+        // expenses already saved against these names (from before this CRUD
+        // feature existed) keep matching exactly in filters/breakdowns.
+        for (const cat of this.SEED_CATEGORIES) {
+          await this.db.run(
+            'INSERT OR IGNORE INTO categories (farm_id, category_name, category_type) VALUES (?, ?, ?)',
+            [this.currentFarm.farm_id, cat, 'expense']
+          );
+        }
+        const refreshed = await this.db.getCategories(this.currentFarm.farm_id, 'expense');
+        this.dbCategories = refreshed.success ? refreshed.data : [];
+      }
+    } catch {
+      this.dbCategories = [];
+    }
+  }
+
+  openCategoryModal(): void {
+    this.newCategoryName = '';
+    this.categoryError = '';
+    this.showCategoryModal = true;
+    this.cdr.detectChanges();
+  }
+
+  closeCategoryModal(): void {
+    this.showCategoryModal = false;
+    this.newCategoryName = '';
+    this.categoryError = '';
+    this.cdr.detectChanges();
+  }
+
+  async saveCategory(): Promise<void> {
+    const name = this.newCategoryName.trim();
+    if (!name) { this.categoryError = 'Category name is required.'; return; }
+    if (this.categories.some(c => c.toLowerCase() === name.toLowerCase())) {
+      this.categoryError = 'Category already exists.';
+      return;
+    }
+    const result = await this.db.addCategory(this.currentFarm.farm_id, name, 'expense');
+    if (!result || !result.success) {
+      this.categoryError = 'Failed to save category. It may already exist.';
+      return;
+    }
+    await this.loadCategories();
+    this.closeCategoryModal();
+    this.cdr.detectChanges();
+  }
+
+  confirmDeleteCategory(cat: any) {
+    this.deletingCategoryId = cat.category_id;
+    this.showDeleteCategoryDialog = true;
+  }
+
+  async onDeleteCategoryConfirmed() {
+    if (!this.deletingCategoryId) return;
+    await this.db.deleteCategory(this.deletingCategoryId);
+    this.showDeleteCategoryDialog = false;
+    this.deletingCategoryId = null;
+    await this.loadCategories();
+    this.cdr.detectChanges();
+  }
+
+  onDeleteCategoryCancelled() {
+    this.showDeleteCategoryDialog = false;
+    this.deletingCategoryId = null;
   }
 
   // ── FILTERS ──────────────────────────────────────────────

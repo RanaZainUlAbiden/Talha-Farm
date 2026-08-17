@@ -37,16 +37,31 @@ export class FlockHealthComponent implements OnInit, OnDestroy {
     return this.pendingRows.length > 0;
   }
 
+  get totalFeedUsed(): number {
+    return this.healthRecords.reduce((s, r) => s + (r.feed_used || 0), 0);
+  }
+
+  get totalMortality(): number {
+    return this.healthRecords.reduce((s, r) => s + (r.mortality || 0), 0);
+  }
+
+  get currentBirdCount(): number {
+    if (this.healthRecords.length === 0) return 0;
+    const last = this.healthRecords[this.healthRecords.length - 1];
+    return (last.total_birds || 0) - (last.mortality || 0);
+  }
+
   getRowRemaining(row: any): number {
     return (row.total_birds || 0) - (row.mortality || 0);
   }
 
   getRowAutoFcr(row: any): number {
     const remaining = this.getRowRemaining(row);
-    const feed = row.feed_used || 0;
-    const avgW = row.avg_weight || 0;
+    const feed = row.feed_used || 0; // bags used (1 bag = 50kg)
+    const avgW = row.avg_weight || 0; // chick weight entered directly in grams
     if (remaining <= 0 || avgW <= 0 || feed <= 0) return 0;
-    return parseFloat((feed / (remaining * avgW)).toFixed(3));
+    // FCR = [(remaining birds / 1000) × chick weight (g)] / bags of feed used
+    return parseFloat((((remaining / 1000) * avgW) / feed).toFixed(3));
   }
 
   onRowFeedOrWeightChange(row: any) {
@@ -65,10 +80,11 @@ export class FlockHealthComponent implements OnInit, OnDestroy {
 
   get editAutoFcr(): number {
     const remaining = this.editRemaining;
-    const feed = this.editForm.feed_used || 0;
-    const avgW = this.editForm.avg_weight || 0;
+    const feed = this.editForm.feed_used || 0; // bags used (1 bag = 50kg)
+    const avgW = this.editForm.avg_weight || 0; // chick weight entered directly in grams
     if (remaining <= 0 || avgW <= 0 || feed <= 0) return 0;
-    return parseFloat((feed / (remaining * avgW)).toFixed(3));
+    // FCR = [(remaining birds / 1000) × chick weight (g)] / bags of feed used
+    return parseFloat((((remaining / 1000) * avgW) / feed).toFixed(3));
   }
 
   onEditFeedOrWeightChange() {

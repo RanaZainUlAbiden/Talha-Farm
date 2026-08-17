@@ -32,6 +32,9 @@ export class VaccinationComponent implements OnInit, OnDestroy {
   private subs = new Subscription();
 
   get hasPendingRows(): boolean { return this.pendingRows.length > 0; }
+  get totalVaccinationCost(): number {
+    return this.vaccinations.reduce((s, v) => s + (v.cost || 0), 0);
+  }
 
   @HostListener('window:keydown', ['$event'])
   handleKeyboard(event: KeyboardEvent) {
@@ -123,6 +126,7 @@ export class VaccinationComponent implements OnInit, OnDestroy {
       vaccine_name: '', 
       dose: '', 
       notes: '', 
+      cost: null,
       done: 0 
     }; 
   }
@@ -136,8 +140,8 @@ export class VaccinationComponent implements OnInit, OnDestroy {
     this.isSavingAll = true;
     for (const row of this.pendingRows) {
       if ((!row.batch_id && !row.flock_id) || !row.vaccine_name) continue;
-      await this.db.run(`INSERT INTO vaccinations (batch_id, flock_id, date, vaccine_name, dose, notes, done) VALUES (?,?,?,?,?,?,?)`, 
-        [row.batch_id || null, row.flock_id || null, row.date, row.vaccine_name, row.dose, row.notes, row.done ? 1 : 0]);
+      await this.db.run(`INSERT INTO vaccinations (batch_id, flock_id, date, vaccine_name, dose, notes, cost, done) VALUES (?,?,?,?,?,?,?,?)`, 
+        [row.batch_id || null, row.flock_id || null, row.date, row.vaccine_name, row.dose, row.notes, row.cost || 0, row.done ? 1 : 0]);
     }
     this.pendingRows = [];
     this.isSavingAll = false;
@@ -146,11 +150,11 @@ export class VaccinationComponent implements OnInit, OnDestroy {
 
   cancelAllRows() { this.pendingRows = []; }
 
-  startEdit(v: any) { this.editingId = v.vaccination_id; this.editForm = { batch_id: v.batch_id, flock_id: v.flock_id, date: v.date, vaccine_name: v.vaccine_name, dose: v.dose, notes: v.notes, done: !!v.done }; }
+  startEdit(v: any) { this.editingId = v.vaccination_id; this.editForm = { batch_id: v.batch_id, flock_id: v.flock_id, date: v.date, vaccine_name: v.vaccine_name, dose: v.dose, notes: v.notes, cost: v.cost, done: !!v.done }; }
   cancelEdit() { this.editingId = null; }
   async saveEdit(id: number) {
-    await this.db.run(`UPDATE vaccinations SET batch_id=?, flock_id=?, date=?, vaccine_name=?, dose=?, notes=?, done=? WHERE vaccination_id=?`, 
-      [this.editForm.batch_id || null, this.editForm.flock_id || null, this.editForm.date, this.editForm.vaccine_name, this.editForm.dose, this.editForm.notes, this.editForm.done ? 1 : 0, id]);
+    await this.db.run(`UPDATE vaccinations SET batch_id=?, flock_id=?, date=?, vaccine_name=?, dose=?, notes=?, cost=?, done=? WHERE vaccination_id=?`, 
+      [this.editForm.batch_id || null, this.editForm.flock_id || null, this.editForm.date, this.editForm.vaccine_name, this.editForm.dose, this.editForm.notes, this.editForm.cost || 0, this.editForm.done ? 1 : 0, id]);
     this.editingId = null; await this.loadData();
   }
 

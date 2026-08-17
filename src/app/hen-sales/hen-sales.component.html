@@ -1,15 +1,10 @@
 <div class="module-container">
   <div class="module-header">
     <div>
-      <h3>Egg Sales</h3>
+      <h3>Hen Sales</h3>
       <p class="subtitle">{{ currentFarm?.farm_name }}</p>
     </div>
     <div class="header-actions">
-      <div class="default-rate-box" *ngIf="currentFarm" style="display:inline-flex; align-items:center; gap: 6px; margin-right: 10px; background: white; padding: 4px 8px; border-radius: 6px; border: 1px solid #e0e0e0;">
-        <label style="font-size: 12px; font-weight: 500; color: #666; margin: 0;">Default Rate:</label>
-        <input type="number" [(ngModel)]="defaultRate" class="inline-input" style="width: 70px; padding: 4px; margin: 0;" placeholder="Rs."/>
-        <button class="btn-secondary" style="padding: 4px 8px; font-size: 11px;" *ngIf="hasPendingRows" (click)="applyDefaultRateToAll()" title="Apply to all pending rows">Apply All</button>
-      </div>
       <ng-container *ngIf="hasPendingRows">
         <button class="btn-secondary" (click)="cancelAllRows()">Cancel</button>
         <button class="btn-primary" (click)="saveAllRows()" [disabled]="isSavingAll">{{ isSavingAll ? 'Saving...' : 'Save All' }}</button>
@@ -18,19 +13,23 @@
     </div>
   </div>
 
-  <!-- Egg Stock Summary Card -->
+  <!-- Hen Stock Summary Card -->
   <div class="egg-stock-summary" *ngIf="batches.length > 0">
     <div class="summary-card">
-      <div class="card-label">🥚 Collected</div>
-      <div class="card-value">{{ summaryCollected | number }}</div>
+      <div class="card-label">🐔 Initial</div>
+      <div class="card-value">{{ summaryInitial | number }}</div>
+    </div>
+    <div class="summary-card">
+      <div class="card-label">⚠️ Mortality</div>
+      <div class="card-value">{{ summaryMortality | number }}</div>
     </div>
     <div class="summary-card">
       <div class="card-label">🛒 Sold</div>
       <div class="card-value sold">{{ summarySold | number }}</div>
     </div>
     <div class="summary-card">
-      <div class="card-label">📦 In Stock</div>
-      <div class="card-value stock">{{ summaryInStock | number }}</div>
+      <div class="card-label">📦 Alive & Unsold</div>
+      <div class="card-value stock">{{ summaryAlive | number }}</div>
     </div>
     <div class="summary-card">
       <div class="card-label">Showing</div>
@@ -62,7 +61,7 @@
   </div>
 
   <div class="empty-state" *ngIf="batches.length > 0 && sales.length === 0 && pendingRows.length === 0">
-    <p>No egg sales yet. Click + or press Ctrl+A to record sales.</p>
+    <p>No hen sales yet. Click + or press Ctrl+A to record sales.</p>
   </div>
 
   <div class="table-card" *ngIf="sales.length > 0 || pendingRows.length > 0">
@@ -73,9 +72,8 @@
           <th>Batch</th>
           <th>Date</th>
           <th>Customer</th>
-          <th>Grade</th>
           <th>Quantity</th>
-          <th>Rate/Egg</th>
+          <th>Rate/Hen</th>
           <th>Amount</th>
           <th>Payment</th>
           <th>Actions</th>
@@ -88,19 +86,10 @@
           <td><input class="inline-input" type="date" [(ngModel)]="row.date"/></td>
           <td><input class="inline-input" type="text" [(ngModel)]="row.customer_name" placeholder="Customer name"/></td>
           <td>
-            <select class="inline-input" [(ngModel)]="row.grade">
-              <option value="small">Small</option>
-              <option value="medium">Medium</option>
-              <option value="large">Large</option>
-              <option value="xl">XL</option>
-              <option value="mixed">Mixed</option>
-            </select>
+            <input class="inline-input" type="number" min="0" [max]="getAvailableHens(row.batch_id)" [(ngModel)]="row.quantity" placeholder="Qty"/>
+            <div class="stock-hint" style="font-size:11px;color:#888;">Avail: {{ getAvailableHens(row.batch_id) | number }}</div>
           </td>
-          <td>
-            <input class="inline-input" type="number" min="0" [max]="getAvailableForGrade(row.batch_id, row.grade)" [(ngModel)]="row.quantity" placeholder="Qty"/>
-            <div class="stock-hint" style="font-size:11px;color:#888;">Avail: {{ getAvailableForGrade(row.batch_id, row.grade) | number }}</div>
-          </td>
-          <td><input class="inline-input" type="number" min="0" [(ngModel)]="row.rate_per_egg" placeholder="Rate"/></td>
+          <td><input class="inline-input" type="number" min="0" [(ngModel)]="row.rate_per_hen" placeholder="Rate"/></td>
           <td class="amount"><input class="inline-input amount-input" type="number" [(ngModel)]="row.amount" placeholder="Auto"/></td>
           <td>
             <select class="inline-input" [(ngModel)]="row.payment_type">
@@ -112,38 +101,28 @@
           <td class="actions"><button class="btn-remove-row" (click)="removePendingRow(i)">✕</button></td>
         </tr>
 
-        <tr *ngFor="let s of paginatedSales" [class.editing]="editingId === s.egg_sale_id">
-          <ng-container *ngIf="editingId !== s.egg_sale_id">
+        <tr *ngFor="let s of paginatedSales" [class.editing]="editingId === s.hen_sale_id">
+          <ng-container *ngIf="editingId !== s.hen_sale_id">
             <td></td>
             <td>{{ getBatchName(s.batch_id) }}</td>
             <td>{{ s.date | dateOnly }}</td>
             <td>{{ s.customer_name || '—' }}</td>
-            <td><span class="grade-badge" [class]="s.grade">{{ s.grade | titlecase }}</span></td>
             <td>{{ s.quantity | number }}</td>
-            <td>Rs. {{ s.rate_per_egg | number:'1.0-2' }}</td>
+            <td>Rs. {{ s.rate_per_hen | number:'1.0-2' }}</td>
             <td class="amount">Rs. {{ s.total_amount | number:'1.0-0' }}</td>
             <td><span class="payment-badge" [class.cash]="s.payment_type==='cash'" [class.bank]="s.payment_type==='bank'" [class.credit]="s.payment_type==='credit'">{{ s.payment_type }}</span></td>
             <td class="actions">
               <button class="btn-edit" [disabled]="isSaving" (click)="startEdit(s)">Edit</button>
-              <button class="btn-delete" [disabled]="isSaving" (click)="confirmDelete(s.egg_sale_id)">Delete</button>
+              <button class="btn-delete" [disabled]="isSaving" (click)="confirmDelete(s.hen_sale_id)">Delete</button>
             </td>
           </ng-container>
-          <ng-container *ngIf="editingId === s.egg_sale_id">
+          <ng-container *ngIf="editingId === s.hen_sale_id">
             <td></td>
             <td><select class="inline-input" [(ngModel)]="editForm.batch_id"><option *ngFor="let b of batches" [value]="b.batch_id">{{ b.batch_name }}</option></select></td>
             <td><input class="inline-input" type="date" [(ngModel)]="editForm.date"/></td>
             <td><input class="inline-input" type="text" [(ngModel)]="editForm.customer_name"/></td>
-            <td>
-              <select class="inline-input" [(ngModel)]="editForm.grade">
-                <option value="small">Small</option>
-                <option value="medium">Medium</option>
-                <option value="large">Large</option>
-                <option value="xl">XL</option>
-                <option value="mixed">Mixed</option>
-              </select>
-            </td>
             <td><input class="inline-input" type="number" min="0" [(ngModel)]="editForm.quantity"/></td>
-            <td><input class="inline-input" type="number" min="0" [(ngModel)]="editForm.rate_per_egg"/></td>
+            <td><input class="inline-input" type="number" min="0" [(ngModel)]="editForm.rate_per_hen"/></td>
             <td class="amount"><input class="inline-input amount-input" type="number" [(ngModel)]="editForm.amount" placeholder="Auto"/></td>
             <td>
               <select class="inline-input" [(ngModel)]="editForm.payment_type">
@@ -153,7 +132,7 @@
               </select>
             </td>
             <td class="actions">
-              <button class="btn-save" [disabled]="isSaving" (click)="saveEdit(s.egg_sale_id)">Save</button>
+              <button class="btn-save" [disabled]="isSaving" (click)="saveEdit(s.hen_sale_id)">Save</button>
               <button class="btn-cancel-edit" [disabled]="isSaving" (click)="cancelEdit()">Cancel</button>
             </td>
           </ng-container>
@@ -164,7 +143,7 @@
   </div>
 </div>
 
-<app-confirm-dialog *ngIf="showDeleteDialog" title="Delete Egg Sale"
-  message="Are you sure you want to delete this egg sale?"
+<app-confirm-dialog *ngIf="showDeleteDialog" title="Delete Hen Sale"
+  message="Are you sure you want to delete this hen sale?"
   confirmText="Delete" cancelText="Cancel" type="danger"
   (confirmed)="onDeleteConfirmed()" (cancelled)="onDeleteCancelled()"/>

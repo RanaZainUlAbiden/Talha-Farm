@@ -29,6 +29,7 @@ export class LayoutComponent implements OnInit, OnDestroy {
   activeRoute = 'flock-health';
   activeBusinessTab: string = 'broiler';
   private savedBusinessType: string = 'broiler';
+  private lastRouteByTab: { [key: string]: string } = {};
   licenseStatus: string = '';
   showLicenseWarning: boolean = false;
   isLicenseActivated: boolean = false;
@@ -42,6 +43,7 @@ export class LayoutComponent implements OnInit, OnDestroy {
     { label: 'Ledger',        icon: '📒', route: 'ledger'           },
     { label: 'Medicine',      icon: '💊', route: 'medicine' },
     { label: 'Feed',          icon: '🌾', route: 'feed' },
+    { label: 'Labour',        icon: '👷🏻‍♀️', route: 'labour' },
     { label: 'Vaccination',   icon: '💉', route: 'vaccination' },
     { label: 'Sale',          icon: '🛒', route: 'sale'             },
     { label: 'Income',        icon: '📈', route: 'income'           },
@@ -53,9 +55,11 @@ export class LayoutComponent implements OnInit, OnDestroy {
     { label: 'Batches',         icon: '🥚', route: 'batch-management' },
     { label: 'Egg Collection',  icon: '📋', route: 'egg-collection'   },
     { label: 'Egg Sales',       icon: '🛒', route: 'egg-sales'        },
+    { label: 'Hen Sales',       icon: '🐔', route: 'hen-sales'        },
     { label: 'Medicine',        icon: '💊', route: 'medicine' },
     { label: 'Feed',            icon: '🌾', route: 'feed' },
     { label: 'Vaccination',     icon: '💉', route: 'vaccination' },
+    { label: 'Labour',          icon: '👷🏻‍♀️', route: 'labour' },
     { label: 'Mortality',       icon: '⚠️', route: 'layer-mortality'  },
     { label: 'Income',          icon: '📈', route: 'income'           },
     { label: 'Report',          icon: '📄', route: 'layer-report'     }
@@ -64,10 +68,12 @@ export class LayoutComponent implements OnInit, OnDestroy {
   distributionMenu: any[] = [
     { label: 'Inventory',     icon: '📦', route: 'inventory'            },
     { label: 'Purchase',      icon: '📥', route: 'purchase-orders'      },
+    { label: 'Purchase Returns', icon: '↪', route: 'purchase-returns'   },
     { label: 'Sales Orders',  icon: '📤', route: 'sales-orders'         },
     { label: 'Returns',       icon: '↩', route: 'sales-returns'         },
     { label: 'Customers',     icon: '👥', route: 'customer-management'  },
     { label: 'Suppliers',     icon: '🏭', route: 'supplier-management'  },
+    { label: 'Labour',        icon: '👷🏻‍♀️', route: 'labour-management' },
     { label: 'Account Ledger',icon: '📊', route: 'account-ledger'       }, 
     { label: 'Expense Ledger', icon: '💳', route: 'expense-ledger'      },
     { label: 'Report',        icon: '📄', route: 'distribution-report'  }
@@ -118,9 +124,16 @@ export class LayoutComponent implements OnInit, OnDestroy {
   switchBusinessTab(tab: string) {
     this.activeBusinessTab = tab;
     localStorage.setItem('activeBusinessTab', tab);
-    const firstRoute = this.menuItems[0]?.route || 'flock-health';
-    this.activeRoute = firstRoute;
-    this.router.navigate(['/app', firstRoute]);
+
+    // Resume whichever screen was last open in this tab, instead of
+    // always jumping back to the first menu item.
+    const remembered = this.lastRouteByTab[tab];
+    const menuForTab = tab === 'layer' ? this.layerMenu : tab === 'distribution' ? this.distributionMenu : this.broilerMenu;
+    const isValidForTab = remembered && menuForTab.some(m => m.route === remembered);
+    const targetRoute = isValidForTab ? remembered : (menuForTab[0]?.route || 'flock-health');
+
+    this.activeRoute = targetRoute;
+    this.router.navigate(['/app', targetRoute]);
     this.loadActiveBusinessData();
     this.cdr.detectChanges();
   }
@@ -153,6 +166,13 @@ export class LayoutComponent implements OnInit, OnDestroy {
       this.activeBusinessTab = this.savedBusinessType;
     }
 
+    try {
+      const storedRoutes = localStorage.getItem('lastRouteByTab');
+      this.lastRouteByTab = storedRoutes ? JSON.parse(storedRoutes) : {};
+    } catch {
+      this.lastRouteByTab = {};
+    }
+
     this.subs.add(
       this.flockService.flocks$.subscribe(flocks => {
         this.flocks = flocks;
@@ -182,6 +202,8 @@ export class LayoutComponent implements OnInit, OnDestroy {
     this.licenseCheckInterval = setInterval(() => {
       this.checkLicense();
     }, 60000);
+
+    this.loadAutoBackupPath();
   }
 
   ngOnDestroy() {
@@ -191,6 +213,7 @@ export class LayoutComponent implements OnInit, OnDestroy {
     }
   }
 
+  
   /**
    * 🔥 Check if license is valid
    */
@@ -225,6 +248,32 @@ export class LayoutComponent implements OnInit, OnDestroy {
     this.router.navigate(['/activation']);
   }
 
+
+   async loadFlocks() {
+    const flocks = await this.flockService.loadFlocks(this.currentFarm.farm_id);
+    const current = this.flockService.getCurrentFlock();
+    const currentIsFlock = current && !current.batch_id && flocks.some((flock: any) => flock.flock_id === current.flock_id);
+
+    if (!currentIsFlock) {
+      // Restore whichever flock was last active in Broiler mode specifically,
+      // instead of always falling back to the first flock — switching to
+      // Layer/Distribution and back was silently resetting the selection
+      // because the single shared "current flock" slot had been overwritten
+      // by the other module's selection in the meantime.
+      const lastId = localStorage.getItem('lastBroilerFlockId');
+      const remembered = lastId ? flocks.find((f: any) => String(f.flock_id) === lastId) : null;
+      this.flockService.setCurrentFlock(remembered || (flocks.length > 0 ? flocks[0] : null));
+    }
+
+    this.currentFlock = this.flockService.getCurrentFlock();
+    if (this.currentFlock?.flock_id) {
+      localStorage.setItem('lastBroilerFlockId', String(this.currentFlock.flock_id));
+    }
+    this.cdr.detectChanges();
+  }
+
+
+
   loadActiveBusinessData() {
     this.showFlockDropdown = false;
 
@@ -242,18 +291,7 @@ export class LayoutComponent implements OnInit, OnDestroy {
     this.loadFlocks();
   }
 
-  async loadFlocks() {
-    const flocks = await this.flockService.loadFlocks(this.currentFarm.farm_id);
-    const current = this.flockService.getCurrentFlock();
-    const currentIsFlock = current && !current.batch_id && flocks.some((flock: any) => flock.flock_id === current.flock_id);
-
-    if (!currentIsFlock) {
-      this.flockService.setCurrentFlock(flocks.length > 0 ? flocks[0] : null);
-    }
-
-    this.currentFlock = this.flockService.getCurrentFlock();
-    this.cdr.detectChanges();
-  }
+ 
 
   async loadBatches() {
     const result = await this.db.get(
@@ -266,10 +304,17 @@ export class LayoutComponent implements OnInit, OnDestroy {
       this.batches.some((batch: any) => batch.batch_id === this.currentFlock.batch_id);
 
     if (this.batches.length > 0 && !currentIsBatch) {
-      this.selectBatch(this.batches[0]);
+      // Restore whichever batch was last active in Layer mode specifically —
+      // same reasoning as loadFlocks() above, so switching away to
+      // Broiler/Distribution and back doesn't reset to the first batch.
+      const lastId = localStorage.getItem('lastLayerBatchId');
+      const remembered = lastId ? this.batches.find((b: any) => String(b.batch_id) === lastId) : null;
+      this.selectBatch(remembered || this.batches[0]);
     } else if (this.batches.length === 0) {
       this.currentFlock = null;
       this.flockService.setCurrentFlock(null);
+    } else if (currentIsBatch && this.currentFlock?.batch_id) {
+      localStorage.setItem('lastLayerBatchId', String(this.currentFlock.batch_id));
     }
 
     this.cdr.detectChanges();
@@ -279,6 +324,9 @@ export class LayoutComponent implements OnInit, OnDestroy {
     const batchAsFlock = { ...batch, flock_name: batch.batch_name, flock_id: batch.batch_id, batch_id: batch.batch_id };
     this.currentFlock = batchAsFlock;
     this.flockService.setCurrentFlock(batchAsFlock);
+    if (batch?.batch_id) {
+      localStorage.setItem('lastLayerBatchId', String(batch.batch_id));
+    }
     this.showFlockDropdown = false;
     this.cdr.detectChanges();
   }
@@ -297,6 +345,9 @@ export class LayoutComponent implements OnInit, OnDestroy {
 
   selectFlock(flock: any) {
     this.flockService.setCurrentFlock(flock);
+    if (flock?.flock_id) {
+      localStorage.setItem('lastBroilerFlockId', String(flock.flock_id));
+    }
     this.showFlockDropdown = false;
     this.cdr.detectChanges();
   }
@@ -323,7 +374,14 @@ export class LayoutComponent implements OnInit, OnDestroy {
     if (route === 'inventory') {
       this.activeBusinessTab = 'distribution';
     }
-    
+
+    // Remember which screen was open within the current module, so
+    // switching business tabs away and back restores it instead of
+    // always landing on the first menu item.
+    const tabKey = this.savedBusinessType === 'all' ? this.activeBusinessTab : this.savedBusinessType;
+    this.lastRouteByTab[tabKey] = route;
+    localStorage.setItem('lastRouteByTab', JSON.stringify(this.lastRouteByTab));
+
     if (queryParams) {
       this.router.navigate(['/app', route], { queryParams });
     } else {
@@ -336,6 +394,16 @@ export class LayoutComponent implements OnInit, OnDestroy {
     this.pendingState.clearAll();
     this.authService.logout();
   }
+
+  autoBackupPath: string | null = null;
+
+  async loadAutoBackupPath() {
+    this.autoBackupPath = await this.db.getAutoBackupPath();
+    this.cdr.detectChanges();
+  }
+  
+
+
   async backupDatabase() {
     const result = await this.db.backupDatabase();
     if (result.success) {
@@ -349,4 +417,17 @@ export class LayoutComponent implements OnInit, OnDestroy {
     await this.db.restoreDatabase();
     // App relaunches automatically on success
   }
+
+  async resetAutoBackupLocation() {
+    const confirmed = confirm(
+      this.autoBackupPath
+        ? `Current auto-backup location:\n${this.autoBackupPath}\n\nClear it? You'll be asked to choose a new location next time you close the app.`
+        : 'No auto-backup location is set yet. You\'ll be asked to choose one next time you close the app.'
+    );
+    if (!confirmed) return;
+    await this.db.resetAutoBackupPath();
+    this.autoBackupPath = null;
+    this.cdr.detectChanges();
+  }
+
 }

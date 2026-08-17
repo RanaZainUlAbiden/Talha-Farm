@@ -19,6 +19,7 @@ export class DistributionReportComponent implements OnInit {
   purchases: any[] = [];
   sales: any[] = [];
   salesReturns: any[] = [];
+  purchaseReturns: any[] = [];
   expenses: any[] = [];
   customers: any[] = [];
   isGenerating = false;
@@ -29,12 +30,13 @@ export class DistributionReportComponent implements OnInit {
   sections = {
     inventory: true,
     purchases: true,
+    purchaseReturns: true,
     sales: true,
     returns: true,
     expenses: true,
     summary: true
   };
-  
+
   dateFrom: string = '';
   dateTo: string = '';
 
@@ -57,10 +59,10 @@ export class DistributionReportComponent implements OnInit {
   get filteredPurchases(): any[] {
     if (!this.dateFrom && !this.dateTo) return this.purchases;
     return this.purchases.filter((p: any) => {
-      const date = p.date ? new Date(p.date).setHours(0,0,0,0) : null;
+      const date = p.date ? new Date(p.date).setHours(0, 0, 0, 0) : null;
       if (!date) return false;
-      const from = this.dateFrom ? new Date(this.dateFrom).setHours(0,0,0,0) : null;
-      const to = this.dateTo ? new Date(this.dateTo).setHours(0,0,0,0) : null;
+      const from = this.dateFrom ? new Date(this.dateFrom).setHours(0, 0, 0, 0) : null;
+      const to = this.dateTo ? new Date(this.dateTo).setHours(0, 0, 0, 0) : null;
       if (from && to) return date >= from && date <= to;
       if (from) return date >= from;
       if (to) return date <= to;
@@ -71,10 +73,10 @@ export class DistributionReportComponent implements OnInit {
   get filteredSales(): any[] {
     if (!this.dateFrom && !this.dateTo) return this.sales;
     return this.sales.filter((s: any) => {
-      const date = s.bill_date ? new Date(s.bill_date).setHours(0,0,0,0) : null;
+      const date = s.bill_date ? new Date(s.bill_date).setHours(0, 0, 0, 0) : null;
       if (!date) return false;
-      const from = this.dateFrom ? new Date(this.dateFrom).setHours(0,0,0,0) : null;
-      const to = this.dateTo ? new Date(this.dateTo).setHours(0,0,0,0) : null;
+      const from = this.dateFrom ? new Date(this.dateFrom).setHours(0, 0, 0, 0) : null;
+      const to = this.dateTo ? new Date(this.dateTo).setHours(0, 0, 0, 0) : null;
       if (from && to) return date >= from && date <= to;
       if (from) return date >= from;
       if (to) return date <= to;
@@ -85,10 +87,10 @@ export class DistributionReportComponent implements OnInit {
   get filteredReturns(): any[] {
     if (!this.dateFrom && !this.dateTo) return this.salesReturns;
     return this.salesReturns.filter((r: any) => {
-      const date = r.return_date ? new Date(r.return_date).setHours(0,0,0,0) : null;
+      const date = r.return_date ? new Date(r.return_date).setHours(0, 0, 0, 0) : null;
       if (!date) return false;
-      const from = this.dateFrom ? new Date(this.dateFrom).setHours(0,0,0,0) : null;
-      const to = this.dateTo ? new Date(this.dateTo).setHours(0,0,0,0) : null;
+      const from = this.dateFrom ? new Date(this.dateFrom).setHours(0, 0, 0, 0) : null;
+      const to = this.dateTo ? new Date(this.dateTo).setHours(0, 0, 0, 0) : null;
       if (from && to) return date >= from && date <= to;
       if (from) return date >= from;
       if (to) return date <= to;
@@ -96,13 +98,35 @@ export class DistributionReportComponent implements OnInit {
     });
   }
 
+  get filteredPurchaseReturns(): any[] {
+    if (!this.dateFrom && !this.dateTo) return this.purchaseReturns;
+    return this.purchaseReturns.filter((r: any) => {
+      const date = r.return_date ? new Date(r.return_date).setHours(0, 0, 0, 0) : null;
+      if (!date) return false;
+      const from = this.dateFrom ? new Date(this.dateFrom).setHours(0, 0, 0, 0) : null;
+      const to = this.dateTo ? new Date(this.dateTo).setHours(0, 0, 0, 0) : null;
+      if (from && to) return date >= from && date <= to;
+      if (from) return date >= from;
+      if (to) return date <= to;
+      return true;
+    });
+  }
+
+  get totalPurchaseReturns(): number {
+    return this.filteredPurchaseReturns.reduce((sum: number, r: any) => sum + (Number(r.return_amount) || 0), 0);
+  }
+
+  get totalPurchaseReturnsCount(): number {
+    return this.filteredPurchaseReturns.length;
+  }
+
   get filteredExpenses(): any[] {
     if (!this.dateFrom && !this.dateTo) return this.expenses;
     return this.expenses.filter((e: any) => {
-      const date = e.transaction_date ? new Date(e.transaction_date).setHours(0,0,0,0) : null;
+      const date = e.transaction_date ? new Date(e.transaction_date).setHours(0, 0, 0, 0) : null;
       if (!date) return false;
-      const from = this.dateFrom ? new Date(this.dateFrom).setHours(0,0,0,0) : null;
-      const to = this.dateTo ? new Date(this.dateTo).setHours(0,0,0,0) : null;
+      const from = this.dateFrom ? new Date(this.dateFrom).setHours(0, 0, 0, 0) : null;
+      const to = this.dateTo ? new Date(this.dateTo).setHours(0, 0, 0, 0) : null;
       if (from && to) return date >= from && date <= to;
       if (from) return date >= from;
       if (to) return date <= to;
@@ -131,7 +155,12 @@ export class DistributionReportComponent implements OnInit {
   }
 
   get totalProfitLoss(): number {
-    return this.totalSales - this.totalPurchases - this.totalExpenses;
+    // 🔥 Cash-basis profit — only PAID sales count as revenue, so an
+    // unpaid bill contributes nothing positive while its cost is already
+    // counted, pulling profit down until it's actually collected.
+    // Purchase returns reduce the effective cost of goods (money/credit
+    // recovered from suppliers), so they're added back here.
+    return this.totalPaidSales - (this.totalPurchases - this.totalPurchaseReturns) - this.totalExpenses;
   }
 
   /**
@@ -194,7 +223,7 @@ export class DistributionReportComponent implements OnInit {
     private db: DatabaseService,
     private authService: AuthService,
     private cdr: ChangeDetectorRef
-  ) {}
+  ) { }
 
   ngOnInit() {
     this.currentFarm = this.authService.getCurrentFarm();
@@ -242,12 +271,12 @@ export class DistributionReportComponent implements OnInit {
       for (const product of this.products) {
         const totalStock = await this.db.getTotalStock(product.product_id);
         product.calculated_stock = totalStock;
-        
+
         // Also get batch count for display
         const batchesResult = await this.db.getBatchesByProduct(product.product_id, this.currentFarm.farm_id);
         const batches = batchesResult.success && batchesResult.data ? batchesResult.data : [];
         product.batch_count = batches.length;
-        
+
         // Check for expiring batches
         const hasExpiring = await this.db.hasExpiringBatches(product.product_id);
         product.has_expiring = hasExpiring;
@@ -281,6 +310,18 @@ export class DistributionReportComponent implements OnInit {
         [this.currentFarm.farm_id]
       );
       this.salesReturns = returnsResult.success ? returnsResult.data : [];
+
+      const purchaseReturnsResult = await this.db.get(
+        `SELECT pr.*, p.product_name, s.supplier_name
+         FROM purchase_returns pr
+         JOIN purchase_orders po ON po.purchase_id = pr.purchase_id
+         LEFT JOIN products p ON p.product_id = po.product_id
+         LEFT JOIN suppliers s ON s.supplier_id = po.supplier_id
+         WHERE pr.farm_id = ?
+         ORDER BY pr.return_date DESC, pr.return_id DESC`,
+        [this.currentFarm.farm_id]
+      );
+      this.purchaseReturns = purchaseReturnsResult.success ? purchaseReturnsResult.data : [];
 
       // Load customers
       const customersResult = await this.db.getAllCustomersWithBalance(this.currentFarm.farm_id);
@@ -342,51 +383,79 @@ export class DistributionReportComponent implements OnInit {
       const today = new Date().toLocaleDateString('en-PK');
       const footer = 'Software By: www.devinfantary.com  |  Contact: 0302 6938217';
       const margin = 14;
-      
+
       const formatDate = (d: any) => {
         if (!d) return '—';
         const p = String(d).split('T')[0].split(' ')[0].split('-');
         return (p.length === 3 && p[0].length === 4) ? `${p[2]}-${p[1]}-${p[0]}` : String(d);
       };
-      
+
       const B: [number, number, number] = [0, 0, 0];
       const G: [number, number, number] = [120, 120, 120];
-      
+
+      // ── Background watermark ────────────────────────────────
+      let bgImgData: string | null = null;
+      let bgW = 0; let bgH = 0;
+      try {
+        bgImgData = await this.loadImageAsBase64('reportimage.png');
+        const bgProps = doc.getImageProperties(bgImgData);
+        bgW = 140;
+        bgH = (bgProps.height * bgW) / bgProps.width;
+      } catch { }
+
+      const drawBackground = () => {
+        if (bgImgData) {
+          doc.saveGraphicsState();
+          doc.setGState(new (doc as any).GState({ opacity: 0.08 }));
+          doc.addImage(bgImgData, 'PNG', (pw - bgW) / 2, (ph - bgH) / 2, bgW, bgH);
+          doc.restoreGraphicsState();
+        }
+      };
+
+      drawBackground();
+
       let y = 20;
 
       // ── COVER PAGE ─────────────────────────────────────────
 
       try {
-        const id = await this.loadImageAsBase64('report-boiler.jpeg');
+        const id = await this.loadImageAsBase64('Report-Distribution.jpeg');
         const ip = doc.getImageProperties(id);
         const lh = 35;
         const lw = (ip.width * lh) / ip.height;
         const tx = margin + lw + 10;
         doc.addImage(id, 'JPEG', margin, y, lw, lh);
         doc.setFont('helvetica', 'bold');
-        doc.setFontSize(22);
+        doc.setFontSize(18);
         doc.setTextColor(...B);
-        doc.text('DISTRIBUTION REPORT', tx, y + 10);
+        doc.text('TALHA POULTRY FEEDS AND CHICKS', tx, y + 8);
         doc.setFont('helvetica', 'normal');
-        doc.setFontSize(13);
+        doc.setFontSize(9);
         doc.setTextColor(...G);
-        doc.text(farmName, tx, y + 18);
+        doc.text('Shop # 33 Jinnah Market Akal Wala Road, Toba Tek Singh', tx, y + 14);
+        doc.text('Proprietor: Muhammad Tariq 0321-7546630', tx, y + 19);
+        doc.text('Managing Director: Ghulam Abbas 0322-7778826', tx, y + 24);
         doc.setFontSize(10);
-        doc.text('Generated: ' + today, tx, y + 25);
+        doc.text('Generated: ' + today, tx, y + 30);
         y += lh + 10;
       } catch {
         doc.setFont('helvetica', 'bold');
-        doc.setFontSize(20);
+        doc.setFontSize(18);
         doc.setTextColor(...B);
-        doc.text('DISTRIBUTION REPORT', pw / 2, y, { align: 'center' });
-        y += 10;
+        doc.text('TALHA POULTRY FEEDS AND CHICKS', pw / 2, y, { align: 'center' });
+        y += 7;
         doc.setFont('helvetica', 'normal');
-        doc.setFontSize(12);
+        doc.setFontSize(9);
         doc.setTextColor(...G);
-        doc.text(farmName, pw / 2, y, { align: 'center' });
-        y += 8;
+        doc.text('Shop # 33 Jinnah Market Akal Wala Road, Toba Tek Singh', pw / 2, y, { align: 'center' });
+        y += 5;
+        doc.text('Proprietor: Muhammad Tariq — 0321-7546630', pw / 2, y, { align: 'center' });
+        y += 4.5;
+        doc.text('Managing Director: Ghulam Abbas — 0322-7778826', pw / 2, y, { align: 'center' });
+        y += 6;
+        doc.setFontSize(10);
         doc.text('Generated: ' + today, pw / 2, y, { align: 'center' });
-        y += 15;
+        y += 10;
       }
 
       doc.setDrawColor(...B);
@@ -409,13 +478,14 @@ export class DistributionReportComponent implements OnInit {
           ['Total Sales Bills', String(this.totalSalesCount)],
           ['Total Returns', 'Rs. ' + this.totalReturns.toLocaleString()],
           ['Total Expenses Count', String(this.totalExpensesCount)],
-          ['Inventory Value (Stock × Cost)', 'Rs. ' + this.totalInventoryValue.toLocaleString()],
-          ['Total Purchases', 'Rs. ' + this.totalPurchases.toLocaleString()],
-          ['Total Sales', 'Rs. ' + this.totalSales.toLocaleString()],
+          ['Total Purchases (all stock bought)', 'Rs. ' + this.totalPurchases.toLocaleString()],
+          ['Purchase Returns (refunded by suppliers)', 'Rs. ' + this.totalPurchaseReturns.toLocaleString()],
+          ['Current Inventory Value (unsold stock)', 'Rs. ' + this.totalInventoryValue.toLocaleString()],
+          ['Total Sales (Billed)', 'Rs. ' + this.totalSales.toLocaleString()],
           ['Total Paid Sales', 'Rs. ' + this.totalPaidSales.toLocaleString()],
-          ['Total Unpaid Sales (Sales - Paid)', 'Rs. ' + this.totalUnpaidSales.toLocaleString()],
+          ['Total Unpaid Sales', 'Rs. ' + this.totalUnpaidSales.toLocaleString()],
           ['Total Expenses', 'Rs. ' + this.totalExpenses.toLocaleString()],
-          ['Profit / Loss', 'Rs. ' + this.totalProfitLoss.toLocaleString()]
+          ['Profit / Loss (Paid Sales - Net Purchases - Expenses)', 'Rs. ' + this.totalProfitLoss.toLocaleString()]
         ];
 
         doc.setFont('helvetica', 'normal');
@@ -433,8 +503,9 @@ export class DistributionReportComponent implements OnInit {
 
       if (this.sections.inventory && this.products.length > 0) {
         doc.addPage();
+        drawBackground();
         this.addPageHeader(doc, farmName, today, 'INVENTORY DETAIL (Current Stock from Batches)');
-        
+
         // Sort products by stock value (highest first)
         const sortedProducts = [...this.products].sort((a, b) => {
           const valA = (a.calculated_stock || 0) * (a.cost_price || 0);
@@ -488,8 +559,9 @@ export class DistributionReportComponent implements OnInit {
 
       if (this.sections.purchases && this.filteredPurchases.length > 0) {
         doc.addPage();
+        drawBackground();
         this.addPageHeader(doc, farmName, today, 'PURCHASE ORDERS');
-        
+
         const purchaseBody = this.filteredPurchases.map(p => [
           formatDate(p.date),
           p.product_name || '—',
@@ -530,8 +602,9 @@ export class DistributionReportComponent implements OnInit {
 
       if (this.sections.sales && this.filteredSales.length > 0) {
         doc.addPage();
+        drawBackground();
         this.addPageHeader(doc, farmName, today, 'SALES BILLS');
-        
+
         const salesBody = this.filteredSales.map(s => {
           const isPaid = this.isBillPaid(s);
           return [
@@ -573,6 +646,7 @@ export class DistributionReportComponent implements OnInit {
 
       if (this.sections.returns && this.filteredReturns.length > 0) {
         doc.addPage();
+        drawBackground();
         this.addPageHeader(doc, farmName, today, 'SALES RETURNS');
 
         const returnsBody = this.filteredReturns.map(r => [
@@ -602,12 +676,58 @@ export class DistributionReportComponent implements OnInit {
         doc.text(`Total Returns: Rs. ${this.totalReturns.toLocaleString()}`, margin, returnFinalY);
       }
 
+      // ── PURCHASE RETURNS ───────────────────────────────────
+
+      if (this.sections.purchaseReturns && this.filteredPurchaseReturns.length > 0) {
+        doc.addPage();
+        drawBackground();
+        this.addPageHeader(doc, farmName, today, 'PURCHASE RETURNS');
+
+        const purchaseReturnsBody = this.filteredPurchaseReturns.map(r => [
+          formatDate(r.return_date),
+          r.return_number || '—',
+          r.product_name || '—',
+          r.supplier_name || '—',
+          String(r.quantity || 0),
+          'Rs. ' + (r.return_amount || 0).toLocaleString(),
+          r.refund_method || 'cash',
+          r.reason || '—'
+        ]);
+
+        autoTable(doc, {
+          startY: 35,
+          head: [['Date', 'Return #', 'Product', 'Supplier', 'Qty', 'Amount', 'Method', 'Reason']],
+          body: purchaseReturnsBody,
+          theme: 'striped',
+          headStyles: { fontStyle: 'bold', fontSize: 8, fillColor: [26, 92, 56], textColor: [255, 255, 255] },
+          bodyStyles: { fontSize: 8, textColor: B },
+          margin: { left: margin, right: margin },
+          columnStyles: {
+            0: { cellWidth: 22 },
+            1: { cellWidth: 22 },
+            2: { cellWidth: 28 },
+            3: { cellWidth: 28 },
+            4: { cellWidth: 15, halign: 'right' },
+            5: { cellWidth: 25, halign: 'right' },
+            6: { cellWidth: 20 },
+            7: { cellWidth: 30 }
+          }
+        });
+
+        const purchaseReturnFinalY = (doc as any).lastAutoTable.finalY + 6;
+        doc.setFont('helvetica', 'bold');
+        doc.setFontSize(9);
+        doc.setTextColor(...B);
+        doc.text(`Total Purchase Returns: Rs. ${this.totalPurchaseReturns.toLocaleString()}`, margin, purchaseReturnFinalY);
+      }
+
       // ── EXPENSES ───────────────────────────────────────────
 
       if (this.sections.expenses && this.filteredExpenses.length > 0) {
         doc.addPage();
+        drawBackground();
         this.addPageHeader(doc, farmName, today, 'DISTRIBUTION EXPENSES');
-        
+
         const expensesBody = this.filteredExpenses.map(e => [
           formatDate(e.transaction_date),
           e.category || '—',
@@ -667,17 +787,17 @@ export class DistributionReportComponent implements OnInit {
     const pw = doc.internal.pageSize.getWidth();
     const B: [number, number, number] = [0, 0, 0];
     const G: [number, number, number] = [120, 120, 120];
-    
+
     doc.setFontSize(8);
     doc.setTextColor(...G);
-    doc.text(farmName, 14, 9);
+    doc.text('Talha Poultry Feeds and Chicks', 14, 9);
     doc.text(date, pw - 14, 9, { align: 'right' });
-    
+
     doc.setFont('helvetica', 'bold');
     doc.setFontSize(14);
     doc.setTextColor(...B);
     doc.text(title, 14, 22);
-    
+
     doc.setDrawColor(...B);
     doc.setLineWidth(0.5);
     doc.line(14, 25, pw - 14, 25);

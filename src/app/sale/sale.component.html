@@ -19,6 +19,13 @@
         *ngIf="currentFlock && !showBrokerForm && !hasPendingRows">
         + Manage Brokers
       </button>
+      
+      <div class="default-rate-box" *ngIf="currentFlock" style="display:inline-flex; align-items:center; gap: 6px; margin-right: 10px; background: white; padding: 4px 8px; border-radius: 6px; border: 1px solid #e0e0e0;">
+        <label style="font-size: 12px; font-weight: 500; color: #666; margin: 0;">Default Rate:</label>
+        <input type="number" [(ngModel)]="defaultRate" class="inline-input" style="width: 70px; padding: 4px; margin: 0;" placeholder="Rs."/>
+        <button class="btn-secondary" style="padding: 4px 8px; font-size: 11px;" *ngIf="hasPendingRows" (click)="applyDefaultRateToAll()" title="Apply to all pending rows">Apply All</button>
+      </div>
+
       <ng-container *ngIf="hasPendingRows">
         <button class="btn-secondary" (click)="cancelAllRows()">Cancel</button>
         <button class="btn-primary" (click)="saveAllRows()" [disabled]="isSavingAll">{{ isSavingAll ? 'Saving...' : 'Save All' }}</button>
@@ -83,7 +90,7 @@
       <thead>
         <tr>
           <th style="width:32px"></th><th>Date</th><th>Vehicle #</th><th>Driver Name</th><th>Driver Phone</th>
-          <th>Broker</th><th>Empty (kg)</th><th>Load (kg)</th><th>Bird Wt</th><th>Rate (Rs.)</th><th>Amount</th><th>Payment</th><th>Photo</th><th></th>
+          <th>Broker</th><th>Empty (kg)</th><th>Load (kg)</th><th>Bird Wt</th><th>Rate (Rs.)</th><th>Amount</th><th>Payment</th><th></th>
         </tr>
       </thead>
       <tbody>
@@ -99,13 +106,8 @@
           <td class="highlight">{{ getRowBirdWeight(row) | number:'1.0-0' }}</td>
           <td><input class="inline-input" type="number" [(ngModel)]="row.rate" placeholder="0"/></td>
           <td class="amount"><input class="inline-input amount-input" type="number" [(ngModel)]="row.amount" placeholder="Auto"/></td>
-          <td><select class="inline-input" [(ngModel)]="row.payment_type"><option value="cash">Cash</option><option value="credit">Credit</option></select></td>
-          <td>
-            <button class="btn-upload-photo" type="button" (click)="fileInput.click()" title="Upload photo">📷</button>
-            <input type="file" #fileInput hidden accept="image/*" (change)="onFileSelected($event, row)"/>
-            <div class="photo-thumb" *ngIf="row.receipt_image" (click)="openImage(row.receipt_image)"><img [src]="row.receipt_image"/></div>
-          </td>
-<td>
+          <td><select class="inline-input" [(ngModel)]="row.payment_type"><option value="cash">Cash</option><option value="bank">Bank</option><option value="credit">Credit</option></select></td>
+           <td>
             <button class="btn-print-small" type="button" (click)="printDriverReceipt(row)" title="Print driver receipt">🖨️</button>
             <button class="btn-remove-row" (click)="removePendingRow(i)">✕</button>
           </td>
@@ -130,7 +132,7 @@
         <thead>
           <tr>
             <th>Vehicle #</th><th>Driver Name</th><th>Driver Phone</th><th>Broker</th>
-            <th>Empty (kg)</th><th>Load (kg)</th><th>Bird Wt (kg)</th><th>Rate (Rs.)</th><th>Amount (Rs.)</th><th>Payment</th><th>Photo</th><th>Actions</th>
+            <th>Empty (kg)</th><th>Load (kg)</th><th>Bird Wt (kg)</th><th>Rate (Rs.)</th><th>Amount (Rs.)</th><th>Payment</th><th>Actions</th>
           </tr>
         </thead>
         <tbody>
@@ -148,7 +150,6 @@
               <td>{{ sale.rate | number:'1.0-0' }}</td>
               <td class="amount">Rs. {{ sale.total_amount | number:'1.0-0' }}</td>
               <td><span class="payment-badge" [class.cash]="sale.payment_type==='cash'" [class.credit]="sale.payment_type==='credit'">{{ sale.payment_type || 'cash' }}</span></td>
-              <td><div class="photo-thumb" *ngIf="sale.receipt_image" (click)="openImage(sale.receipt_image)"><img [src]="sale.receipt_image" title="Click to view full"/></div></td>
               <td class="actions">
                 <button class="btn-print-small" [disabled]="isSaving" (click)="printDriverReceipt(sale)" title="Print driver receipt">🖨️</button>
                 <button class="btn-edit" [disabled]="isSaving" (click)="startEdit(sale)">Edit</button>
@@ -167,13 +168,8 @@
               <td class="highlight">{{ getEditBirdWeight() | number:'1.0-0' }}</td>
               <td><input class="inline-input" type="number" [(ngModel)]="editForm.rate"/></td>
               <td class="amount"><input class="inline-input amount-input" type="number" [(ngModel)]="editForm.amount" placeholder="Auto"/></td>
-              <td><select class="inline-input" [(ngModel)]="editForm.payment_type"><option value="cash">Cash</option><option value="credit">Credit</option></select></td>
-              <td>
-                <button class="btn-upload-photo" type="button" (click)="editFileInput.click()" title="Change photo">📷</button>
-                <input type="file" #editFileInput hidden accept="image/*" (change)="onFileSelected($event, editForm)"/>
-                <div class="photo-thumb" *ngIf="editForm.receipt_image" (click)="openImage(editForm.receipt_image)"><img [src]="editForm.receipt_image"/></div>
-                <button class="btn-remove-photo" *ngIf="editForm.receipt_image" (click)="editForm.receipt_image = null">✕</button>
-              </td>
+              <td><select class="inline-input" [(ngModel)]="editForm.payment_type"><option value="cash">Cash</option><option value="bank">Bank</option><option value="credit">Credit</option></select></td>
+              
               <td class="actions">
                 <button class="btn-save" [disabled]="isSaving" (click)="saveEdit(sale.sale_id, sale.date)">{{ isSaving ? 'Saving...' : 'Save' }}</button>
                 <button class="btn-cancel-edit" [disabled]="isSaving" (click)="cancelEdit()">Cancel</button>

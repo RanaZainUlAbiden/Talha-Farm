@@ -7,12 +7,12 @@ declare global {
       dbGet: (sql: string, params?: any[]) => Promise<any>;
       getMachineId: () => Promise<string>;
       backupDatabase: () => Promise<any>;
-restoreDatabase: () => Promise<any>;
+      restoreDatabase: () => Promise<any>;
+      getAutoBackupPath: () => Promise<string | null>;
+      resetAutoBackupPath: () => Promise<any>;
     };
   }
 }
-
-
 
 @Injectable({
   providedIn: 'root'
@@ -24,6 +24,14 @@ export class DatabaseService {
 
   async restoreDatabase(): Promise<any> {
     return window.electronAPI.restoreDatabase();
+  }
+
+  async getAutoBackupPath(): Promise<string | null> {
+    return window.electronAPI.getAutoBackupPath();
+  }
+
+  async resetAutoBackupPath(): Promise<any> {
+    return window.electronAPI.resetAutoBackupPath();
   }
 
   constructor(private zone: NgZone) {}
@@ -805,12 +813,12 @@ async addBankLedgerEntry(entry: {
 
 // ── CATEGORY METHODS ──────────────────────────────────
 
-async getCategories(farmId: number): Promise<any> {
-  return this.get('SELECT * FROM categories WHERE farm_id = ? ORDER BY category_name ASC', [farmId]);
+async getCategories(farmId: number, type: string = 'product'): Promise<any> {
+  return this.get('SELECT * FROM categories WHERE farm_id = ? AND category_type = ? ORDER BY category_name ASC', [farmId, type]);
 }
 
-async addCategory(farmId: number, categoryName: string): Promise<any> {
-  return this.run('INSERT INTO categories (farm_id, category_name) VALUES (?, ?)', [farmId, categoryName.toLowerCase().trim()]);
+async addCategory(farmId: number, categoryName: string, type: string = 'product'): Promise<any> {
+  return this.run('INSERT INTO categories (farm_id, category_name, category_type) VALUES (?, ?, ?)', [farmId, categoryName.toLowerCase().trim(), type]);
 }
 
 async deleteCategory(categoryId: number): Promise<any> {

@@ -116,24 +116,24 @@
   }
 }
 
-// ── Search Bar ────────────────────────────────────────────────
+// ── Search ────────────────────────────────────────────────────
 .search-container {
   display: flex;
   align-items: center;
-  gap: 12px;
+  gap: 10px;
   flex-wrap: wrap;
 }
 
 .search-box {
   display: flex;
   align-items: center;
-  flex: 1;
-  min-width: 220px;
+  gap: 8px;
   background: white;
-  border: 1.5px solid #e5e7eb;
+  border: 1.5px solid #d1d5db;
   border-radius: 8px;
-  padding: 0 12px;
-  transition: border-color 0.15s, box-shadow 0.15s;
+  padding: 8px 12px;
+  flex: 1;
+  min-width: 240px;
 
   &:focus-within {
     border-color: #1a5c38;
@@ -141,53 +141,30 @@
   }
 }
 
-.search-icon {
-  color: #9ca3af;
-  font-size: 14px;
-  margin-right: 8px;
-  flex-shrink: 0;
-}
+.search-icon { font-size: 13px; }
 
 .search-input {
-  flex: 1;
   border: none;
   outline: none;
-  padding: 9px 4px;
+  flex: 1;
   font-size: 13.5px;
   background: transparent;
-  color: #111827;
-  min-width: 100px;
-
-  &::placeholder {
-    color: #9ca3af;
-  }
 }
 
 .search-clear {
-  background: none;
   border: none;
+  background: none;
   color: #9ca3af;
   cursor: pointer;
-  font-size: 14px;
-  padding: 4px 8px;
-  border-radius: 6px;
-  transition: background 0.15s, color 0.15s;
-  flex-shrink: 0;
+  font-size: 13px;
+  padding: 2px 4px;
 
-  &:hover {
-    background: #f3f4f6;
-    color: #374151;
-  }
+  &:hover { color: #374151; }
 }
 
 .search-results {
   font-size: 12.5px;
-  color: #1a5c38;
-  font-weight: 600;
-  white-space: nowrap;
-  padding: 5px 14px;
-  background: #f0fdf4;
-  border-radius: 20px;
+  color: #6b7280;
 }
 
 // ── Tables ────────────────────────────────────────────────────
@@ -254,6 +231,18 @@ tr.row-active td { background: #f0fdf4; }
   &.badge-returned     { background: #fee2e2; color: #991b1b; }
   &.badge-cash         { background: #e0f2fe; color: #0369a1; }
   &.badge-bank         { background: #ede9fe; color: #5b21b6; }
+}
+
+.payment-badge {
+  display: inline-block;
+  padding: 3px 9px;
+  border-radius: 20px;
+  font-size: 11px;
+  font-weight: 600;
+  background: #fef3c7;
+  color: #92400e;
+
+  &.cash { background: #d1fae5; color: #065f46; }
 }
 
 // ── Buttons ───────────────────────────────────────────────────

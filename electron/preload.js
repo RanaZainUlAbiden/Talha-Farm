@@ -16,6 +16,11 @@ contextBridge.exposeInMainWorld('electronAPI', {
   backupDatabase: () => ipcRenderer.invoke('backup-database'),
   restoreDatabase: () => ipcRenderer.invoke('restore-database'),
 
+  getAutoBackupPath: () => ipcRenderer.invoke('get-auto-backup-path'),
+resetAutoBackupPath: () => ipcRenderer.invoke('reset-auto-backup-path'),
+
+  // PDF printing (opens native OS print dialog)
+  printPdfBase64: (base64Data) => ipcRenderer.invoke('print-pdf-base64', base64Data),
   // License operations
   license: {
     getActivation: () => ipcRenderer.invoke('license-get'),

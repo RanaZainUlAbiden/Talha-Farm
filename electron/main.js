@@ -1,8 +1,11 @@
 const { app, BrowserWindow, ipcMain, dialog, shell } = require('electron')
 const path = require('path')
+const fs = require('fs')
 const { machineIdSync } = require('node-machine-id')
 const { autoUpdater } = require('electron-updater')
 const { initializeDatabase, runQuery, getQuery } = require('./database')
+const fsPromises = require('fs').promises
+const os = require('os')
 
 // Windows specific optimizations
 app.commandLine.appendSwitch('disable-background-timer-throttling')
@@ -86,11 +89,18 @@ async function createWindow() {
         buttons: ['Yes', 'No'],
         title: 'Confirm',
         message: 'Are you sure you want to quit?'
-      }).then((result) => {
+      }).then(async (result) => {
         if (result.response === 0) {
+          try {
+            await performAutoBackup()
+          } catch (e) {
+            console.error('Auto-backup failed during quit:', e.message)
+          }
           isQuitting = true
           app.quit()
         }
+      }).catch((err) => {
+        console.error('Quit confirmation dialog failed:', err.message)
       })
     }
     return false
@@ -127,6 +137,15 @@ app.on('gpu-process-crashed', (event, killed) => {
 
 ipcMain.handle('db-run', async (event, sql, params) => {
   return runQuery(sql, params)
+})
+
+ipcMain.handle('get-auto-backup-path', async () => {
+  return await getAutoBackupPath()
+})
+
+ipcMain.handle('reset-auto-backup-path', async () => {
+  await setAutoBackupPath(null)
+  return { success: true }
 })
 
 const { getAppSetting, setAppSetting } = require('./database')
@@ -201,6 +220,63 @@ ipcMain.handle('set-app-setting', async (event, farmId, key, value) => {
 })
 ipcMain.handle('db-get', async (event, sql, params) => {
   return getQuery(sql, params)
+})
+
+ipcMain.handle('print-pdf-base64', async (event, base64Data) => {
+  const tempPath = path.join(os.tmpdir(), `talha-farm-print-${Date.now()}.pdf`)
+
+  try {
+    await fsPromises.writeFile(tempPath, Buffer.from(base64Data, 'base64'))
+  } catch (err) {
+    return { success: false, error: 'Failed to write temp PDF: ' + err.message }
+  }
+
+  return new Promise((resolve) => {
+    const previewWindow = new BrowserWindow({
+      width: 950,
+      height: 1000,
+      parent: mainWindow,
+      title: 'Print Preview',
+      backgroundColor: '#525659',
+      webPreferences: {
+        contextIsolation: true,
+        nodeIntegration: false,
+        plugins: true
+      }
+    })
+
+    previewWindow.setMenu(null)
+
+    let resolved = false
+    const cleanupFile = () => {
+      fsPromises.unlink(tempPath).catch(() => {})
+    }
+
+    previewWindow.on('closed', () => {
+      cleanupFile()
+      if (!resolved) {
+        resolved = true
+        resolve({ success: true })
+      }
+    })
+
+    previewWindow.webContents.on('did-fail-load', (event, errorCode, errorDescription) => {
+      if (!resolved) {
+        resolved = true
+        resolve({ success: false, error: errorDescription })
+      }
+      if (!previewWindow.isDestroyed()) previewWindow.close()
+    })
+
+    previewWindow.webContents.on('did-finish-load', () => {
+      if (!resolved) {
+        resolved = true
+        resolve({ success: true })
+      }
+    })
+
+    previewWindow.loadURL(`file://${tempPath}`)
+  })
 })
 
 ipcMain.handle('get-machine-id', async () => {
@@ -412,6 +488,78 @@ ipcMain.on('restart_app', () => {
 
 // ── SINGLE INSTANCE ────────────────────────────────────────
 
+// ═══════════════ AUTO BACKUP ON QUIT ═══════════════
+
+function getBackupConfigPath() {
+  return path.join(app.getPath('userData'), 'backup-config.json')
+}
+
+async function getAutoBackupPath() {
+  try {
+    const raw = await fsPromises.readFile(getBackupConfigPath(), 'utf-8')
+    const config = JSON.parse(raw)
+    return config.autoBackupPath || null
+  } catch (e) {
+    return null
+  }
+}
+
+async function setAutoBackupPath(backupPath) {
+  try {
+    await fsPromises.writeFile(getBackupConfigPath(), JSON.stringify({ autoBackupPath: backupPath }), 'utf-8')
+  } catch (e) {
+    console.error('Failed to save backup config:', e.message)
+  }
+}
+
+async function performAutoBackup() {
+  const dbPath = path.join(app.getPath('userData'), 'sng_farm.db')
+  if (!fs.existsSync(dbPath)) return
+
+  let backupPath = await getAutoBackupPath()
+
+  // Check the remembered location is still valid (e.g. USB drive still plugged in)
+  if (backupPath) {
+    const dir = path.dirname(backupPath)
+    if (!fs.existsSync(dir)) {
+      backupPath = null
+    }
+  }
+
+  if (!backupPath) {
+    // First time (or previous location vanished) — ask the user to choose.
+    const { canceled, filePath } = await dialog.showSaveDialog(mainWindow, {
+      title: 'Choose Auto-Backup Location',
+      defaultPath: `sng_farm_backup.db`,
+      filters: [{ name: 'Database Backup', extensions: ['db'] }]
+    })
+    if (canceled || !filePath) {
+      // User declined — skip backup for this close, ask again next time.
+      return
+    }
+    backupPath = filePath
+    await setAutoBackupPath(backupPath)
+  }
+
+  try {
+    await fsPromises.copyFile(dbPath, backupPath)
+    console.log('✅ Auto-backup saved to:', backupPath)
+    await writeBackupLog(`SUCCESS ${new Date().toISOString()} -> ${backupPath}`)
+  } catch (e) {
+    console.error('❌ Auto-backup failed:', e.message)
+    await writeBackupLog(`FAILED ${new Date().toISOString()} -> ${e.message}`)
+  }
+}
+
+async function writeBackupLog(line) {
+  try {
+    const logPath = path.join(app.getPath('userData'), 'backup-log.txt')
+    await fsPromises.appendFile(logPath, line + '\n', 'utf-8')
+  } catch (e) {
+    // Logging itself failing shouldn't crash the quit flow
+  }
+}
+
 const gotTheLock = app.requestSingleInstanceLock()
 
 if (!gotTheLock) {
@@ -424,9 +572,7 @@ if (!gotTheLock) {
       mainWindow.focus()
     }
   })
-
-  app.whenReady().then(createWindow)
-
+     app.whenReady().then(createWindow)
   app.on('window-all-closed', () => {
     if (process.platform !== 'darwin') {
       isQuitting = true

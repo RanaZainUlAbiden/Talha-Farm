@@ -1,0 +1,130 @@
+<div class="module-container">
+  <div class="module-header">
+    <div>
+      <h3>Labour</h3>
+      <p class="subtitle" *ngIf="currentFlock">{{ currentFlock.flock_name || currentFlock.batch_name }}</p>
+    </div>
+    <div class="header-actions">
+      <ng-container *ngIf="hasPendingRows">
+        <button class="btn-secondary" (click)="cancelAllRows()">Cancel</button>
+        <button class="btn-primary" (click)="saveAllRows()" [disabled]="isSavingAll">{{ isSavingAll ? 'Saving...' : 'Save All' }}</button>
+      </ng-container>
+      <button class="btn-add" (click)="addPendingRow()" *ngIf="!hasPendingRows" title="Add row (Ctrl+A)">+ Add Payment</button>
+    </div>
+  </div>
+
+  <div class="shortcuts-hint" *ngIf="hasPendingRows">
+    <span>Ctrl+A — new row</span><span>Ctrl+S — save all</span>
+  </div>
+
+  <div class="error-message" *ngIf="errorMessage">{{ errorMessage }}</div>
+
+  <div class="summary-pill" *ngIf="payments.length > 0">
+    Total Paid: Rs. {{ totalPaid | number:'1.0-0' }}
+  </div>
+
+  <div class="warning-card" *ngIf="roster.length === 0">
+    <span>⚠️</span><p>No labour added yet. Use "Add Payment" then "+ New Labour" to add your first worker.</p>
+  </div>
+
+  <div class="empty-state" *ngIf="!currentFlock">
+    <p>Please select a flock or batch first.</p>
+  </div>
+
+  <div class="table-card" *ngIf="payments.length > 0 || pendingRows.length > 0">
+    <table>
+      <thead>
+        <tr>
+          <th style="width:32px"></th>
+          <th>Labour</th>
+          <th>Date</th>
+          <th>Description</th>
+          <th>Amount</th>
+          <th>Payment</th>
+          <th>Actions</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr *ngFor="let row of pendingRows; let i = index" class="pending-row">
+          <td class="row-plus-cell"><button class="row-plus-btn" (click)="addRowAfter(i)">+</button></td>
+          <td>
+            <select class="inline-input" [(ngModel)]="row.labour_id">
+              <option [ngValue]="null">Select Labour</option>
+              <option *ngFor="let l of roster" [ngValue]="l.labour_id">{{ l.labour_name }}</option>
+            </select>
+            <button class="btn-quick-add" type="button" (click)="openQuickAdd(row)">+ New Labour</button>
+          </td>
+          <td><input class="inline-input" type="date" [(ngModel)]="row.date"/></td>
+          <td><input class="inline-input" type="text" [(ngModel)]="row.description" placeholder="Payment description"/></td>
+          <td><input class="inline-input" type="number" [(ngModel)]="row.amount" placeholder="0"/></td>
+          <td>
+            <select class="inline-input" [(ngModel)]="row.payment_type">
+              <option value="cash">Cash</option>
+              <option value="credit">Credit</option>
+            </select>
+          </td>
+          <td><button class="btn-remove-row" (click)="removePendingRow(i)">✕</button></td>
+        </tr>
+
+        <tr *ngFor="let p of paginatedPayments" [class.editing]="editingId === p.payment_id">
+          <ng-container *ngIf="editingId !== p.payment_id">
+            <td></td>
+            <td>{{ p.labour_name }}</td>
+            <td>{{ p.date | dateOnly }}</td>
+            <td>{{ p.description || '—' }}</td>
+            <td class="amount">Rs. {{ p.amount | number:'1.0-0' }}</td>
+            <td><span class="payment-badge" [class.cash]="p.payment_type==='cash'">{{ p.payment_type }}</span></td>
+            <td class="actions">
+              <button class="btn-edit" [disabled]="isSaving" (click)="startEdit(p)">Edit</button>
+              <button class="btn-delete" [disabled]="isSaving" (click)="confirmDelete(p.payment_id)">Delete</button>
+            </td>
+          </ng-container>
+          <ng-container *ngIf="editingId === p.payment_id">
+            <td></td>
+            <td>
+              <select class="inline-input" [(ngModel)]="editForm.labour_id">
+                <option *ngFor="let l of roster" [ngValue]="l.labour_id">{{ l.labour_name }}</option>
+              </select>
+            </td>
+            <td><input class="inline-input" type="date" [(ngModel)]="editForm.date"/></td>
+            <td><input class="inline-input" type="text" [(ngModel)]="editForm.description"/></td>
+            <td><input class="inline-input" type="number" [(ngModel)]="editForm.amount"/></td>
+            <td>
+              <select class="inline-input" [(ngModel)]="editForm.payment_type">
+                <option value="cash">Cash</option>
+                <option value="credit">Credit</option>
+              </select>
+            </td>
+            <td class="actions">
+              <button class="btn-save" [disabled]="isSaving" (click)="saveEdit(p.payment_id)">Save</button>
+              <button class="btn-cancel-edit" [disabled]="isSaving" (click)="cancelEdit()">Cancel</button>
+            </td>
+          </ng-container>
+        </tr>
+      </tbody>
+    </table>
+    <app-pagination [currentPage]="currentPage" [totalItems]="payments.length" [pageSize]="pageSize" (pageChange)="currentPage = $event"></app-pagination>
+  </div>
+</div>
+
+<!-- Quick add labour modal -->
+<div class="modal-overlay" *ngIf="showQuickAdd">
+  <div class="modal-card">
+    <h4>New Labour</h4>
+    <input class="inline-input" type="text" [(ngModel)]="quickAddForm.labour_name" placeholder="Name" (keyup.enter)="saveQuickAdd()"/>
+    <input class="inline-input" type="text" [(ngModel)]="quickAddForm.phone" placeholder="Phone (optional)"/>
+    <input class="inline-input" type="text" [(ngModel)]="quickAddForm.role" placeholder="CNIC"/>
+    <div class="modal-actions">
+      <button class="btn-secondary" (click)="cancelQuickAdd()">Cancel</button>
+      <button class="btn-primary" (click)="saveQuickAdd()">Add</button>
+    </div>
+  </div>
+</div>
+
+<app-confirm-dialog
+  *ngIf="showDeleteDialog"
+  title="Delete Payment"
+  message="Are you sure you want to delete this labour payment?"
+  confirmText="Delete" cancelText="Cancel" type="danger"
+  (confirmed)="onDeleteConfirmed()" (cancelled)="onDeleteCancelled()"
+/>

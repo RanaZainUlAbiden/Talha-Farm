@@ -4,6 +4,7 @@ import { LedgerResolver } from './shared/resolvers/ledger.resolver';
 import { ExpensesResolver } from './shared/resolvers/expenses.resolver';
 import { MedicineResolver } from './shared/resolvers/medicine.resolver';
 import { FeedResolver } from './shared/resolvers/feed.resolver';
+import { LabourResolver } from './shared/resolvers/labour.resolver';
 import { SaleResolver } from './shared/resolvers/sale.resolver';
 import { IncomeResolver } from './shared/resolvers/income.resolver';
 import { BalanceResolver } from './shared/resolvers/balance.resolver';
@@ -72,6 +73,12 @@ export const routes: Routes = [
             .then(m => m.MedicineComponent),
         resolve: { data: MedicineResolver }
       },
+       {
+        path: 'labour',
+        loadComponent: () =>
+          import('./labour/labour.component').then(m => m.LabourComponent),
+        resolve: { data: LabourResolver }
+      },
       {
         path: 'feed',
         loadComponent: () =>
@@ -138,6 +145,11 @@ export const routes: Routes = [
             .then(m => m.EggSalesComponent)
       },
       {
+        path: 'hen-sales',
+        loadComponent: () =>
+          import('./hen-sales/hen-sales.component').then(m => m.HenSalesComponent)
+      },
+      {
         path: 'vaccination',
         loadComponent: () =>
           import('./vaccination/vaccination.component')
@@ -181,12 +193,21 @@ export const routes: Routes = [
         loadComponent: () => import('./sales-returns/sales-returns.component').then(m => m.SalesReturnsComponent)
       },
       {
+        path: 'purchase-returns',
+        loadComponent: () => import('./purchase-returns/purchase-returns.component').then(m => m.PurchaseReturnsComponent)
+      },
+      {
         path: 'customer-management',
         loadComponent: () => import('./customer-management/customer-management.component').then(m => m.CustomerManagementComponent)
       },
       {
         path: 'supplier-management',
         loadComponent: () => import('./supplier-management/supplier-management.component').then(m => m.SupplierManagementComponent)
+      },
+      {
+        path: 'labour-management',
+        loadComponent: () =>
+          import('./labour-management/labour-management.component').then(m => m.LabourManagementComponent)
       },
       {
         path: 'distribution-report',

@@ -54,23 +54,25 @@ export class FlockService {
 
   async loadFlocks(farmId: number): Promise<any[]> {
     const result = await this.db.get(
-      // ← ASC so list shows oldest first, consistent with flock_id order
       `SELECT * FROM flocks WHERE farm_id = ? ORDER BY flock_id ASC`,
       [farmId]
     );
     const flocks = result.success ? result.data : [];
-
-    // Broadcast to all subscribers (Layout dropdown etc.)
     this.flocksSubject.next(flocks);
 
-    // Auto-select first flock if none active
     const current = this.currentFlockSubject.value;
+    const currentIsBatch = current?.batch_id !== undefined && current?.batch_id !== null;
+    
+    // Only auto-select if truly nothing active
     if (!current && flocks.length > 0) {
       this.setCurrentFlock(flocks[0]);
     }
+    
+    // If current is a batch, DON'T auto-select — let layout restore from localStorage
+    // (this was the bug — switching from Layer back to Broiler reset to flock 1)
 
     // If active flock was deleted, switch to first available
-    if (current && !flocks.find((f: any) => f.flock_id === current.flock_id)) {
+    if (current && !currentIsBatch && !flocks.find((f: any) => f.flock_id === current.flock_id)) {
       this.setCurrentFlock(flocks.length > 0 ? flocks[0] : null);
     }
 

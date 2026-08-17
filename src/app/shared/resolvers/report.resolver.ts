@@ -28,7 +28,8 @@ export class ReportResolver implements Resolve<any> {
         vaccinations,
         sales,
         income,
-        health
+        health,
+        labourPayments
       ] = await Promise.all([
         this.db.get(
           `SELECT e.*, l.ledger_name FROM expenses e
@@ -88,6 +89,12 @@ export class ReportResolver implements Resolve<any> {
           `SELECT * FROM flock_health WHERE flock_id = ?
            ORDER BY week_number ASC`,
           [flock.flock_id]
+        ),
+        this.db.get(
+          `SELECT lp.*, l.labour_name FROM labour_payments lp
+           JOIN labour l ON lp.labour_id = l.labour_id
+           WHERE lp.flock_id = ? AND lp.module_type = 'broiler' ORDER BY lp.date ASC`,
+          [flock.flock_id]
         )
       ]);
 
@@ -104,6 +111,7 @@ export class ReportResolver implements Resolve<any> {
         sales: sales.success ? sales.data : [],
         income: income.success ? income.data : [],
         health: health.success ? health.data : [],
+        labourPayments: labourPayments.success ? labourPayments.data : [],
         timestamp: new Date().getTime()
       };
     } catch (error) {

@@ -24,6 +24,24 @@
     </div>
   </div>
 
+  <div class="summary-grid" *ngIf="currentFlock && healthRecords.length > 0">
+    <div class="summary-card">
+      <div class="card-icon">🐔</div>
+      <div class="card-label">Current Birds</div>
+      <div class="card-value">{{ currentBirdCount | number }}</div>
+    </div>
+    <div class="summary-card">
+      <div class="card-icon">⚠️</div>
+      <div class="card-label">Total Mortality</div>
+      <div class="card-value">{{ totalMortality | number }}</div>
+    </div>
+    <div class="summary-card">
+      <div class="card-icon">🌾</div>
+      <div class="card-label">Total Feed Used</div>
+      <div class="card-value">{{ totalFeedUsed | number }} bags</div>
+    </div>
+  </div>
+
   <div class="shortcuts-hint" *ngIf="hasPendingRows">
     <span>Ctrl+A — new row</span>
     <span>Ctrl+S — save all</span>

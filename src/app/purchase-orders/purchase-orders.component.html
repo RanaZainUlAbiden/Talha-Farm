@@ -66,6 +66,7 @@
           <th>Total</th>
           <th>Payment</th>
           <th>Notes</th>
+          <th>Photo</th>
           <th>Actions</th>
         </tr>
       </thead>
@@ -148,6 +149,11 @@
             />
           </td>
           <td>
+            <button class="btn-upload-photo" type="button" (click)="fileInput.click()" title="Upload photo">📷</button>
+            <input type="file" #fileInput hidden accept="image/*" (change)="onFileSelected($event, row)"/>
+            <div class="photo-thumb" *ngIf="row.receipt_image" (click)="openImage(row.receipt_image)"><img [src]="row.receipt_image"/></div>
+          </td>
+          <td>
             <button class="btn-remove-row" (click)="removePendingRow(i)">✕</button>
           </td>
         </tr>
@@ -168,6 +174,7 @@
               </span>
             </td>
             <td>{{ o.notes || '—' }}</td>
+            <td><div class="photo-thumb" *ngIf="o.receipt_image" (click)="openImage(o.receipt_image)"><img [src]="o.receipt_image" title="Click to view full"/></div></td>
             <td class="actions">
               <button class="btn-edit" (click)="startEdit(o)">Edit</button>
               <button class="btn-delete" (click)="confirmDelete(o.purchase_id)">Delete</button>
@@ -233,6 +240,12 @@
                 type="text" 
                 [(ngModel)]="editForm.notes"
               />
+            </td>
+            <td>
+              <button class="btn-upload-photo" type="button" (click)="editFileInput.click()" title="Change photo">📷</button>
+              <input type="file" #editFileInput hidden accept="image/*" (change)="onFileSelected($event, editForm)"/>
+              <div class="photo-thumb" *ngIf="editForm.receipt_image" (click)="openImage(editForm.receipt_image)"><img [src]="editForm.receipt_image"/></div>
+              <button class="btn-remove-photo" *ngIf="editForm.receipt_image" (click)="editForm.receipt_image = null">✕</button>
             </td>
             <td class="actions">
               <button class="btn-save" (click)="saveEdit(o.purchase_id)">Save</button>
