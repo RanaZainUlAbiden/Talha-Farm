@@ -337,7 +337,7 @@ ipcMain.handle('license-activate', async (event, machineId, code) => {
   const trialStart = row && row.trial_start_date ? row.trial_start_date : now;
 
   return runQuery(
-    'INSERT OR REPLACE INTO activation (machine_id, activation_code, trial_start_date, last_launch_date, is_permanent, is_active, activated_at, activation_cycle) VALUES (?, ?, ?, ?, 0, 1, ?, ?)',
+    'INSERT OR REPLACE INTO activation (machine_id, activation_code, trial_start_date, last_launch_date, is_permanent, is_active, activated_at, activation_cycle) VALUES (?, ?, ?, ?, 1, 1, ?, ?)',
     [machineId, code, trialStart, now, now, nextCycle]
   );
 });
@@ -346,18 +346,28 @@ ipcMain.handle('license-update-launch', async (event, machineId, date) => {
   return runQuery('UPDATE activation SET last_launch_date = ? WHERE machine_id = ?', [date, machineId]);
 });
 
+// Trials last 7 days. Activated licences never expire — see license-status.
+const TRIAL_DAYS = 7;
+const MS_PER_DAY = 1000 * 60 * 60 * 24;
+
+// Tolerance for the clock legitimately reading earlier than the last launch:
+// NTP corrections, DST, and machines whose RTC is interpreted as local time
+// (a timezone correction can move the clock by up to ~26 hours).
+const CLOCK_DRIFT_TOLERANCE_MS = 26 * 60 * 60 * 1000;
+
 ipcMain.handle('license-status', async () => {
   const machineId = machineIdSync();
   const result = await getQuery('SELECT * FROM activation WHERE machine_id = ?', [machineId]);
   const row = result.success && result.data.length > 0 ? result.data[0] : null;
 
   if (!row) {
-    return { 
-      activated: false, 
-      trialStarted: false, 
-      trialExpired: false, 
-      daysRemaining: 7, 
-      clockTampered: false, 
+    return {
+      activated: false,
+      isPermanent: false,
+      trialStarted: false,
+      trialExpired: false,
+      daysRemaining: TRIAL_DAYS,
+      clockTampered: false,
       licenseDaysRemaining: 0,
       activationCycle: 0
     };
@@ -366,89 +376,81 @@ ipcMain.handle('license-status', async () => {
   const now = new Date();
   const trialStart = row.trial_start_date ? new Date(row.trial_start_date) : null;
   const lastLaunch = row.last_launch_date ? new Date(row.last_launch_date) : null;
-  const activatedAt = row.activated_at ? new Date(row.activated_at) : null;
   const activationCycle = row.activation_cycle || 0;
 
+  // ═══════════════ 🔑 PERMANENT LICENSE ═══════════════
+  // A redeemed activation code grants a licence that never expires.
+  // license-activate only writes activation_code after the code has been
+  // verified against the current cycle, so a non-empty code means a genuine
+  // redemption. Rows redeemed before is_permanent was honoured still carry 0,
+  // and the old 7-day expiry / 48-hour "tamper" rules may already have flipped
+  // is_active to 0 on them — those were the only two writes of is_active = 0 in
+  // the app, and both are gone — so paid rows are repaired here instead of
+  // being left locked out.
+  const hasActivationCode = !!(row.activation_code && row.activation_code.length > 0);
+  const isPermanent = row.is_permanent === 1 || hasActivationCode;
+
+  if (isPermanent && (row.is_permanent !== 1 || row.is_active !== 1)) {
+    await runQuery(
+      'UPDATE activation SET is_permanent = 1, is_active = 1 WHERE machine_id = ?',
+      [machineId]
+    );
+  }
+
   // ═══════════════ 🔒 CLOCK TAMPER DETECTION ═══════════════
+  // ONLY a backwards jump counts as tampering. A forward gap — however long —
+  // means the user did not open the app (a weekend, a public holiday, a week
+  // away), which is not tampering and must never cost them their licence.
+  // Nothing on this path writes is_active = 0: the check is recomputed on every
+  // call, so putting the clock back right restores access on its own.
+  // Permanent licences skip the check entirely — there is no expiry to dodge.
   let clockTampered = false;
 
-  if (lastLaunch) {
-    const lastLaunchTime = lastLaunch.getTime();
-    const nowTime = now.getTime();
-    const hoursSinceLastLaunch = (nowTime - lastLaunchTime) / (1000 * 60 * 60);
-
-    // 1️⃣ BACKWARD: System clock set to a time before last launch
-    if (nowTime < lastLaunchTime) {
-      clockTampered = true;
-    }
-
-    // 2️⃣ FORWARD JUMP: More than 48 hours since last launch (suspicious)
-    if (hoursSinceLastLaunch > 48) {
+  if (lastLaunch && !isPermanent) {
+    const setBackMs = lastLaunch.getTime() - now.getTime();
+    if (setBackMs > CLOCK_DRIFT_TOLERANCE_MS) {
       clockTampered = true;
     }
   }
 
-  // 3️⃣ FUTURE DATE CHECK: More than 8 days from activation/trial
-  if (!clockTampered) {
-    const referenceDate = activatedAt || trialStart;
-    if (referenceDate) {
-      const daysSinceReference = (now.getTime() - referenceDate.getTime()) / (1000 * 60 * 60 * 24);
-      if (daysSinceReference > 8) {
-        clockTampered = true;
-      }
-    }
-  }
-
-  // If clock tampered → deactivate and lock out
   if (clockTampered) {
-    await runQuery('UPDATE activation SET is_active = 0 WHERE machine_id = ?', [machineId]);
-    return { 
-      activated: false, 
-      trialStarted: true, 
-      trialExpired: true, 
-      daysRemaining: 0, 
-      clockTampered: true, 
+    return {
+      activated: false,
+      isPermanent: false,
+      trialStarted: !!trialStart,
+      trialExpired: true,
+      daysRemaining: 0,
+      clockTampered: true,
       licenseDaysRemaining: 0,
       activationCycle
     };
   }
 
   // ═══════════════ CHECK ACTIVATION ═══════════════
-  let activated = row.is_active === 1 && row.activation_code && row.activation_code.length > 0;
-  let licenseDaysRemaining = 0;
-
-  if (activated && activatedAt) {
-    const expiryDate = new Date(activatedAt);
-    expiryDate.setDate(expiryDate.getDate() + 7); // 7-day license
-    const diffTime = expiryDate.getTime() - now.getTime();
-    licenseDaysRemaining = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
-    if (licenseDaysRemaining <= 0) {
-      activated = false;
-      licenseDaysRemaining = 0;
-      await runQuery('UPDATE activation SET is_active = 0 WHERE machine_id = ?', [machineId]);
-    }
-  }
+  // No expiry countdown: an activated licence is permanent.
+  const activated = isPermanent || (row.is_active === 1 && hasActivationCode);
 
   // ═══════════════ CHECK TRIAL ═══════════════
+  // The 7-day window applies to TRIALS ONLY.
   let trialExpired = false;
-  let daysRemaining = 7;
+  let daysRemaining = TRIAL_DAYS;
   let trialStarted = false;
 
   if (trialStart) {
     trialStarted = true;
-    const diffTime = now.getTime() - trialStart.getTime();
-    const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
-    daysRemaining = 7 - diffDays;
-    trialExpired = diffDays > 7;
+    const diffDays = Math.ceil((now.getTime() - trialStart.getTime()) / MS_PER_DAY);
+    daysRemaining = TRIAL_DAYS - diffDays;
+    trialExpired = !activated && diffDays > TRIAL_DAYS;
   }
 
   return {
     activated,
+    isPermanent,
     trialStarted,
     trialExpired,
     daysRemaining: daysRemaining > 0 ? daysRemaining : 0,
     clockTampered: false,
-    licenseDaysRemaining: licenseDaysRemaining > 0 ? licenseDaysRemaining : 0,
+    licenseDaysRemaining: 0,
     activationCycle
   };
 });

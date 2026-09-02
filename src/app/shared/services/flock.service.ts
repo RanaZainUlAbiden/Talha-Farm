@@ -52,11 +52,12 @@ export class FlockService {
     return this.currentFlockSubject.value;
   }
 
-  async loadFlocks(farmId: number): Promise<any[]> {
-    const result = await this.db.get(
-      `SELECT * FROM flocks WHERE farm_id = ? ORDER BY flock_id ASC`,
-      [farmId]
-    );
+  async loadFlocks(farmId: number, unitId?: number): Promise<any[]> {
+    const sql = unitId
+      ? `SELECT * FROM flocks WHERE farm_id = ? AND unit_id = ? ORDER BY flock_id ASC`
+      : `SELECT * FROM flocks WHERE farm_id = ? ORDER BY flock_id ASC`;
+    const params = unitId ? [farmId, unitId] : [farmId];
+    const result = await this.db.get(sql, params);
     const flocks = result.success ? result.data : [];
     this.flocksSubject.next(flocks);
 

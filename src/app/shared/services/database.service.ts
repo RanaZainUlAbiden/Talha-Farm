@@ -868,4 +868,213 @@ async deleteCategory(categoryId: number): Promise<any> {
       [farmId]
     );
   }
+
+  // ── FARM UNIT METHODS ──────────────────────────────────────
+  // "Farm" in the UI. `farms` is the login account, so the physical-site level
+  // is farm_units. Everything here routes through run()/get(), so preload.js
+  // needs no new bridge method.
+
+  async getFarmUnits(farmId: number, moduleType?: string): Promise<any> {
+    let sql = 'SELECT * FROM farm_units WHERE farm_id = ?';
+    const params: any[] = [farmId];
+    if (moduleType) {
+      sql += ' AND module_type = ?';
+      params.push(moduleType);
+    }
+    sql += ' ORDER BY unit_name ASC';
+    return this.get(sql, params);
+  }
+
+  async addFarmUnit(unit: {
+    farm_id: number;
+    module_type: string;
+    unit_name: string;
+    location?: string;
+    notes?: string;
+    status?: string;
+  }): Promise<any> {
+    const { farm_id, module_type, unit_name, location, notes, status } = unit;
+    if (!farm_id || !module_type || !unit_name) {
+      return { success: false, error: 'farm_id, module_type and unit_name are required' };
+    }
+    return this.run(
+      `INSERT INTO farm_units (farm_id, module_type, unit_name, location, notes, status)
+       VALUES (?, ?, ?, ?, ?, ?)`,
+      [farm_id, module_type, unit_name, location || null, notes || null, status || 'active']
+    );
+  }
+
+  async updateFarmUnit(unitId: number, data: any): Promise<any> {
+    const fields: string[] = [];
+    const values: any[] = [];
+
+    if (data.unit_name !== undefined) { fields.push('unit_name = ?'); values.push(data.unit_name); }
+    if (data.location !== undefined) { fields.push('location = ?'); values.push(data.location); }
+    if (data.notes !== undefined) { fields.push('notes = ?'); values.push(data.notes); }
+    if (data.status !== undefined) { fields.push('status = ?'); values.push(data.status); }
+    if (data.module_type !== undefined) { fields.push('module_type = ?'); values.push(data.module_type); }
+
+    if (fields.length === 0) return { success: false, error: 'No fields to update' };
+
+    values.push(unitId);
+    return this.run(`UPDATE farm_units SET ${fields.join(', ')} WHERE unit_id = ?`, values);
+  }
+
+  async deleteFarmUnit(unitId: number): Promise<any> {
+    // Foreign keys are declared but never enforced in this database, so this
+    // check is the only thing preventing flocks/batches from being orphaned.
+    const flockCheck = await this.get('SELECT COUNT(*) AS count FROM flocks WHERE unit_id = ?', [unitId]);
+    if (!flockCheck.success) return flockCheck;
+    const batchCheck = await this.get('SELECT COUNT(*) AS count FROM batches WHERE unit_id = ?', [unitId]);
+    if (!batchCheck.success) return batchCheck;
+
+    const flockCount = flockCheck.data?.[0]?.count ?? 0;
+    const batchCount = batchCheck.data?.[0]?.count ?? 0;
+
+    if (flockCount > 0 || batchCount > 0) {
+      const parts: string[] = [];
+      if (flockCount > 0) parts.push(`${flockCount} flock(s)`);
+      if (batchCount > 0) parts.push(`${batchCount} batch(es)`);
+      return {
+        success: false,
+        error: `Cannot delete this farm — ${parts.join(' and ')} still assigned to it. Move or delete them first.`
+      };
+    }
+
+    return this.run('DELETE FROM farm_units WHERE unit_id = ?', [unitId]);
+  }
+
+  // ── OVERVIEW: FIXED ASSET METHODS ───────────────────────────
+  // Account-level (farm_id scoped, not flock/batch scoped). No depreciation —
+  // gain/loss is only recognised when an asset is sold.
+
+  async getAssets(farmId: number, status?: string): Promise<any> {
+    let sql = 'SELECT * FROM assets WHERE farm_id = ?';
+    const params: any[] = [farmId];
+    if (status) {
+      sql += ' AND status = ?';
+      params.push(status);
+    }
+    sql += ' ORDER BY purchase_date DESC';
+    return this.get(sql, params);
+  }
+
+  async addAsset(asset: {
+    farm_id: number;
+    unit_id?: number;
+    asset_name: string;
+    category?: string;
+    purchase_date: string;
+    purchase_amount?: number;
+    payment_source?: string;
+    bank_id?: number;
+    notes?: string;
+  }): Promise<any> {
+    const { farm_id, unit_id, asset_name, category, purchase_date, purchase_amount, payment_source, bank_id, notes } = asset;
+    if (!farm_id || !asset_name || !purchase_date) {
+      return { success: false, error: 'farm_id, asset_name and purchase_date are required' };
+    }
+    return this.run(
+      `INSERT INTO assets (farm_id, unit_id, asset_name, category, purchase_date, purchase_amount, payment_source, bank_id, notes)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      [farm_id, unit_id || null, asset_name, category || null, purchase_date, purchase_amount || 0, payment_source || 'cash', bank_id || null, notes || null]
+    );
+  }
+
+  async updateAsset(assetId: number, data: any): Promise<any> {
+    const fields: string[] = [];
+    const values: any[] = [];
+
+    if (data.unit_id !== undefined) { fields.push('unit_id = ?'); values.push(data.unit_id); }
+    if (data.asset_name !== undefined) { fields.push('asset_name = ?'); values.push(data.asset_name); }
+    if (data.category !== undefined) { fields.push('category = ?'); values.push(data.category); }
+    if (data.purchase_date !== undefined) { fields.push('purchase_date = ?'); values.push(data.purchase_date); }
+    if (data.purchase_amount !== undefined) { fields.push('purchase_amount = ?'); values.push(data.purchase_amount); }
+    if (data.payment_source !== undefined) { fields.push('payment_source = ?'); values.push(data.payment_source); }
+    if (data.bank_id !== undefined) { fields.push('bank_id = ?'); values.push(data.bank_id); }
+    if (data.notes !== undefined) { fields.push('notes = ?'); values.push(data.notes); }
+
+    if (fields.length === 0) return { success: false, error: 'No fields to update' };
+
+    values.push(assetId);
+    return this.run(`UPDATE assets SET ${fields.join(', ')} WHERE asset_id = ?`, values);
+  }
+
+  async sellAsset(assetId: number, saleDate: string, saleAmount: number): Promise<any> {
+    const existing = await this.get('SELECT status FROM assets WHERE asset_id = ?', [assetId]);
+    if (!existing.success) return existing;
+    if (!existing.data || existing.data.length === 0) {
+      return { success: false, error: 'Asset not found' };
+    }
+    if (existing.data[0].status === 'sold') {
+      return { success: false, error: 'Asset is already sold' };
+    }
+
+    return this.run(
+      `UPDATE assets SET status = 'sold', sale_date = ?, sale_amount = ? WHERE asset_id = ?`,
+      [saleDate, saleAmount, assetId]
+    );
+  }
+
+  async deleteAsset(assetId: number): Promise<any> {
+    return this.run('DELETE FROM assets WHERE asset_id = ?', [assetId]);
+  }
+
+  // ── OVERVIEW: PERSONAL EXPENSE METHODS ──────────────────────
+  // Account-level (farm_id scoped). Kept separate from the shared `expenses`
+  // table even though its total rolls into the dashboard's expense figure.
+
+  async getPersonalExpenses(farmId: number, fromDate?: string, toDate?: string): Promise<any> {
+    let sql = 'SELECT * FROM personal_expenses WHERE farm_id = ?';
+    const params: any[] = [farmId];
+    if (fromDate && toDate) {
+      sql += ' AND date BETWEEN ? AND ?';
+      params.push(fromDate, toDate);
+    }
+    sql += ' ORDER BY date DESC';
+    return this.get(sql, params);
+  }
+
+  async addPersonalExpense(pe: {
+    farm_id: number;
+    date: string;
+    category?: string;
+    description?: string;
+    amount?: number;
+    payment_source?: string;
+    bank_id?: number;
+    notes?: string;
+  }): Promise<any> {
+    const { farm_id, date, category, description, amount, payment_source, bank_id, notes } = pe;
+    if (!farm_id || !date) {
+      return { success: false, error: 'farm_id and date are required' };
+    }
+    return this.run(
+      `INSERT INTO personal_expenses (farm_id, date, category, description, amount, payment_source, bank_id, notes)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+      [farm_id, date, category || null, description || null, amount || 0, payment_source || 'cash', bank_id || null, notes || null]
+    );
+  }
+
+  async updatePersonalExpense(id: number, data: any): Promise<any> {
+    const fields: string[] = [];
+    const values: any[] = [];
+
+    if (data.date !== undefined) { fields.push('date = ?'); values.push(data.date); }
+    if (data.category !== undefined) { fields.push('category = ?'); values.push(data.category); }
+    if (data.description !== undefined) { fields.push('description = ?'); values.push(data.description); }
+    if (data.amount !== undefined) { fields.push('amount = ?'); values.push(data.amount); }
+    if (data.payment_source !== undefined) { fields.push('payment_source = ?'); values.push(data.payment_source); }
+    if (data.bank_id !== undefined) { fields.push('bank_id = ?'); values.push(data.bank_id); }
+    if (data.notes !== undefined) { fields.push('notes = ?'); values.push(data.notes); }
+
+    if (fields.length === 0) return { success: false, error: 'No fields to update' };
+
+    values.push(id);
+    return this.run(`UPDATE personal_expenses SET ${fields.join(', ')} WHERE pexpense_id = ?`, values);
+  }
+
+  async deletePersonalExpense(id: number): Promise<any> {
+    return this.run('DELETE FROM personal_expenses WHERE pexpense_id = ?', [id]);
+  }
 }

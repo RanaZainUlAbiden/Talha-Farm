@@ -1,10 +1,12 @@
-import { Component, OnInit, ChangeDetectorRef } from '@angular/core';
+import { Component, OnInit, OnDestroy, ChangeDetectorRef } from '@angular/core';
 import { CommonModule } from '@angular/common';
 import { FormsModule } from '@angular/forms';
 import { DatabaseService } from '../shared/services/database.service';
 import { AuthService } from '../shared/services/auth.service';
+import { FarmUnitService } from '../shared/services/farm-unit.service';
 import { ConfirmDialogComponent } from '../shared/components/confirm-dialog/confirm-dialog.component';
 import { PaginationComponent } from '../shared/components/pagination/pagination.component';
+import { Subscription } from 'rxjs';
 
 @Component({
   selector: 'app-labour-management',
@@ -13,11 +15,22 @@ import { PaginationComponent } from '../shared/components/pagination/pagination.
   templateUrl: './labour-management.component.html',
   styleUrl: './labour-management.component.scss'
 })
-export class LabourManagementComponent implements OnInit {
+export class LabourManagementComponent implements OnInit, OnDestroy {
   currentFarm: any = null;
   roster: any[] = [];
   isLoading = true;
   errorMessage = '';
+
+  // Every farm (both broiler and layer) for this account — the roster itself
+  // (`labour`) has no unit_id by design (a worker isn't tied to one physical
+  // farm), so this only drives whether `total_paid` gets scoped to a unit.
+  units: any[] = [];
+  // Whichever farm is currently selected in the sidebar (broiler or layer,
+  // whichever module was last active) — labour_payments has no unit_id
+  // either, so total_paid is scoped by joining through flock_id to
+  // flocks.unit_id (module_type='broiler') or batches.unit_id (module_type='layer').
+  currentUnit: any = null;
+  private subs = new Subscription();
 
   showForm = false;
   editingId: number | null = null;
@@ -37,26 +50,70 @@ export class LabourManagementComponent implements OnInit {
   constructor(
     private db: DatabaseService,
     private authService: AuthService,
+    private farmUnitService: FarmUnitService,
     private cdr: ChangeDetectorRef
   ) {}
 
-  ngOnInit() {
+  async ngOnInit() {
     this.currentFarm = this.authService.getCurrentFarm();
-    this.loadData();
+    // Load units first — the currentUnit$ subscription below fires
+    // synchronously (BehaviorSubject) and its filtering depends on
+    // this.units already being populated.
+    await this.loadUnits();
+    await this.loadData();
+
+    this.subs.add(
+      this.farmUnitService.currentUnit$.subscribe(unit => {
+        this.currentUnit = unit;
+        this.loadData();
+      })
+    );
+
+    this.subs.add(
+      this.farmUnitService.unitsChanged$.subscribe(async () => {
+        await this.loadUnits();
+        this.loadData();
+      })
+    );
+  }
+
+  ngOnDestroy() {
+    this.subs.unsubscribe();
+  }
+
+  async loadUnits() {
+    // No module filter — this screen isn't broiler- or layer-specific, it
+    // just needs to know whether the account has any farms set up at all.
+    const result = await this.db.getFarmUnits(this.currentFarm.farm_id);
+    this.units = result.success ? result.data : [];
   }
 
   async loadData() {
     this.isLoading = true;
+    // No farms yet for this account — behave exactly as before the farm
+    // selector existed rather than filtering to an empty total.
+    const unitId = this.units.length > 0 ? this.currentUnit?.unit_id : undefined;
     try {
-      const result = await this.db.get(
-        `SELECT l.*, COALESCE(SUM(lp.amount), 0) as total_paid
-         FROM labour l
-         LEFT JOIN labour_payments lp ON l.labour_id = lp.labour_id
-         WHERE l.farm_id = ?
-         GROUP BY l.labour_id
-         ORDER BY l.labour_name ASC`,
-        [this.currentFarm.farm_id]
-      );
+      const sql = unitId
+        ? `SELECT l.*, COALESCE(SUM(CASE
+             WHEN lp.module_type = 'broiler' AND fl.unit_id = ? THEN lp.amount
+             WHEN lp.module_type = 'layer' AND ba.unit_id = ? THEN lp.amount
+             ELSE 0 END), 0) as total_paid
+           FROM labour l
+           LEFT JOIN labour_payments lp ON l.labour_id = lp.labour_id
+           LEFT JOIN flocks fl ON lp.flock_id = fl.flock_id AND lp.module_type = 'broiler'
+           LEFT JOIN batches ba ON lp.flock_id = ba.batch_id AND lp.module_type = 'layer'
+           WHERE l.farm_id = ?
+           GROUP BY l.labour_id
+           ORDER BY l.labour_name ASC`
+        : `SELECT l.*, COALESCE(SUM(lp.amount), 0) as total_paid
+           FROM labour l
+           LEFT JOIN labour_payments lp ON l.labour_id = lp.labour_id
+           WHERE l.farm_id = ?
+           GROUP BY l.labour_id
+           ORDER BY l.labour_name ASC`;
+      const params = unitId ? [unitId, unitId, this.currentFarm.farm_id] : [this.currentFarm.farm_id];
+      const result = await this.db.get(sql, params);
       this.roster = result.success ? result.data : [];
       this.currentPage = 1;
     } finally {

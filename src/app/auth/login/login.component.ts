@@ -26,7 +26,7 @@ export class LoginComponent implements OnInit {
   newPassword: string = '';
   confirmPassword: string = '';
   setupError: string = '';
-  businessType: string = 'broiler';
+  businessType: string = 'all';
   
   farms: any[] = [];
   farmsExist: boolean = false;
@@ -66,7 +66,7 @@ export class LoginComponent implements OnInit {
 
   async onLogin() {
     if (!this.farmName || !this.password) {
-      this.errorMessage = 'Please enter Farm Name and Password';
+      this.errorMessage = 'Please enter Username and Password';
       return;
     }
     this.isLoading = true;
@@ -78,7 +78,7 @@ export class LoginComponent implements OnInit {
     if (success) {
       this.router.navigate(['/app']);
     } else {
-      this.errorMessage = 'Invalid Farm Name or Password';
+      this.errorMessage = 'Invalid Username or Password';
     }
     this.isLoading = false;
     this.cdr.detectChanges();
@@ -144,7 +144,7 @@ export class LoginComponent implements OnInit {
       [this.newFarmName]
     );
     if (existing.success && existing.data.length > 0) {
-      this.setupError = 'Farm name already exists. Please choose another name.';
+      this.setupError = 'Username already exists. Please choose another one.';
       return;
     }
 

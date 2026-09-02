@@ -120,6 +120,15 @@ export const routes: Routes = [
             .then(m => m.ReportComponent),
         resolve: { data: ReportResolver }
       },
+      // Farm Report — one route, reached from BOTH the broiler and the layer
+      // menu. The screen reads the active business tab to decide which module
+      // it is reporting on, so it must NOT be registered twice.
+      {
+        path: 'farm-report',
+        loadComponent: () =>
+          import('./farm-report/farm-report.component')
+            .then(m => m.FarmReportComponent)
+      },
       {
         path: 'flock-management',
         loadComponent: () =>
@@ -166,6 +175,31 @@ export const routes: Routes = [
         loadComponent: () =>
           import('./layer-report/layer-report.component')
             .then(m => m.LayerReportComponent)
+      },
+      {
+        path: 'farm-units',
+        loadComponent: () =>
+          import('./farm-units/farm-units.component')
+            .then(m => m.FarmUnitsComponent)
+      },
+      // ── Overview Module Routes (account-wide) ────────────
+      {
+        path: 'overview',
+        loadComponent: () =>
+          import('./overview/overview.component')
+            .then(m => m.OverviewComponent)
+      },
+      {
+        path: 'assets',
+        loadComponent: () =>
+          import('./assets/assets.component')
+            .then(m => m.AssetsComponent)
+      },
+      {
+        path: 'personal-expenses',
+        loadComponent: () =>
+          import('./personal-expenses/personal-expenses.component')
+            .then(m => m.PersonalExpensesComponent)
       },
       // ── Distribution Module Routes ──────────────────────
       {

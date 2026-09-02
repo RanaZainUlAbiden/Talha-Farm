@@ -46,6 +46,7 @@ export class LicenseService {
 
   async getStatus(): Promise<{
     activated: boolean;
+    isPermanent: boolean;
     trialExpired: boolean;
     daysRemaining: number;
     expiryDate: string | null;
@@ -55,11 +56,11 @@ export class LicenseService {
     activationCycle: number;
   }> {
     const status = await this.api.getStatus();
-    const expiryDate = status.activated
-      ? new Date(Date.now() + status.licenseDaysRemaining * 24 * 60 * 60 * 1000).toISOString().split('T')[0]
-      : null;
+    // An activated licence is permanent, so there is no expiry date to show.
+    const expiryDate = null;
     return {
       activated: status.activated,
+      isPermanent: !!status.isPermanent,
       trialExpired: status.trialExpired,
       daysRemaining: status.daysRemaining,
       expiryDate,
@@ -79,8 +80,7 @@ export class LicenseService {
   async getTrialStatusMessage(): Promise<string> {
     const status = await this.api.getStatus();
     if (status.activated) {
-      const days = status.licenseDaysRemaining || 0;
-      return `✅ Licensed - ${days} day${days !== 1 ? 's' : ''} left`;
+      return '✅ Licensed';
     }
     if (status.trialExpired) {
       return '⚠️ Trial Expired - Contact Support';

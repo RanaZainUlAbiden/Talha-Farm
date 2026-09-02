@@ -4,6 +4,7 @@ import { FormsModule } from '@angular/forms';
 import { DatabaseService } from '../shared/services/database.service';
 import { AuthService } from '../shared/services/auth.service';
 import { FlockService } from '../shared/services/flock.service';
+import { FarmUnitService } from '../shared/services/farm-unit.service';
 import { Subscription } from 'rxjs';
 import { jsPDF } from 'jspdf';
 import autoTable from 'jspdf-autotable';
@@ -31,6 +32,10 @@ export class LayerReportComponent implements OnInit, OnDestroy {
   labourPayments: any[] = [];
   henSales: any[] = [];
   isGenerating = false;
+  // All layer farms for this account — drives the unit_id filter below.
+  units: any[] = [];
+  // The farm currently selected in the sidebar.
+  currentUnit: any = null;
   private subs = new Subscription();
 
   sections = {
@@ -139,17 +144,41 @@ export class LayerReportComponent implements OnInit, OnDestroy {
     private db: DatabaseService,
     private authService: AuthService,
     private cdr: ChangeDetectorRef,
-    private flockService: FlockService
+    private flockService: FlockService,
+    private farmUnitService: FarmUnitService
   ) {}
 
   async ngOnInit() {
     this.currentFarm = this.authService.getCurrentFarm();
+    // Load units first — the currentUnit$ subscription below fires
+    // synchronously (BehaviorSubject) and its filtering depends on
+    // this.units already being populated.
+    await this.loadUnits();
     await this.loadData();
     this.applyActiveBatch(this.flockService.getCurrentFlock());
     this.loadPreferences();
     this.subs.add(
       this.flockService.currentFlock$.subscribe(flock => this.applyActiveBatch(flock))
     );
+
+    this.subs.add(
+      this.farmUnitService.currentUnit$.subscribe(unit => {
+        this.currentUnit = unit;
+        this.loadData();
+      })
+    );
+
+    this.subs.add(
+      this.farmUnitService.unitsChanged$.subscribe(async () => {
+        await this.loadUnits();
+        this.loadData();
+      })
+    );
+  }
+
+  async loadUnits() {
+    const result = await this.db.getFarmUnits(this.currentFarm.farm_id, 'layer');
+    this.units = result.success ? result.data : [];
   }
 
   ngOnDestroy() { this.subs.unsubscribe(); }
@@ -166,21 +195,27 @@ export class LayerReportComponent implements OnInit, OnDestroy {
   async loadData() {
     if (!this.currentFarm) return;
     const farmId = this.currentFarm.farm_id;
+    // No farms yet for this account — behave exactly as before the farm
+    // selector existed rather than filtering to an empty report.
+    const unitId = this.units.length > 0 ? this.currentUnit?.unit_id : undefined;
+    const unitClause = unitId ? ' AND b.unit_id = ?' : '';
+    const unitSubClause = unitId ? ' AND unit_id = ?' : '';
+    const unitParam = unitId ? [unitId] : [];
 
     const [batches, eggColl, eggSale, henSale, vacc, mort, exp, medT, medE, feedT, feedE, inc, labourP] = await Promise.all([
-      this.db.get('SELECT * FROM batches WHERE farm_id = ? ORDER BY batch_id DESC', [farmId]),
-      this.db.get('SELECT ec.*, b.batch_name FROM egg_collection ec JOIN batches b ON ec.batch_id = b.batch_id WHERE b.farm_id = ? ORDER BY ec.date DESC', [farmId]),
-      this.db.get('SELECT es.*, b.batch_name FROM egg_sales es JOIN batches b ON es.batch_id = b.batch_id WHERE b.farm_id = ? ORDER BY es.date DESC', [farmId]),
-      this.db.get('SELECT hs.*, b.batch_name FROM hen_sales hs JOIN batches b ON hs.batch_id = b.batch_id WHERE b.farm_id = ? ORDER BY hs.date DESC', [farmId]),
-      this.db.get('SELECT v.*, b.batch_name FROM vaccinations v JOIN batches b ON v.batch_id = b.batch_id WHERE b.farm_id = ? ORDER BY v.date DESC', [farmId]),
-      this.db.get('SELECT lm.*, b.batch_name FROM layer_mortality lm JOIN batches b ON lm.batch_id = b.batch_id WHERE b.farm_id = ? ORDER BY lm.date DESC', [farmId]),
-      this.db.get('SELECT e.*, b.batch_name FROM expenses e JOIN batches b ON e.flock_id = b.batch_id WHERE b.farm_id = ? AND e.module_type = ? ORDER BY e.date DESC', [farmId, 'layer']),
-      this.db.get('SELECT * FROM medicine_traders WHERE flock_id IN (SELECT batch_id FROM batches WHERE farm_id = ?) AND module_type = ?', [farmId, 'layer']),
-      this.db.get('SELECT me.*, mt.trader_name, b.batch_name FROM medicine_entries me JOIN medicine_traders mt ON me.trader_id = mt.trader_id JOIN batches b ON me.flock_id = b.batch_id WHERE b.farm_id = ? AND me.module_type = ? ORDER BY me.date DESC', [farmId, 'layer']),
-      this.db.get('SELECT * FROM feed_traders WHERE flock_id IN (SELECT batch_id FROM batches WHERE farm_id = ?) AND module_type = ?', [farmId, 'layer']),
-      this.db.get('SELECT fe.*, ft.trader_name, b.batch_name FROM feed_entries fe JOIN feed_traders ft ON fe.trader_id = ft.trader_id JOIN batches b ON fe.flock_id = b.batch_id WHERE b.farm_id = ? AND fe.module_type = ? ORDER BY fe.date DESC', [farmId, 'layer']),
-      this.db.get('SELECT i.*, b.batch_name FROM income i JOIN batches b ON i.flock_id = b.batch_id WHERE b.farm_id = ? AND i.module_type = ? ORDER BY i.date DESC', [farmId, 'layer']),
-      this.db.get('SELECT lp.*, l.labour_name, b.batch_name FROM labour_payments lp JOIN labour l ON lp.labour_id = l.labour_id JOIN batches b ON lp.flock_id = b.batch_id WHERE b.farm_id = ? AND lp.module_type = ? ORDER BY lp.date DESC', [farmId, 'layer'])
+      this.db.get(`SELECT * FROM batches WHERE farm_id = ?${unitId ? ' AND unit_id = ?' : ''} ORDER BY batch_id DESC`, [farmId, ...unitParam]),
+      this.db.get(`SELECT ec.*, b.batch_name FROM egg_collection ec JOIN batches b ON ec.batch_id = b.batch_id WHERE b.farm_id = ?${unitClause} ORDER BY ec.date DESC`, [farmId, ...unitParam]),
+      this.db.get(`SELECT es.*, b.batch_name FROM egg_sales es JOIN batches b ON es.batch_id = b.batch_id WHERE b.farm_id = ?${unitClause} ORDER BY es.date DESC`, [farmId, ...unitParam]),
+      this.db.get(`SELECT hs.*, b.batch_name FROM hen_sales hs JOIN batches b ON hs.batch_id = b.batch_id WHERE b.farm_id = ?${unitClause} ORDER BY hs.date DESC`, [farmId, ...unitParam]),
+      this.db.get(`SELECT v.*, b.batch_name FROM vaccinations v JOIN batches b ON v.batch_id = b.batch_id WHERE b.farm_id = ?${unitClause} ORDER BY v.date DESC`, [farmId, ...unitParam]),
+      this.db.get(`SELECT lm.*, b.batch_name FROM layer_mortality lm JOIN batches b ON lm.batch_id = b.batch_id WHERE b.farm_id = ?${unitClause} ORDER BY lm.date DESC`, [farmId, ...unitParam]),
+      this.db.get(`SELECT e.*, b.batch_name FROM expenses e JOIN batches b ON e.flock_id = b.batch_id WHERE b.farm_id = ? AND e.module_type = ?${unitClause} ORDER BY e.date DESC`, [farmId, 'layer', ...unitParam]),
+      this.db.get(`SELECT * FROM medicine_traders WHERE flock_id IN (SELECT batch_id FROM batches WHERE farm_id = ?${unitSubClause}) AND module_type = ?`, [farmId, ...unitParam, 'layer']),
+      this.db.get(`SELECT me.*, mt.trader_name, b.batch_name FROM medicine_entries me JOIN medicine_traders mt ON me.trader_id = mt.trader_id JOIN batches b ON me.flock_id = b.batch_id WHERE b.farm_id = ? AND me.module_type = ?${unitClause} ORDER BY me.date DESC`, [farmId, 'layer', ...unitParam]),
+      this.db.get(`SELECT * FROM feed_traders WHERE flock_id IN (SELECT batch_id FROM batches WHERE farm_id = ?${unitSubClause}) AND module_type = ?`, [farmId, ...unitParam, 'layer']),
+      this.db.get(`SELECT fe.*, ft.trader_name, b.batch_name FROM feed_entries fe JOIN feed_traders ft ON fe.trader_id = ft.trader_id JOIN batches b ON fe.flock_id = b.batch_id WHERE b.farm_id = ? AND fe.module_type = ?${unitClause} ORDER BY fe.date DESC`, [farmId, 'layer', ...unitParam]),
+      this.db.get(`SELECT i.*, b.batch_name FROM income i JOIN batches b ON i.flock_id = b.batch_id WHERE b.farm_id = ? AND i.module_type = ?${unitClause} ORDER BY i.date DESC`, [farmId, 'layer', ...unitParam]),
+      this.db.get(`SELECT lp.*, l.labour_name, b.batch_name FROM labour_payments lp JOIN labour l ON lp.labour_id = l.labour_id JOIN batches b ON lp.flock_id = b.batch_id WHERE b.farm_id = ? AND lp.module_type = ?${unitClause} ORDER BY lp.date DESC`, [farmId, 'layer', ...unitParam])
     ]);
 
     this.batches = batches.success ? batches.data : [];

@@ -1,0 +1,261 @@
+<div class="module-container">
+
+  <div class="module-header">
+    <div>
+      <h3>Farm Report</h3>
+      <p class="subtitle">
+        {{ unitName }} — {{ isLayer ? 'Layer' : 'Broiler' }}
+        <span *ngIf="report">&nbsp;•&nbsp;{{ rangeLabel }}</span>
+      </p>
+    </div>
+    <button class="btn-generate"
+      (click)="generatePDF()"
+      *ngIf="report && report.hasActivity"
+      [disabled]="isGenerating">
+      {{ isGenerating ? 'Generating...' : '📄 Generate PDF Report' }}
+    </button>
+  </div>
+
+  <!-- Date range filter -->
+  <div class="filter-panel">
+    <div class="filter-field">
+      <label>From</label>
+      <input type="date" [(ngModel)]="dateFrom" />
+    </div>
+    <div class="filter-field">
+      <label>To</label>
+      <input type="date" [(ngModel)]="dateTo" />
+    </div>
+    <button class="btn-apply" (click)="generate()" [disabled]="isLoading">
+      {{ isLoading ? 'Generating...' : 'Generate' }}
+    </button>
+    <button class="btn-reset" (click)="resetDateFilter()" [disabled]="isLoading">This Year</button>
+  </div>
+
+  <!-- ── Empty states ─────────────────────────────────────── -->
+  <div class="empty-state" *ngIf="!currentFarm">
+    <p>No account is active. Please log in again.</p>
+  </div>
+
+  <div class="empty-state" *ngIf="currentFarm && noFarmSelected">
+    <p>Please select a farm from the sidebar first.</p>
+  </div>
+
+  <div class="empty-state" *ngIf="currentFarm && !noFarmSelected && isLoading && !report">
+    <p>Generating report…</p>
+  </div>
+
+  <div class="empty-state" *ngIf="report && !report.hasFlocks">
+    <p>
+      No {{ flockWordPlural.toLowerCase() }} have been recorded for
+      <strong>{{ unitName }}</strong> yet.
+    </p>
+    <p class="empty-hint">
+      Add {{ isLayer ? 'a batch on the Batches screen' : 'a flock on the Flocks screen' }},
+      then generate this report again.
+    </p>
+  </div>
+
+  <div class="empty-state" *ngIf="report && report.hasFlocks && !report.hasActivity">
+    <p>
+      No transactions were recorded for <strong>{{ unitName }}</strong>
+      between {{ rangeLabel }}.
+    </p>
+    <p class="empty-hint">
+      The farm has {{ flockWordPlural.toLowerCase() }}, but none of them has revenue or
+      costs dated inside this range. Widen the date range and generate again.
+    </p>
+  </div>
+
+  <!-- ── Report ───────────────────────────────────────────── -->
+  <div *ngIf="report && report.hasActivity">
+
+    <div class="notice" *ngIf="report.isAccountWideFallback">
+      No farms have been created for this account yet, so this report covers every
+      {{ isLayer ? 'batch' : 'flock' }} in the {{ isLayer ? 'Layer' : 'Broiler' }} business.
+    </div>
+
+    <!-- Summary Cards -->
+    <div class="summary-grid">
+      <div class="summary-card income">
+        <div class="card-icon">📈</div>
+        <div class="card-label">Total Revenue</div>
+        <div class="card-value">Rs. {{ report.revenue.total | number:'1.0-0' }}</div>
+      </div>
+      <div class="summary-card expense">
+        <div class="card-icon">💰</div>
+        <div class="card-label">Total Expenses</div>
+        <div class="card-value">Rs. {{ report.expenses.total | number:'1.0-0' }}</div>
+      </div>
+      <div class="summary-card"
+        [class.profit]="report.netProfit >= 0"
+        [class.loss]="report.netProfit < 0">
+        <div class="card-icon">{{ report.netProfit >= 0 ? '✅' : '❌' }}</div>
+        <div class="card-label">{{ report.netProfit >= 0 ? 'Net Profit' : 'Net Loss' }}</div>
+        <div class="card-value">Rs. {{ report.netProfit | number:'1.0-0' }}</div>
+      </div>
+      <div class="summary-card sale">
+        <div class="card-icon">🐔</div>
+        <div class="card-label">{{ flockWordPlural }} in Period</div>
+        <div class="card-value">{{ report.flocks.length | number:'1.0-0' }}</div>
+      </div>
+    </div>
+
+    <!-- How to read this report -->
+    <div class="panel">
+      <div class="panel-header">
+        <span class="panel-title">📋 How to read this report</span>
+      </div>
+      <div class="panel-body">
+        <p class="note">{{ report.dateRuleLabel }}</p>
+        <p class="note">{{ report.transferLabel }}</p>
+        <p class="note" *ngIf="report.mortality.note">{{ report.mortality.note }}</p>
+      </div>
+    </div>
+
+    <!-- Expense breakdown -->
+    <div class="panel">
+      <div class="panel-header">
+        <span class="panel-title">💸 Expense Breakdown</span>
+        <span class="panel-meta">Total Rs. {{ report.expenses.total | number:'1.0-0' }}</span>
+      </div>
+      <table class="data-table">
+        <thead>
+          <tr><th>Cost Head</th><th class="right">Amount (Rs.)</th></tr>
+        </thead>
+        <tbody>
+          <tr><td>Feed</td><td class="right">{{ report.expenses.feed | number:'1.0-0' }}</td></tr>
+          <tr><td>Medicine</td><td class="right">{{ report.expenses.medicine | number:'1.0-0' }}</td></tr>
+          <tr><td>Vaccination</td><td class="right">{{ report.expenses.vaccination | number:'1.0-0' }}</td></tr>
+          <tr><td>Labour</td><td class="right">{{ report.expenses.labour | number:'1.0-0' }}</td></tr>
+          <tr><td>General Expenses</td><td class="right">{{ report.expenses.general | number:'1.0-0' }}</td></tr>
+          <tr><td>Ledger Debit</td><td class="right">{{ report.expenses.ledgerDebits | number:'1.0-0' }}</td></tr>
+        </tbody>
+        <tfoot>
+          <tr><td>Total Expenses</td><td class="right">{{ report.expenses.total | number:'1.0-0' }}</td></tr>
+        </tfoot>
+      </table>
+    </div>
+
+    <!-- Revenue breakdown -->
+    <div class="panel">
+      <div class="panel-header">
+        <span class="panel-title">📈 Revenue Breakdown</span>
+        <span class="panel-meta">Total Rs. {{ report.revenue.total | number:'1.0-0' }}</span>
+      </div>
+      <table class="data-table">
+        <thead>
+          <tr><th>Source</th><th class="right">Amount (Rs.)</th></tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td>{{ isLayer ? 'Egg Sales' : 'Bird Sales' }}</td>
+            <td class="right">{{ report.revenue.sales | number:'1.0-0' }}</td>
+          </tr>
+          <tr *ngIf="isLayer">
+            <td>Hen Sales</td>
+            <td class="right">{{ report.revenue.henSales | number:'1.0-0' }}</td>
+          </tr>
+          <tr><td>Other Income</td><td class="right">{{ report.revenue.income | number:'1.0-0' }}</td></tr>
+        </tbody>
+        <tfoot>
+          <tr><td>Total Revenue</td><td class="right">{{ report.revenue.total | number:'1.0-0' }}</td></tr>
+        </tfoot>
+      </table>
+    </div>
+
+    <!-- Per-flock / per-batch -->
+    <div class="panel">
+      <div class="panel-header">
+        <span class="panel-title">🐣 {{ flockWord }} Performance</span>
+        <span class="panel-meta">{{ report.flocks.length }} {{ flockWordPlural.toLowerCase() }}</span>
+      </div>
+      <table class="data-table">
+        <thead>
+          <tr>
+            <th>{{ flockWord }}</th>
+            <th>Start Date</th>
+            <th class="right">Birds Placed</th>
+            <th class="right">{{ isLayer ? 'Birds Sold' : 'Weight Sold (kg)' }}</th>
+            <th class="right">Revenue (Rs.)</th>
+            <th class="right">Costs (Rs.)</th>
+            <th class="right">Profit / Loss (Rs.)</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr *ngFor="let f of report.flocks">
+            <td>{{ f.name }}</td>
+            <td>{{ formatDate(f.startDate) }}</td>
+            <td class="right">{{ f.birdsPlaced | number:'1.0-0' }}</td>
+            <td class="right">{{ (isLayer ? f.birdsSold : f.weightSoldKg) | number:'1.0-0' }}</td>
+            <td class="right">{{ f.revenue | number:'1.0-0' }}</td>
+            <td class="right">{{ f.expenses | number:'1.0-0' }}</td>
+            <td class="right"
+              [class.profit-text]="f.profit >= 0"
+              [class.loss-text]="f.profit < 0">
+              {{ f.profit | number:'1.0-0' }}
+            </td>
+          </tr>
+        </tbody>
+        <tfoot>
+          <tr>
+            <td>Total</td>
+            <td></td>
+            <td class="right">{{ report.mortality.birdsPlaced | number:'1.0-0' }}</td>
+            <td class="right">{{ (isLayer ? report.mortality.birdsSold : report.mortality.weightSoldKg) | number:'1.0-0' }}</td>
+            <td class="right">{{ report.revenue.total | number:'1.0-0' }}</td>
+            <td class="right">{{ report.expenses.total | number:'1.0-0' }}</td>
+            <td class="right">{{ report.netProfit | number:'1.0-0' }}</td>
+          </tr>
+        </tfoot>
+      </table>
+    </div>
+
+    <!-- Mortality -->
+    <div class="panel">
+      <div class="panel-header">
+        <span class="panel-title">⚠️ Mortality Summary</span>
+      </div>
+      <table class="data-table">
+        <tbody>
+          <tr>
+            <td>Birds Placed</td>
+            <td class="right">{{ report.mortality.birdsPlaced | number:'1.0-0' }}</td>
+          </tr>
+          <tr *ngIf="isLayer">
+            <td>Birds Sold</td>
+            <td class="right">{{ report.mortality.birdsSold | number:'1.0-0' }}</td>
+          </tr>
+          <tr *ngIf="!isLayer">
+            <td>Weight Sold (kg)</td>
+            <td class="right">{{ report.mortality.weightSoldKg | number:'1.0-0' }} kg</td>
+          </tr>
+          <tr>
+            <td>Mortality</td>
+            <td class="right">{{ report.mortality.mortality | number:'1.0-0' }}</td>
+          </tr>
+          <tr>
+            <td>Mortality Rate</td>
+            <td class="right">{{ report.mortality.mortalityRate | number:'1.0-2' }}%</td>
+          </tr>
+          <tr *ngIf="report.mortality.avgWeightPerBirdKg != null">
+            <td>Avg. Weight / Bird (kg)</td>
+            <td class="right">{{ report.mortality.avgWeightPerBirdKg | number:'1.2-2' }} kg</td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+
+    <!-- Warnings -->
+    <div class="panel warnings" *ngIf="report.warnings.length > 0">
+      <div class="panel-header">
+        <span class="panel-title">⚠️ Warnings</span>
+      </div>
+      <div class="panel-body">
+        <p class="note" *ngFor="let w of report.warnings">• {{ w }}</p>
+      </div>
+    </div>
+
+  </div>
+
+</div>

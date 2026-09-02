@@ -56,3 +56,4 @@ tr.editing td { background: #f0faf4 !important; }
 .btn-save { background: #1a5c38; color: white; border: none; padding: 6px 12px; border-radius: 6px; font-size: 12px; font-weight: 500; cursor: pointer; &:hover { background: #144d2e; } }
 .btn-cancel-edit { background: #f5f5f5; color: #666; border: 1px solid #e0e0e0; padding: 6px 12px; border-radius: 6px; font-size: 12px; cursor: pointer; &:hover { background: #ebebeb; } }
 .error-message { margin-bottom: 16px; padding: 10px 12px; border-radius: 8px; background: #fef2f2; color: #b91c1c; font-size: 13px; }
+.readonly-farm { color: #888; font-size: 13px; }

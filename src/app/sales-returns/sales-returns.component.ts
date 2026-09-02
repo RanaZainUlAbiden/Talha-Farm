@@ -696,12 +696,17 @@ export class SalesReturnsComponent implements OnInit {
         }
       } else if (category === 'vaccine' || category === 'vaccination') {
         targetType = 'vaccination';
+        // cost must be written here, exactly as medicine/feed write total_amount
+        // above — omitting it made every returned vaccination item come back at
+        // zero cost. dose carries the remaining quantity, not a hardcoded '1'.
         const vaccResult = await this.db.run(
-          'INSERT INTO vaccinations (batch_id, flock_id, date, vaccine_name, dose, notes, done, bill_id, bill_number) VALUES (?,?,?,?,?,?,?,?,?)',
+          'INSERT INTO vaccinations (batch_id, flock_id, date, vaccine_name, dose, notes, cost, done, bill_id, bill_number) VALUES (?,?,?,?,?,?,?,?,?,?)',
           [
             transfer.target_module === 'layer' ? transfer.target_flock_id : null,
             transfer.target_module === 'broiler' ? transfer.target_flock_id : null,
-            this.returnDate, item.product_name, '1', 'Internal Transfer (adjusted after return)' + billTag, 1, billId, billNumber
+            this.returnDate, item.product_name, String(item.quantity),
+            'Internal Transfer (adjusted after return)' + billTag,
+            item.total_price, 1, billId, billNumber
           ]
         );
         referenceId = vaccResult.lastId;

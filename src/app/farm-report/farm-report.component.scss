@@ -1,0 +1,247 @@
+// Card, heading and colour language copied from report.component.scss so the
+// Farm Report does not look like a different app.
+.module-container {
+  max-width: 1100px;
+}
+
+.module-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 24px;
+
+  h3 {
+    font-size: 20px;
+    font-weight: 600;
+    color: #1a1a1a;
+    margin: 0 0 4px;
+  }
+
+  .subtitle {
+    font-size: 13px;
+    color: #888;
+    margin: 0;
+  }
+}
+
+.btn-generate {
+  background: #1a5c38;
+  color: white;
+  border: none;
+  padding: 12px 24px;
+  border-radius: 10px;
+  font-size: 15px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.2s;
+  letter-spacing: 0.3px;
+
+  &:hover { background: #144d2e; }
+
+  &:disabled {
+    background: #aaa;
+    cursor: not-allowed;
+  }
+}
+
+// ── Date range filter ─────────────────────────────────────
+.filter-panel {
+  display: flex;
+  align-items: flex-end;
+  gap: 12px;
+  background: white;
+  border: 1px solid #e0e0e0;
+  border-radius: 12px;
+  padding: 16px 20px;
+  margin-bottom: 24px;
+  flex-wrap: wrap;
+}
+
+.filter-field {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+
+  label {
+    font-size: 12px;
+    font-weight: 500;
+    color: #888;
+  }
+
+  input {
+    border: 1px solid #e0e0e0;
+    border-radius: 8px;
+    padding: 8px 10px;
+    font-size: 14px;
+    color: #1a1a1a;
+
+    &:focus {
+      outline: none;
+      border-color: #1a5c38;
+    }
+  }
+}
+
+.btn-apply {
+  background: #1a5c38;
+  color: white;
+  border: none;
+  padding: 10px 22px;
+  border-radius: 8px;
+  font-size: 14px;
+  font-weight: 600;
+  cursor: pointer;
+
+  &:hover { background: #144d2e; }
+  &:disabled { background: #aaa; cursor: not-allowed; }
+}
+
+.btn-reset {
+  background: #f5f5f5;
+  border: 1px solid #e0e0e0;
+  border-radius: 8px;
+  padding: 10px 18px;
+  font-size: 13px;
+  font-weight: 500;
+  color: #555;
+  cursor: pointer;
+
+  &:hover { background: #e8e8e8; }
+  &:disabled { color: #aaa; cursor: not-allowed; }
+}
+
+// ── Summary cards ─────────────────────────────────────────
+.summary-grid {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 16px;
+  margin-bottom: 24px;
+}
+
+.summary-card {
+  background: white;
+  border-radius: 12px;
+  padding: 20px;
+  border: 1px solid #e0e0e0;
+  text-align: center;
+
+  &.income  { border-top: 4px solid #1a5c38; }
+  &.expense { border-top: 4px solid #f9a825; }
+  &.profit  { border-top: 4px solid #1a5c38; background: #f0faf4; }
+  &.loss    { border-top: 4px solid #e53935; background: #fce4ec; }
+  &.sale    { border-top: 4px solid #1565c0; }
+}
+
+.card-icon  { font-size: 24px; margin-bottom: 8px; }
+.card-label { font-size: 12px; color: #888; font-weight: 500; margin-bottom: 6px; }
+.card-value { font-size: 18px; font-weight: 700; color: #1a1a1a; }
+
+// ── Panels ────────────────────────────────────────────────
+.panel {
+  background: white;
+  border-radius: 12px;
+  border: 1px solid #e0e0e0;
+  margin-bottom: 20px;
+  overflow: hidden;
+
+  &.warnings { border-color: #f5c6c6; }
+}
+
+.panel-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 14px 20px;
+  border-bottom: 1px solid #f0f0f0;
+}
+
+.panel-title {
+  font-size: 13px;
+  font-weight: 600;
+  color: #444;
+}
+
+.panel-meta {
+  font-size: 12px;
+  color: #888;
+}
+
+.panel-body {
+  padding: 14px 20px;
+}
+
+.note {
+  font-size: 12.5px;
+  line-height: 1.6;
+  color: #666;
+  margin: 0 0 10px;
+
+  &:last-child { margin-bottom: 0; }
+}
+
+.notice {
+  background: #f6fff9;
+  border: 1px solid #cbe7d7;
+  border-radius: 10px;
+  padding: 12px 16px;
+  font-size: 13px;
+  color: #1a5c38;
+  margin-bottom: 20px;
+}
+
+// ── Tables ────────────────────────────────────────────────
+.data-table {
+  width: 100%;
+  border-collapse: collapse;
+
+  th {
+    font-size: 12px;
+    font-weight: 600;
+    color: #888;
+    text-align: left;
+    padding: 10px 20px;
+    border-bottom: 1px solid #e0e0e0;
+    white-space: nowrap;
+  }
+
+  td {
+    font-size: 13.5px;
+    color: #1a1a1a;
+    padding: 11px 20px;
+    border-bottom: 1px solid #f5f5f5;
+  }
+
+  tbody tr:last-child td { border-bottom: none; }
+
+  tfoot td {
+    font-weight: 700;
+    border-top: 1px solid #e0e0e0;
+    border-bottom: none;
+    background: #fafafa;
+  }
+
+  .right { text-align: right; }
+  .muted { color: #aaa; font-size: 12.5px; }
+}
+
+.profit-text { color: #1a5c38 !important; font-weight: 600 !important; }
+.loss-text   { color: #e53935 !important; font-weight: 600 !important; }
+
+.empty-state {
+  text-align: center;
+  padding: 60px 20px;
+  color: #aaa;
+  font-size: 15px;
+  background: white;
+  border-radius: 12px;
+  border: 1px dashed #e0e0e0;
+
+  p { margin: 0 0 8px; }
+  strong { color: #666; }
+
+  .empty-hint {
+    font-size: 13px;
+    color: #bbb;
+    margin: 0;
+  }
+}

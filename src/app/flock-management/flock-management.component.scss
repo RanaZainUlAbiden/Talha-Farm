@@ -5,6 +5,9 @@
   box-sizing: border-box;
 }
 
+.error-message { margin-bottom: 16px; padding: 10px 12px; border-radius: 8px; background: #fef2f2; color: #b91c1c; font-size: 13px; }
+.readonly-farm { color: #888; font-size: 13px; }
+
 .search-bar {
   display: flex;
   align-items: center;

@@ -6,6 +6,7 @@ import { AuthService } from '../shared/services/auth.service';
 import { ConfirmDialogComponent } from '../shared/components/confirm-dialog/confirm-dialog.component';
 import { DateOnlyPipe } from '../shared/pipes/date-format.pipe';
 import { FlockService } from '../shared/services/flock.service';
+import { FarmUnitService } from '../shared/services/farm-unit.service';
 import { Subscription } from 'rxjs';
 
 @Component({
@@ -29,6 +30,10 @@ export class VaccinationComponent implements OnInit, OnDestroy {
   isSavingAll = false;
   currentBatchId: number | null = null;
   currentFlockId: number | null = null;
+  // All layer farms for this account — drives the unit_id filter on batches.
+  units: any[] = [];
+  // The farm currently selected in the sidebar.
+  currentUnit: any = null;
   private subs = new Subscription();
 
   get hasPendingRows(): boolean { return this.pendingRows.length > 0; }
@@ -50,18 +55,41 @@ export class VaccinationComponent implements OnInit, OnDestroy {
     }
   }
 
-  constructor(private db: DatabaseService, private authService: AuthService, private cdr: ChangeDetectorRef, private flockService: FlockService) {}
+  constructor(private db: DatabaseService, private authService: AuthService, private cdr: ChangeDetectorRef, private flockService: FlockService, private farmUnitService: FarmUnitService) {}
 
-  ngOnInit() {
+  async ngOnInit() {
     this.currentFarm = this.authService.getCurrentFarm();
+    // Load units first — the currentUnit$ subscription below fires
+    // synchronously (BehaviorSubject) and its filtering depends on
+    // this.units already being populated.
+    await this.loadUnits();
     this.applyActiveFlock(this.flockService.getCurrentFlock());
-    this.loadData();
+    await this.loadData();
     this.subs.add(
       this.flockService.currentFlock$.subscribe(flock => {
         this.applyActiveFlock(flock);
         this.loadData();
       })
     );
+
+    this.subs.add(
+      this.farmUnitService.currentUnit$.subscribe(unit => {
+        this.currentUnit = unit;
+        this.loadData();
+      })
+    );
+
+    this.subs.add(
+      this.farmUnitService.unitsChanged$.subscribe(async () => {
+        await this.loadUnits();
+        this.loadData();
+      })
+    );
+  }
+
+  async loadUnits() {
+    const result = await this.db.getFarmUnits(this.currentFarm.farm_id, 'layer');
+    this.units = result.success ? result.data : [];
   }
 
   ngOnDestroy() { this.subs.unsubscribe(); }
@@ -79,7 +107,14 @@ export class VaccinationComponent implements OnInit, OnDestroy {
   }
 
   async loadData() {
-    const br = await this.db.get(`SELECT * FROM batches WHERE farm_id = ? AND status='active'`, [this.currentFarm.farm_id]);
+    // No farms yet for this account — behave exactly as before the farm
+    // selector existed rather than filtering to an empty list.
+    const unitId = this.units.length > 0 ? this.currentUnit?.unit_id : undefined;
+    const brSql = unitId
+      ? `SELECT * FROM batches WHERE farm_id = ? AND status='active' AND unit_id = ?`
+      : `SELECT * FROM batches WHERE farm_id = ? AND status='active'`;
+    const brParams = unitId ? [this.currentFarm.farm_id, unitId] : [this.currentFarm.farm_id];
+    const br = await this.db.get(brSql, brParams);
     this.batches = br.success ? br.data : [];
 
     const fr = await this.db.get(`SELECT * FROM flocks WHERE farm_id = ? AND status='active'`, [this.currentFarm.farm_id]);

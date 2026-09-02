@@ -1,4 +1,12 @@
-<div class="app-layout">
+<div class="app-layout" [class.has-license-banner]="licenseExpired">
+
+  <!-- Licence expiry banner. Deliberately non-destructive: it never navigates
+       on its own, so in-progress forms survive and can still be saved. -->
+  <div class="license-expired-banner" *ngIf="licenseExpired">
+    <span class="banner-icon">⚠️</span>
+    <span class="banner-text">{{ licenseExpiredMessage }}</span>
+    <button class="btn-banner-activate" (click)="navigateToActivation()">Activate Now</button>
+  </div>
 
   <aside class="sidebar" [class.collapsed]="sidebarCollapsed">
 
@@ -25,7 +33,32 @@
       </div>
     </div>
 
-    <div class="flock-selector" *ngIf="!sidebarCollapsed && !isDistributionMode">
+    <div class="unit-selector" *ngIf="!sidebarCollapsed && !isDistributionMode && !isOverviewMode">
+      <div class="unit-label">Active Farm</div>
+      <div class="unit-dropdown-trigger"
+        (click)="toggleUnitDropdown($event)">
+        <span>{{ currentUnit ? currentUnit.unit_name : (units.length === 0 ? 'No farms yet' : 'No Farm') }}</span>
+        <span class="arrow" [class.open]="showUnitDropdown">▼</span>
+      </div>
+      <div class="unit-dropdown" *ngIf="showUnitDropdown"
+        (click)="$event.stopPropagation()">
+        <div
+          class="unit-option"
+          *ngFor="let unit of units"
+          (click)="selectUnit(unit)"
+          [class.active]="currentUnit?.unit_id === unit.unit_id">
+          <span>{{ unit.unit_name }}</span>
+          <span class="unit-status" [class.closed]="unit.status === 'closed'">
+            {{ unit.status }}
+          </span>
+        </div>
+        <div class="unit-option no-units" *ngIf="units.length === 0">
+          <span>No farms yet — add one from the Farms page</span>
+        </div>
+      </div>
+    </div>
+
+    <div class="flock-selector" *ngIf="!sidebarCollapsed && !isDistributionMode && !isOverviewMode">
       <div class="flock-label">{{ isLayerMode ? 'Active Batch' : 'Active Flock' }}</div>
       <div class="flock-dropdown-trigger"
         (click)="toggleFlockDropdown($event)">
@@ -106,11 +139,12 @@
       <button class="business-tab" [class.active]="activeBusinessTab === 'broiler'" (click)="switchBusinessTab('broiler')">🐔 Broiler</button>
       <button class="business-tab" [class.active]="activeBusinessTab === 'layer'" (click)="switchBusinessTab('layer')">🥚 Layers</button>
       <button class="business-tab" [class.active]="activeBusinessTab === 'distribution'" (click)="switchBusinessTab('distribution')">📦 Distribution</button>
+      <button class="business-tab" [class.active]="activeBusinessTab === 'overview'" (click)="switchBusinessTab('overview')">📊 Overview</button>
     </div>
     <div class="content-header">
       <div class="header-left">
         <h2>{{ currentFarm?.farm_name }}</h2>
-        <span class="flock-badge" *ngIf="currentFlock && !isDistributionMode">
+        <span class="flock-badge" *ngIf="currentFlock && !isDistributionMode && !isOverviewMode">
           {{ currentFlock.flock_name || currentFlock.batch_name }}
         </span>
       </div>
@@ -122,7 +156,7 @@
       </div>
     </div>
     <div class="content-body">
-      <div *ngIf="!currentFlock && !isDistributionMode" class="no-flock-message">
+      <div *ngIf="!currentFlock && !isDistributionMode && !isOverviewMode" class="no-flock-message">
         <p>{{ isLayerMode ? 'No batch found. Create your first batch to get started.' : 'No flock found. Create your first flock to get started.' }}</p>
         <button class="btn-primary" (click)="goToFlockManagement()">
           + {{ isLayerMode ? 'Create First Batch' : 'Create First Flock' }}

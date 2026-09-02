@@ -1,0 +1,112 @@
+<div class="module-container">
+  <div class="module-header">
+    <div>
+      <h3>Personal Expenses</h3>
+      <p class="subtitle">{{ currentFarm?.farm_name }} · Account-wide, across all farms</p>
+    </div>
+    <button class="btn-primary" (click)="openAddForm()" [disabled]="isLoading">+ Add Expense</button>
+  </div>
+
+  <div class="filter-row">
+    <label>
+      From
+      <input type="date" [(ngModel)]="fromDate" (change)="applyFilter()"/>
+    </label>
+    <label>
+      To
+      <input type="date" [(ngModel)]="toDate" (change)="applyFilter()"/>
+    </label>
+  </div>
+
+  <div class="error-message" *ngIf="errorMessage">{{ errorMessage }}</div>
+
+  <div class="loading-state" *ngIf="isLoading"><p>Loading...</p></div>
+
+  <ng-container *ngIf="!isLoading">
+    <div class="summary-row">
+      <div class="summary-card">
+        <span class="summary-label">Entries</span>
+        <span class="summary-value">{{ expenses.length }}</span>
+      </div>
+      <div class="summary-card">
+        <span class="summary-label">Total (Selected Range)</span>
+        <span class="summary-value">Rs. {{ totalAmount | number:'1.0-0' }}</span>
+      </div>
+    </div>
+
+    <div class="empty-state" *ngIf="expenses.length === 0">
+      <p>No personal expenses in this range. Click "Add Expense" to get started.</p>
+    </div>
+
+    <div class="table-card" *ngIf="expenses.length > 0">
+      <table>
+        <thead>
+          <tr>
+            <th>Date</th>
+            <th>Category</th>
+            <th>Description</th>
+            <th>Amount</th>
+            <th>Payment Source</th>
+            <th>Actions</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr *ngFor="let e of expenses">
+            <td>{{ e.date | dateOnly }}</td>
+            <td>{{ e.category || '—' }}</td>
+            <td>{{ e.description || '—' }}</td>
+            <td class="amount">Rs. {{ e.amount | number:'1.0-0' }}</td>
+            <td>{{ e.payment_source === 'bank' ? 'Bank' : 'Cash' }}</td>
+            <td class="actions">
+              <button class="btn-edit" (click)="openEditForm(e)">Edit</button>
+              <button class="btn-delete" (click)="confirmDelete(e.pexpense_id)">Delete</button>
+            </td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+  </ng-container>
+</div>
+
+<div class="modal-overlay" *ngIf="showForm">
+  <div class="modal-card">
+    <h4>{{ editingId ? 'Edit Expense' : 'Add Expense' }}</h4>
+    <div class="error-message" *ngIf="formError">{{ formError }}</div>
+
+    <input class="inline-input" type="date" [(ngModel)]="form.date"/>
+
+    <select class="inline-input" [(ngModel)]="form.category">
+      <option *ngFor="let c of categories" [value]="c">{{ c }}</option>
+    </select>
+
+    <input class="inline-input" type="text" [(ngModel)]="form.description" placeholder="Description"/>
+    <input class="inline-input" type="number" [(ngModel)]="form.amount" placeholder="Amount"/>
+
+    <select class="inline-input" [(ngModel)]="form.payment_source">
+      <option value="cash">Cash</option>
+      <option value="bank">Bank</option>
+    </select>
+
+    <select class="inline-input" *ngIf="form.payment_source === 'bank'" [(ngModel)]="form.bank_id">
+      <option [ngValue]="null">Select bank account</option>
+      <option *ngFor="let b of bankAccounts" [ngValue]="b.bank_id">{{ b.bank_name }}</option>
+    </select>
+
+    <textarea class="inline-input" [(ngModel)]="form.notes" placeholder="Notes (optional)" rows="2"></textarea>
+
+    <div class="modal-actions">
+      <button class="btn-secondary" (click)="cancelForm()">Cancel</button>
+      <button class="btn-primary" (click)="saveForm()">Save</button>
+    </div>
+  </div>
+</div>
+
+<app-confirm-dialog
+  *ngIf="showDeleteDialog"
+  title="Delete Expense"
+  message="Are you sure? This cannot be undone."
+  confirmText="Delete"
+  cancelText="Cancel"
+  type="danger"
+  (confirmed)="onDeleteConfirmed()"
+  (cancelled)="onDeleteCancelled()"/>

@@ -12,7 +12,8 @@
   <div class="error-message" *ngIf="errorMessage">{{ errorMessage }}</div>
 
   <div class="empty-state" *ngIf="batches.length === 0 && !showNewRow">
-    <p>No batches yet. Click "Add Batch" to create your first layer batch.</p>
+    <p *ngIf="units.length > 0">No batches yet. Click "Add Batch" to create your first layer batch.</p>
+    <p *ngIf="units.length === 0">No farms set up for Layer yet. Go to the Farms page to create one before adding a batch.</p>
   </div>
 
   <div class="table-card" *ngIf="batches.length > 0 || showNewRow">
@@ -20,6 +21,7 @@
       <thead>
         <tr>
           <th>Batch Name</th>
+          <th>Farm</th>
           <th>Start Date</th>
           <th>End Date</th>
           <th>Initial Birds</th>
@@ -31,6 +33,11 @@
       <tbody>
         <tr *ngIf="showNewRow" class="new-row">
           <td><input class="inline-input" type="text" [(ngModel)]="newRow.batch_name" placeholder="e.g. Layer Batch 1"/></td>
+          <td>
+            <select class="inline-input" [(ngModel)]="newRow.unit_id">
+              <option *ngFor="let u of units" [ngValue]="u.unit_id">{{ u.unit_name }}</option>
+            </select>
+          </td>
           <td><input class="inline-input" type="date" [(ngModel)]="newRow.start_date"/></td>
           <td><input class="inline-input" type="date" [(ngModel)]="newRow.end_date"/></td>
           <td><input class="inline-input" type="number" min="0" [(ngModel)]="newRow.initial_birds" placeholder="e.g. 5000"/></td>
@@ -50,6 +57,7 @@
         <tr *ngFor="let batch of paginatedBatches" [class.editing]="editingId === batch.batch_id" [class.closed-row]="batch.status === 'closed'">
           <ng-container *ngIf="editingId !== batch.batch_id">
             <td class="batch-name">{{ batch.batch_name }}</td>
+            <td>{{ unitName(batch.unit_id) }}</td>
             <td>{{ batch.start_date | dateOnly }}</td>
             <td>{{ batch.end_date ? (batch.end_date | dateOnly) : '—' }}</td>
             <td>{{ batch.initial_birds | number }}</td>
@@ -67,6 +75,7 @@
 
           <ng-container *ngIf="editingId === batch.batch_id">
             <td><input class="inline-input" type="text" [(ngModel)]="editForm.batch_name"/></td>
+            <td class="readonly-farm">{{ unitName(editForm.unit_id) }}</td>
             <td><input class="inline-input" type="date" [(ngModel)]="editForm.start_date"/></td>
             <td><input class="inline-input" type="date" [(ngModel)]="editForm.end_date"/></td>
             <td><input class="inline-input" type="number" min="0" [(ngModel)]="editForm.initial_birds"/></td>

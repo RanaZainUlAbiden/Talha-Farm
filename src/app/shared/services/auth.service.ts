@@ -1,4 +1,5 @@
 import { Injectable } from '@angular/core';
+import { Subject } from 'rxjs';
 import { DatabaseService } from './database.service';
 import { Router } from '@angular/router';
 
@@ -8,6 +9,11 @@ import { Router } from '@angular/router';
 export class AuthService {
 
   private currentFarm: any = null;
+
+  // Emits whenever the logged-in account's business_type changes, so
+  // layout.component.ts can refresh its tabs/menu without a re-login.
+  private businessTypeChangedSubject = new Subject<string>();
+  businessTypeChanged$ = this.businessTypeChangedSubject.asObservable();
 
   constructor(
     private db: DatabaseService,
@@ -40,7 +46,7 @@ export class AuthService {
     );
 
     if (exists.success && exists.data.length > 0) {
-      return { success: false, error: 'Farm name already exists' };
+      return { success: false, error: 'Username already exists' };
     }
 
     const result = await this.db.run(
@@ -79,6 +85,24 @@ export class AuthService {
       `DELETE FROM farms WHERE farm_id = ?`,
       [farmId]
     );
+  }
+
+  async updateBusinessType(farmId: number, businessType: string): Promise<any> {
+    const result = await this.db.run(
+      `UPDATE farms SET business_type = ? WHERE farm_id = ?`,
+      [businessType, farmId]
+    );
+
+    if (result.success) {
+      if (this.currentFarm && this.currentFarm.farm_id === farmId) {
+        this.currentFarm = { ...this.currentFarm, business_type: businessType };
+        localStorage.setItem('currentFarm', JSON.stringify(this.currentFarm));
+      }
+      localStorage.setItem('businessType', businessType);
+      this.businessTypeChangedSubject.next(businessType);
+    }
+
+    return result;
   }
 
   getCurrentFarm(): any {

@@ -17,7 +17,26 @@ function createTables(db) {
   FOREIGN KEY (farm_id) REFERENCES farms(farm_id)
 );`);
   db.run(`CREATE TABLE IF NOT EXISTS farms (farm_id INTEGER PRIMARY KEY AUTOINCREMENT, farm_name TEXT NOT NULL, password_hash TEXT NOT NULL, business_type TEXT DEFAULT 'broiler', created_at DATETIME DEFAULT CURRENT_TIMESTAMP);`)
-  db.run(`CREATE TABLE IF NOT EXISTS flocks (flock_id INTEGER PRIMARY KEY AUTOINCREMENT, farm_id INTEGER NOT NULL, flock_name TEXT NOT NULL, start_date DATE NOT NULL, end_date DATE, status TEXT DEFAULT 'active', FOREIGN KEY (farm_id) REFERENCES farms(farm_id));`)
+
+  // ── Farm Units ─────────────────────────────────────────
+  // The client calls these "Farms". `farms` is already taken by the login
+  // account, so the physical-site level between an account and its
+  // flocks/batches lives here as farm_units.
+  db.run(`CREATE TABLE IF NOT EXISTS farm_units (
+    unit_id     INTEGER PRIMARY KEY AUTOINCREMENT,
+    farm_id     INTEGER NOT NULL,
+    module_type TEXT NOT NULL,
+    unit_name   TEXT NOT NULL,
+    location    TEXT,
+    notes       TEXT,
+    status      TEXT DEFAULT 'active',
+    created_at  DATETIME DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (farm_id) REFERENCES farms(farm_id)
+  );`)
+  db.run(`CREATE INDEX IF NOT EXISTS idx_farm_units_farm_module ON farm_units(farm_id, module_type);`)
+  db.run(`CREATE INDEX IF NOT EXISTS idx_farm_units_status ON farm_units(status);`)
+
+  db.run(`CREATE TABLE IF NOT EXISTS flocks (flock_id INTEGER PRIMARY KEY AUTOINCREMENT, farm_id INTEGER NOT NULL, flock_name TEXT NOT NULL, start_date DATE NOT NULL, end_date DATE, status TEXT DEFAULT 'active', unit_id INTEGER, FOREIGN KEY (farm_id) REFERENCES farms(farm_id), FOREIGN KEY (unit_id) REFERENCES farm_units(unit_id));`)
   db.run(`CREATE TABLE IF NOT EXISTS ledgers (ledger_id INTEGER PRIMARY KEY AUTOINCREMENT, flock_id INTEGER NOT NULL, ledger_name TEXT NOT NULL, created_at DATETIME DEFAULT CURRENT_TIMESTAMP, FOREIGN KEY (flock_id) REFERENCES flocks(flock_id));`)
   db.run(`CREATE TABLE IF NOT EXISTS expenses (expense_id INTEGER PRIMARY KEY AUTOINCREMENT, flock_id INTEGER NOT NULL, ledger_id INTEGER, ledger_entry_id INTEGER, date DATE NOT NULL, description TEXT, amount REAL NOT NULL, bill_available TEXT DEFAULT 'No', payment_type TEXT DEFAULT 'cash', module_type TEXT DEFAULT 'broiler', FOREIGN KEY (flock_id) REFERENCES flocks(flock_id), FOREIGN KEY (ledger_id) REFERENCES ledgers(ledger_id), FOREIGN KEY (ledger_entry_id) REFERENCES ledger_entries(entry_id));`)
   db.run(`CREATE TABLE IF NOT EXISTS ledger_entries (entry_id INTEGER PRIMARY KEY AUTOINCREMENT, ledger_id INTEGER NOT NULL, flock_id INTEGER NOT NULL, date DATE NOT NULL, description TEXT, amount REAL NOT NULL, type TEXT DEFAULT 'debit', source TEXT DEFAULT 'manual', FOREIGN KEY (ledger_id) REFERENCES ledgers(ledger_id), FOREIGN KEY (flock_id) REFERENCES flocks(flock_id));`)
@@ -32,7 +51,7 @@ function createTables(db) {
   db.run(`CREATE TABLE IF NOT EXISTS brokers (broker_id INTEGER PRIMARY KEY AUTOINCREMENT, flock_id INTEGER NOT NULL, broker_name TEXT NOT NULL, FOREIGN KEY (flock_id) REFERENCES flocks(flock_id));`)
 db.run(`CREATE TABLE IF NOT EXISTS activation (machine_id TEXT PRIMARY KEY, activation_code TEXT NOT NULL, trial_start_date TEXT, last_launch_date TEXT, is_permanent INTEGER DEFAULT 0, activated_at DATETIME DEFAULT CURRENT_TIMESTAMP, is_active INTEGER DEFAULT 1,activation_cycle INTEGER DEFAULT 0);`)
   // ── Layer Module ───────────────────────────────────────
-  db.run(`CREATE TABLE IF NOT EXISTS batches (batch_id INTEGER PRIMARY KEY AUTOINCREMENT, farm_id INTEGER NOT NULL, batch_name TEXT NOT NULL, start_date DATE NOT NULL, initial_birds INTEGER NOT NULL, breed TEXT, status TEXT DEFAULT 'active', FOREIGN KEY (farm_id) REFERENCES farms(farm_id));`)
+  db.run(`CREATE TABLE IF NOT EXISTS batches (batch_id INTEGER PRIMARY KEY AUTOINCREMENT, farm_id INTEGER NOT NULL, batch_name TEXT NOT NULL, start_date DATE NOT NULL, initial_birds INTEGER NOT NULL, breed TEXT, status TEXT DEFAULT 'active', unit_id INTEGER, FOREIGN KEY (farm_id) REFERENCES farms(farm_id), FOREIGN KEY (unit_id) REFERENCES farm_units(unit_id));`)
   db.run(`CREATE TABLE IF NOT EXISTS egg_collection (collection_id INTEGER PRIMARY KEY AUTOINCREMENT, batch_id INTEGER NOT NULL, date DATE NOT NULL, total_eggs INTEGER DEFAULT 0, broken_eggs INTEGER DEFAULT 0, small_grade INTEGER DEFAULT 0, medium_grade INTEGER DEFAULT 0, large_grade INTEGER DEFAULT 0, xl_grade INTEGER DEFAULT 0, FOREIGN KEY (batch_id) REFERENCES batches(batch_id));`)
   db.run(`CREATE TABLE IF NOT EXISTS egg_sales (egg_sale_id INTEGER PRIMARY KEY AUTOINCREMENT, batch_id INTEGER NOT NULL, date DATE NOT NULL, customer_name TEXT, grade TEXT, quantity INTEGER NOT NULL, rate_per_egg REAL NOT NULL, total_amount REAL NOT NULL, payment_type TEXT DEFAULT 'cash', FOREIGN KEY (batch_id) REFERENCES batches(batch_id));`)
   db.run(`CREATE TABLE IF NOT EXISTS vaccinations (vaccination_id INTEGER PRIMARY KEY AUTOINCREMENT, batch_id INTEGER, flock_id INTEGER, date DATE NOT NULL, vaccine_name TEXT NOT NULL, dose TEXT, notes TEXT, cost REAL DEFAULT 0, done INTEGER DEFAULT 0, bill_id INTEGER, bill_number TEXT, FOREIGN KEY (batch_id) REFERENCES batches(batch_id), FOREIGN KEY (flock_id) REFERENCES flocks(flock_id));`)
@@ -276,13 +295,57 @@ db.run(`CREATE TABLE IF NOT EXISTS categories (category_id INTEGER PRIMARY KEY A
   db.run(`CREATE INDEX IF NOT EXISTS idx_batches_expiry ON product_batches(expiry_date);`)
   db.run(`CREATE INDEX IF NOT EXISTS idx_batches_status ON product_batches(status);`)
   db.run(`CREATE INDEX IF NOT EXISTS idx_transactions_batch ON batch_transactions(batch_id);`)
+
+  // ── Overview Module: Fixed Assets & Personal Expenses ──────
+  // Account-level (farm_id scoped), not tied to any flock/batch. Pattern
+  // follows bank_accounts. No depreciation — gain/loss is only recognised
+  // when an asset is sold (sale_amount - purchase_amount).
+  db.run(`CREATE TABLE IF NOT EXISTS assets (
+    asset_id        INTEGER PRIMARY KEY AUTOINCREMENT,
+    farm_id         INTEGER NOT NULL,
+    unit_id         INTEGER,
+    asset_name      TEXT NOT NULL,
+    category        TEXT,
+    purchase_date   DATE NOT NULL,
+    purchase_amount REAL NOT NULL DEFAULT 0,
+    payment_source  TEXT DEFAULT 'cash',
+    bank_id         INTEGER,
+    status          TEXT DEFAULT 'active',
+    sale_date       DATE,
+    sale_amount     REAL,
+    notes           TEXT,
+    created_at      DATETIME DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (farm_id) REFERENCES farms(farm_id),
+    FOREIGN KEY (unit_id) REFERENCES farm_units(unit_id),
+    FOREIGN KEY (bank_id) REFERENCES bank_accounts(bank_id)
+  );`)
+
+  db.run(`CREATE TABLE IF NOT EXISTS personal_expenses (
+    pexpense_id     INTEGER PRIMARY KEY AUTOINCREMENT,
+    farm_id         INTEGER NOT NULL,
+    date            DATE NOT NULL,
+    category        TEXT,
+    description     TEXT,
+    amount          REAL NOT NULL DEFAULT 0,
+    payment_source  TEXT DEFAULT 'cash',
+    bank_id         INTEGER,
+    notes           TEXT,
+    created_at      DATETIME DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (farm_id) REFERENCES farms(farm_id),
+    FOREIGN KEY (bank_id) REFERENCES bank_accounts(bank_id)
+  );`)
+
+  db.run(`CREATE INDEX IF NOT EXISTS idx_assets_farm ON assets(farm_id);`)
+  db.run(`CREATE INDEX IF NOT EXISTS idx_assets_status ON assets(status);`)
+  db.run(`CREATE INDEX IF NOT EXISTS idx_personal_expenses_farm ON personal_expenses(farm_id);`)
+  db.run(`CREATE INDEX IF NOT EXISTS idx_personal_expenses_date ON personal_expenses(date);`)
 }
 
 // =============================================
 // ATTEMPT TO RECOVER DATA FROM CORRUPTED DB
 // =============================================
 function attemptRecovery(dbPath, oldDb, SQL) {
-  const tables = ['farms', 'flocks', 'ledgers', 'expenses', 'ledger_entries', 'medicine_traders', 'medicine_entries', 'feed_traders', 'feed_entries', 'sales', 'income', 'flock_health', 'balance', 'brokers', 'activation', 'batches', 'egg_collection', 'egg_sales', 'vaccinations', 'layer_mortality', 'products', 'customers', 'suppliers', 'purchase_orders', 'sales_orders', 'customer_payments', 'product_batches', 'batch_transactions', 'customer_ledger', 'supplier_ledger', 'bank_accounts', 'bank_ledger', 'expense_ledger', 'categories', 'sales_returns', 'sales_return_items', 'internal_transfers','purchase_returns','labour', 'labour_payments', 'hen_sales']
+  const tables = ['farms', 'farm_units', 'flocks', 'ledgers', 'expenses', 'ledger_entries', 'medicine_traders', 'medicine_entries', 'feed_traders', 'feed_entries', 'sales', 'income', 'flock_health', 'balance', 'brokers', 'activation', 'batches', 'egg_collection', 'egg_sales', 'vaccinations', 'layer_mortality', 'products', 'customers', 'suppliers', 'purchase_orders', 'sales_orders', 'customer_payments', 'product_batches', 'batch_transactions', 'customer_ledger', 'supplier_ledger', 'bank_accounts', 'bank_ledger', 'expense_ledger', 'categories', 'sales_returns', 'sales_return_items', 'internal_transfers','purchase_returns','labour', 'labour_payments', 'hen_sales', 'assets', 'personal_expenses']
   
   const newDb = new SQL.Database()
   createTables(newDb)
@@ -331,6 +394,290 @@ function backupAndStartFresh(dbPath, SQL) {
     console.error('Could not backup corrupted database:', e.message)
   }
   return new SQL.Database()
+}
+
+// =============================================
+// ONE-TIME REBUILD: make vaccinations.batch_id nullable
+// =============================================
+// The oldest schema declared vaccinations.batch_id NOT NULL, which blocks
+// broiler rows (they carry flock_id and leave batch_id null). SQLite cannot drop
+// a NOT NULL constraint in place, so the fix is a table rebuild.
+//
+// This rebuild previously sat in alterStatements, which runs on EVERY launch. It
+// re-created the table from a 7-column INSERT...SELECT, so on every single app
+// start it destroyed flock_id, cost, bill_id and bill_number for every existing
+// vaccination row. Three things stop that from happening again:
+//
+//   1. an app_settings flag, so the body runs at most once per database;
+//   2. a PRAGMA check, so it only rebuilds a table that actually still has the
+//      NOT NULL constraint — on a current schema it just sets the flag;
+//   3. the INSERT...SELECT carries every column the table has, computed from
+//      PRAGMA rather than hardcoded, so a future column cannot be forgotten.
+//
+// Same convergent shape as backfillFarmUnits below: the flag is written last, so
+// any throw leaves it unset and the next launch retries from wherever it stopped.
+function migrateVaccinationsNullableBatchId(db) {
+  const MIGRATION_KEY = 'migration_vaccinations_nullable_batch_v1'
+  const SETTINGS_SCOPE_APP = 0
+
+  // Mirrors the vaccinations definition in createTables(). Order matters only for
+  // readability — the INSERT names its columns explicitly.
+  const COLUMNS = [
+    'vaccination_id', 'batch_id', 'flock_id', 'date', 'vaccine_name',
+    'dose', 'notes', 'cost', 'done', 'bill_id', 'bill_number'
+  ]
+  const CREATE_SQL = `CREATE TABLE vaccinations (vaccination_id INTEGER PRIMARY KEY AUTOINCREMENT, batch_id INTEGER, flock_id INTEGER, date DATE NOT NULL, vaccine_name TEXT NOT NULL, dose TEXT, notes TEXT, cost REAL DEFAULT 0, done INTEGER DEFAULT 0, bill_id INTEGER, bill_number TEXT, FOREIGN KEY (batch_id) REFERENCES batches(batch_id), FOREIGN KEY (flock_id) REFERENCES flocks(flock_id))`
+
+  const selectRows = (sql, params = []) => {
+    const stmt = db.prepare(sql)
+    stmt.bind(params)
+    const rows = []
+    while (stmt.step()) rows.push(stmt.getAsObject())
+    stmt.free()
+    return rows
+  }
+
+  const alreadyApplied = selectRows(
+    `SELECT value FROM app_settings WHERE farm_id = ? AND key = ?`,
+    [SETTINGS_SCOPE_APP, MIGRATION_KEY]
+  )
+  if (alreadyApplied.length > 0) return
+
+  const tableExists = (name) => selectRows(
+    `SELECT name FROM sqlite_master WHERE type = 'table' AND name = ?`, [name]
+  ).length > 0
+
+  // Only the columns the new table and the source table have in common. On a
+  // legacy database the ALTER statements above have already added flock_id, cost,
+  // bill_id and bill_number by the time this runs, so in practice this is all of
+  // COLUMNS — the intersection is here so a truly ancient table still copies what
+  // it does have instead of failing the whole INSERT.
+  const carriedColumns = (sourceTable) => {
+    const present = selectRows(`PRAGMA table_info(${sourceTable})`).map(c => c.name)
+    return COLUMNS.filter(c => present.includes(c))
+  }
+
+  // Leftover from a run that died between the RENAME and the DROP: the real rows
+  // are in vaccinations_old and createTables() has since made an empty (or
+  // partly-filled) vaccinations. Fold the missing rows back in rather than
+  // dropping the table outright, which would throw that data away.
+  if (tableExists('vaccinations_old')) {
+    const cols = carriedColumns('vaccinations_old').join(', ')
+    db.run(`INSERT OR IGNORE INTO vaccinations (${cols})
+            SELECT ${cols} FROM vaccinations_old
+            WHERE vaccination_id NOT IN (SELECT vaccination_id FROM vaccinations)`)
+    db.run(`DROP TABLE vaccinations_old`)
+    console.log('recovered vaccinations rows from an interrupted rebuild')
+  }
+
+  const batchIdColumn = selectRows(`PRAGMA table_info(vaccinations)`)
+    .find(c => c.name === 'batch_id')
+  // notnull === 1 means the old constraint is still there and the rebuild is
+  // genuinely needed. Anything else (current schema, or no such column because
+  // createTables just made the table fresh) needs no rebuild at all.
+  if (batchIdColumn && batchIdColumn.notnull === 1) {
+    const cols = carriedColumns('vaccinations').join(', ')
+    db.run(`ALTER TABLE vaccinations RENAME TO vaccinations_old`)
+    db.run(CREATE_SQL)
+    db.run(`INSERT INTO vaccinations (${cols}) SELECT ${cols} FROM vaccinations_old`)
+    db.run(`DROP TABLE vaccinations_old`)
+    console.log(`vaccinations rebuilt for nullable batch_id — carried columns: ${cols}`)
+  }
+
+  db.run(
+    `INSERT INTO app_settings (farm_id, key, value) VALUES (?, ?, ?)
+     ON CONFLICT(farm_id, key) DO UPDATE SET value = excluded.value`,
+    [SETTINGS_SCOPE_APP, MIGRATION_KEY, '1']
+  )
+}
+
+// =============================================
+// ONE-TIME BACKFILL: give pre-existing flocks/batches a farm_unit
+// =============================================
+// Guarded by a flag in app_settings, because everything in alterStatements runs
+// on every single launch and this must not.
+//
+// There are no transactions in this database, and initializeDatabase() writes the
+// whole file to disk when it finishes regardless of what threw, so a failure
+// partway through WILL be persisted. The design therefore is not "all or nothing"
+// but "convergent": the flag is written last, so any throw leaves it unset and
+// the next launch re-runs; and every step re-runs to the same end state.
+//
+// Ordering, per farm and per module: create the unit FIRST, then point the child
+// rows at it. Crashing between the two leaves an unreferenced farm_units row —
+// harmless, and the next run adopts it via findOrCreateMainUnit instead of
+// inserting a second "Main Farm". The reverse order would be unrecoverable: rows
+// carrying a unit_id for a unit that does not exist, with foreign keys off and
+// nothing left to say what the intent was.
+function backfillFarmUnits(db) {
+  const MIGRATION_KEY = 'migration_farm_units_v1'
+  // app_settings is keyed (farm_id, key). farms.farm_id is AUTOINCREMENT, so it
+  // never yields 0 — 0 is reserved here for app-wide rows like a migration flag.
+  const SETTINGS_SCOPE_APP = 0
+  const DEFAULT_UNIT_NAME = 'Main Farm'
+
+  const selectRows = (sql, params = []) => {
+    const stmt = db.prepare(sql)
+    stmt.bind(params)
+    const rows = []
+    while (stmt.step()) rows.push(stmt.getAsObject())
+    stmt.free()
+    return rows
+  }
+
+  const alreadyApplied = selectRows(
+    `SELECT value FROM app_settings WHERE farm_id = ? AND key = ?`,
+    [SETTINGS_SCOPE_APP, MIGRATION_KEY]
+  )
+  if (alreadyApplied.length > 0) return
+
+  const findMainUnit = (farmId, moduleType) => {
+    const rows = selectRows(
+      `SELECT unit_id FROM farm_units WHERE farm_id = ? AND module_type = ? AND unit_name = ?`,
+      [farmId, moduleType, DEFAULT_UNIT_NAME]
+    )
+    return rows.length > 0 ? rows[0].unit_id : null
+  }
+
+  const findOrCreateMainUnit = (farmId, moduleType) => {
+    const existing = findMainUnit(farmId, moduleType)
+    if (existing) return existing
+    db.run(
+      `INSERT INTO farm_units (farm_id, module_type, unit_name, status) VALUES (?, ?, ?, 'active')`,
+      [farmId, moduleType, DEFAULT_UNIT_NAME]
+    )
+    // Re-select rather than trusting last_insert_rowid(), which this codebase has
+    // already found unreliable under sql.js (see the fallback in runQuery).
+    return findMainUnit(farmId, moduleType)
+  }
+
+  const countPending = (sql, farmId) => selectRows(sql, [farmId])[0].count
+
+  const farms = selectRows(`SELECT farm_id FROM farms`)
+  let unitsCreated = 0
+
+  for (const farm of farms) {
+    const farmId = farm.farm_id
+
+    const pendingFlocks = countPending(
+      `SELECT COUNT(*) AS count FROM flocks WHERE farm_id = ? AND unit_id IS NULL`, farmId
+    )
+    if (pendingFlocks > 0) {
+      const unitId = findOrCreateMainUnit(farmId, 'broiler')
+      if (!unitId) throw new Error(`Could not create broiler farm unit for farm ${farmId}`)
+      db.run(`UPDATE flocks SET unit_id = ? WHERE farm_id = ? AND unit_id IS NULL`, [unitId, farmId])
+      unitsCreated++
+    }
+
+    const pendingBatches = countPending(
+      `SELECT COUNT(*) AS count FROM batches WHERE farm_id = ? AND unit_id IS NULL`, farmId
+    )
+    if (pendingBatches > 0) {
+      const unitId = findOrCreateMainUnit(farmId, 'layer')
+      if (!unitId) throw new Error(`Could not create layer farm unit for farm ${farmId}`)
+      db.run(`UPDATE batches SET unit_id = ? WHERE farm_id = ? AND unit_id IS NULL`, [unitId, farmId])
+      unitsCreated++
+    }
+    // A farm with neither flocks nor batches gets no unit.
+  }
+
+  // Written only once every farm above has been fully backfilled.
+  db.run(
+    `INSERT INTO app_settings (farm_id, key, value) VALUES (?, ?, ?)
+     ON CONFLICT(farm_id, key) DO UPDATE SET value = excluded.value`,
+    [SETTINGS_SCOPE_APP, MIGRATION_KEY, '1']
+  )
+
+  console.log(`farm_units backfill complete — ${unitsCreated} unit(s) touched across ${farms.length} account(s)`)
+}
+
+// migration_farm_units_v1 above only ever runs once — it fixes every flock/batch
+// that had a NULL unit_id as of the FIRST launch after farm_units shipped, then
+// sets its flag and never runs again. Before flock/batch creation was made to
+// require a farm (Farm selector step 4), the create forms could still insert
+// unit_id = NULL — those rows are invisible to every farm-filtered dropdown, and
+// v1 will never touch them again because its flag is already set. This is a
+// second, separately-flagged, idempotent sweep for exactly that gap.
+//
+// Unlike v1, this does NOT invent a new "Main Farm" — by the time this runs,
+// every account that had pending rows during v1 already has at least one
+// farm_unit, so orphans found here are assigned to the OLDEST existing unit for
+// that farm+module (by created_at, then unit_id as a tiebreak). The one case
+// with nothing to assign to is an account whose first-ever flock/batch was
+// created through the buggy form before that account ever had any farm_units at
+// all — those rows are left NULL and logged; the create-form guard shipped
+// alongside this migration stops any new occurrences.
+function repairOrphanedUnitIds(db) {
+  const MIGRATION_KEY = 'migration_farm_units_orphan_repair_v1'
+  const SETTINGS_SCOPE_APP = 0
+
+  const selectRows = (sql, params = []) => {
+    const stmt = db.prepare(sql)
+    stmt.bind(params)
+    const rows = []
+    while (stmt.step()) rows.push(stmt.getAsObject())
+    stmt.free()
+    return rows
+  }
+
+  const alreadyApplied = selectRows(
+    `SELECT value FROM app_settings WHERE farm_id = ? AND key = ?`,
+    [SETTINGS_SCOPE_APP, MIGRATION_KEY]
+  )
+  if (alreadyApplied.length > 0) return
+
+  const oldestUnit = (farmId, moduleType) => {
+    const rows = selectRows(
+      `SELECT unit_id FROM farm_units WHERE farm_id = ? AND module_type = ? ORDER BY created_at ASC, unit_id ASC LIMIT 1`,
+      [farmId, moduleType]
+    )
+    return rows.length > 0 ? rows[0].unit_id : null
+  }
+
+  const countPending = (sql, farmId) => selectRows(sql, [farmId])[0].count
+
+  const farms = selectRows(`SELECT farm_id FROM farms`)
+  let rowsFixed = 0
+  let rowsSkipped = 0
+
+  for (const farm of farms) {
+    const farmId = farm.farm_id
+
+    const pendingFlocks = countPending(
+      `SELECT COUNT(*) AS count FROM flocks WHERE farm_id = ? AND unit_id IS NULL`, farmId
+    )
+    if (pendingFlocks > 0) {
+      const unitId = oldestUnit(farmId, 'broiler')
+      if (unitId) {
+        db.run(`UPDATE flocks SET unit_id = ? WHERE farm_id = ? AND unit_id IS NULL`, [unitId, farmId])
+        rowsFixed += pendingFlocks
+      } else {
+        rowsSkipped += pendingFlocks
+      }
+    }
+
+    const pendingBatches = countPending(
+      `SELECT COUNT(*) AS count FROM batches WHERE farm_id = ? AND unit_id IS NULL`, farmId
+    )
+    if (pendingBatches > 0) {
+      const unitId = oldestUnit(farmId, 'layer')
+      if (unitId) {
+        db.run(`UPDATE batches SET unit_id = ? WHERE farm_id = ? AND unit_id IS NULL`, [unitId, farmId])
+        rowsFixed += pendingBatches
+      } else {
+        rowsSkipped += pendingBatches
+      }
+    }
+  }
+
+  // Written only once every farm above has been fully repaired.
+  db.run(
+    `INSERT INTO app_settings (farm_id, key, value) VALUES (?, ?, ?)
+     ON CONFLICT(farm_id, key) DO UPDATE SET value = excluded.value`,
+    [SETTINGS_SCOPE_APP, MIGRATION_KEY, '1']
+  )
+
+  console.log(`orphaned unit_id repair complete — ${rowsFixed} row(s) fixed, ${rowsSkipped} row(s) skipped (no farm to assign to) across ${farms.length} account(s)`)
 }
 
 // =============================================
@@ -418,11 +765,12 @@ async function initializeDatabase() {
     // 🔥 Make vaccinations work for both Broiler and Layer
     `ALTER TABLE vaccinations ADD COLUMN flock_id INTEGER`,
     `ALTER TABLE vaccinations ADD COLUMN cost REAL DEFAULT 0`,
-    // Ensure batch_id can be null in vaccinations if it was previously NOT NULL
-    `ALTER TABLE vaccinations RENAME TO vaccinations_old`,
-    `CREATE TABLE vaccinations (vaccination_id INTEGER PRIMARY KEY AUTOINCREMENT, batch_id INTEGER, flock_id INTEGER, date DATE NOT NULL, vaccine_name TEXT NOT NULL, dose TEXT, notes TEXT, cost REAL DEFAULT 0, done INTEGER DEFAULT 0, FOREIGN KEY (batch_id) REFERENCES batches(batch_id), FOREIGN KEY (flock_id) REFERENCES flocks(flock_id))`,
-    `INSERT INTO vaccinations (vaccination_id, batch_id, date, vaccine_name, dose, notes, done) SELECT vaccination_id, batch_id, date, vaccine_name, dose, notes, done FROM vaccinations_old`,
-    `DROP TABLE vaccinations_old`,
+    // NOTE: the "make vaccinations.batch_id nullable" table rebuild used to live
+    // here, unguarded, and therefore re-ran on every launch — silently dropping
+    // flock_id, cost, bill_id and bill_number every time. It now lives in the
+    // flagged, one-shot migrateVaccinationsNullableBatchId() below. Do not put a
+    // RENAME/CREATE/INSERT...SELECT/DROP rebuild in this array: everything here
+    // runs on every start, and only ALTER-style statements survive that safely.
     `ALTER TABLE internal_transfers ADD COLUMN target_type TEXT`,
     `ALTER TABLE internal_transfers ADD COLUMN reference_id INTEGER`,
     `ALTER TABLE purchase_orders ADD COLUMN batch_id INTEGER`,
@@ -433,10 +781,24 @@ async function initializeDatabase() {
     `ALTER TABLE feed_entries ADD COLUMN bill_number TEXT`,
     `ALTER TABLE vaccinations ADD COLUMN bill_id INTEGER`,
     `ALTER TABLE vaccinations ADD COLUMN bill_number TEXT`,
+    // Farm units (client-facing name: "Farm"). Deliberately NOT added to labour
+    // yet — the shared broiler/layer tables overload flock_id to hold a batch_id
+    // when module_type = 'layer', and labour needs that ambiguity resolved first.
+    `ALTER TABLE flocks ADD COLUMN unit_id INTEGER`,
+    `ALTER TABLE batches ADD COLUMN unit_id INTEGER`,
   ]
   
   for (const sql of alterStatements) {
     try { db.run(sql) } catch(e) {}
+  }
+
+  // Must run after alterStatements — those add vaccinations.flock_id / cost /
+  // bill_id / bill_number to a legacy table, and this copies whatever columns the
+  // table has. Running it earlier would rebuild before they exist.
+  try {
+    migrateVaccinationsNullableBatchId(db)
+  } catch (e) {
+    console.error('vaccinations rebuild failed, will retry on next launch:', e.message)
   }
 
   try {
@@ -516,8 +878,25 @@ async function initializeDatabase() {
     `)
   } catch(e) {}
 
+  // Must run after alterStatements — it depends on flocks.unit_id / batches.unit_id
+  // existing. Swallowing the error here is deliberate: the flag stays unset, so a
+  // failure retries on the next launch instead of blocking startup.
+  try {
+    backfillFarmUnits(db)
+  } catch (e) {
+    console.error('farm_units backfill failed, will retry on next launch:', e.message)
+  }
+
+  // Must run after backfillFarmUnits — it relies on that migration having
+  // already created a farm_unit for any account that needed one.
+  try {
+    repairOrphanedUnitIds(db)
+  } catch (e) {
+    console.error('orphaned unit_id repair failed, will retry on next launch:', e.message)
+  }
+
   saveDatabase(dbPath)
-  
+
   if (recovered) {
     console.log('⚠️  Database was recovered from corruption')
   }
@@ -544,6 +923,7 @@ function saveDatabase(dbPath) {
 // RUN QUERY (INSERT/UPDATE/DELETE) - FIXED
 // =============================================
 const PRIMARY_KEY_MAP = {
+  farm_units: 'unit_id',
   purchase_returns: 'return_id',
   labour: 'labour_id',
   labour_payments: 'payment_id',
@@ -585,7 +965,9 @@ const PRIMARY_KEY_MAP = {
   categories: 'category_id',
   sales_returns: 'return_id',
   sales_return_items: 'item_id',
-  internal_transfers: 'transfer_id'
+  internal_transfers: 'transfer_id',
+  assets: 'asset_id',
+  personal_expenses: 'pexpense_id'
 };
 
 function runQuery(sql, params = []) {
@@ -1606,6 +1988,190 @@ function deleteCategory(categoryId) {
   }
 }
 
+// ── FARM UNIT OPERATIONS ─────────────────────────────────
+// These go through runQuery/getQuery rather than raw db.run so that writes are
+// flushed to disk — a bare db.run() here only mutates the in-memory database.
+
+function getFarmUnits(farmId, moduleType = null) {
+  let sql = `SELECT * FROM farm_units WHERE farm_id = ?`
+  const params = [farmId]
+  if (moduleType) {
+    sql += ` AND module_type = ?`
+    params.push(moduleType)
+  }
+  sql += ` ORDER BY unit_name ASC`
+  return getQuery(sql, params)
+}
+
+function addFarmUnit(unit) {
+  const { farm_id, module_type, unit_name, location, notes, status } = unit
+  if (!farm_id || !module_type || !unit_name) {
+    return { success: false, error: 'farm_id, module_type and unit_name are required' }
+  }
+  return runQuery(
+    `INSERT INTO farm_units (farm_id, module_type, unit_name, location, notes, status)
+     VALUES (?, ?, ?, ?, ?, ?)`,
+    [farm_id, module_type, unit_name, location || null, notes || null, status || 'active']
+  )
+}
+
+function updateFarmUnit(unitId, data) {
+  const fields = []
+  const values = []
+
+  if (data.unit_name !== undefined) { fields.push('unit_name = ?'); values.push(data.unit_name) }
+  if (data.location !== undefined) { fields.push('location = ?'); values.push(data.location) }
+  if (data.notes !== undefined) { fields.push('notes = ?'); values.push(data.notes) }
+  if (data.status !== undefined) { fields.push('status = ?'); values.push(data.status) }
+  if (data.module_type !== undefined) { fields.push('module_type = ?'); values.push(data.module_type) }
+
+  if (fields.length === 0) return { success: false, error: 'No fields to update' }
+
+  values.push(unitId)
+  return runQuery(`UPDATE farm_units SET ${fields.join(', ')} WHERE unit_id = ?`, values)
+}
+
+function deleteFarmUnit(unitId) {
+  // Foreign keys are declared but never enforced (PRAGMA foreign_keys is never
+  // turned on), so this check is the only thing standing between a delete and a
+  // set of flocks/batches pointing at a unit that no longer exists.
+  const flockCheck = getQuery(`SELECT COUNT(*) AS count FROM flocks WHERE unit_id = ?`, [unitId])
+  if (!flockCheck.success) return flockCheck
+  const batchCheck = getQuery(`SELECT COUNT(*) AS count FROM batches WHERE unit_id = ?`, [unitId])
+  if (!batchCheck.success) return batchCheck
+
+  const flockCount = flockCheck.data[0].count
+  const batchCount = batchCheck.data[0].count
+
+  if (flockCount > 0 || batchCount > 0) {
+    const parts = []
+    if (flockCount > 0) parts.push(`${flockCount} flock(s)`)
+    if (batchCount > 0) parts.push(`${batchCount} batch(es)`)
+    return {
+      success: false,
+      error: `Cannot delete this farm — ${parts.join(' and ')} still assigned to it. Move or delete them first.`
+    }
+  }
+
+  return runQuery(`DELETE FROM farm_units WHERE unit_id = ?`, [unitId])
+}
+
+// ── OVERVIEW MODULE: FIXED ASSETS ────────────────────────
+// Account-level (farm_id scoped, not flock/batch scoped). Routes through
+// runQuery/getQuery so writes are flushed to disk, matching the farm_units
+// pattern above.
+
+function getAssets(farmId, status = null) {
+  let sql = `SELECT * FROM assets WHERE farm_id = ?`
+  const params = [farmId]
+  if (status) {
+    sql += ` AND status = ?`
+    params.push(status)
+  }
+  sql += ` ORDER BY purchase_date DESC`
+  return getQuery(sql, params)
+}
+
+function addAsset(asset) {
+  const { farm_id, unit_id, asset_name, category, purchase_date, purchase_amount, payment_source, bank_id, notes } = asset
+  if (!farm_id || !asset_name || !purchase_date) {
+    return { success: false, error: 'farm_id, asset_name and purchase_date are required' }
+  }
+  return runQuery(
+    `INSERT INTO assets (farm_id, unit_id, asset_name, category, purchase_date, purchase_amount, payment_source, bank_id, notes)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    [farm_id, unit_id || null, asset_name, category || null, purchase_date, purchase_amount || 0, payment_source || 'cash', bank_id || null, notes || null]
+  )
+}
+
+function updateAsset(assetId, data) {
+  const fields = []
+  const values = []
+
+  if (data.unit_id !== undefined) { fields.push('unit_id = ?'); values.push(data.unit_id) }
+  if (data.asset_name !== undefined) { fields.push('asset_name = ?'); values.push(data.asset_name) }
+  if (data.category !== undefined) { fields.push('category = ?'); values.push(data.category) }
+  if (data.purchase_date !== undefined) { fields.push('purchase_date = ?'); values.push(data.purchase_date) }
+  if (data.purchase_amount !== undefined) { fields.push('purchase_amount = ?'); values.push(data.purchase_amount) }
+  if (data.payment_source !== undefined) { fields.push('payment_source = ?'); values.push(data.payment_source) }
+  if (data.bank_id !== undefined) { fields.push('bank_id = ?'); values.push(data.bank_id) }
+  if (data.notes !== undefined) { fields.push('notes = ?'); values.push(data.notes) }
+
+  if (fields.length === 0) return { success: false, error: 'No fields to update' }
+
+  values.push(assetId)
+  return runQuery(`UPDATE assets SET ${fields.join(', ')} WHERE asset_id = ?`, values)
+}
+
+function sellAsset(assetId, saleDate, saleAmount) {
+  const existing = getQuery(`SELECT status FROM assets WHERE asset_id = ?`, [assetId])
+  if (!existing.success) return existing
+  if (!existing.data || existing.data.length === 0) {
+    return { success: false, error: 'Asset not found' }
+  }
+  if (existing.data[0].status === 'sold') {
+    return { success: false, error: 'Asset is already sold' }
+  }
+
+  return runQuery(
+    `UPDATE assets SET status = 'sold', sale_date = ?, sale_amount = ? WHERE asset_id = ?`,
+    [saleDate, saleAmount, assetId]
+  )
+}
+
+function deleteAsset(assetId) {
+  return runQuery(`DELETE FROM assets WHERE asset_id = ?`, [assetId])
+}
+
+// ── OVERVIEW MODULE: PERSONAL EXPENSES ───────────────────
+// Account-level (farm_id scoped). Kept separate from the shared `expenses`
+// table even though its total rolls into the dashboard's expense figure.
+
+function getPersonalExpenses(farmId, fromDate = null, toDate = null) {
+  let sql = `SELECT * FROM personal_expenses WHERE farm_id = ?`
+  const params = [farmId]
+  if (fromDate && toDate) {
+    sql += ` AND date BETWEEN ? AND ?`
+    params.push(fromDate, toDate)
+  }
+  sql += ` ORDER BY date DESC`
+  return getQuery(sql, params)
+}
+
+function addPersonalExpense(pe) {
+  const { farm_id, date, category, description, amount, payment_source, bank_id, notes } = pe
+  if (!farm_id || !date) {
+    return { success: false, error: 'farm_id and date are required' }
+  }
+  return runQuery(
+    `INSERT INTO personal_expenses (farm_id, date, category, description, amount, payment_source, bank_id, notes)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+    [farm_id, date, category || null, description || null, amount || 0, payment_source || 'cash', bank_id || null, notes || null]
+  )
+}
+
+function updatePersonalExpense(id, data) {
+  const fields = []
+  const values = []
+
+  if (data.date !== undefined) { fields.push('date = ?'); values.push(data.date) }
+  if (data.category !== undefined) { fields.push('category = ?'); values.push(data.category) }
+  if (data.description !== undefined) { fields.push('description = ?'); values.push(data.description) }
+  if (data.amount !== undefined) { fields.push('amount = ?'); values.push(data.amount) }
+  if (data.payment_source !== undefined) { fields.push('payment_source = ?'); values.push(data.payment_source) }
+  if (data.bank_id !== undefined) { fields.push('bank_id = ?'); values.push(data.bank_id) }
+  if (data.notes !== undefined) { fields.push('notes = ?'); values.push(data.notes) }
+
+  if (fields.length === 0) return { success: false, error: 'No fields to update' }
+
+  values.push(id)
+  return runQuery(`UPDATE personal_expenses SET ${fields.join(', ')} WHERE pexpense_id = ?`, values)
+}
+
+function deletePersonalExpense(id) {
+  return runQuery(`DELETE FROM personal_expenses WHERE pexpense_id = ?`, [id])
+}
+
 function getAppSetting(farmId, key) {
   try {
     const stmt = db.prepare('SELECT value FROM app_settings WHERE farm_id = ? AND key = ?');
@@ -1682,5 +2248,21 @@ setAppSetting,
   getExpenseCategories,
 getCategories,
 addCategory,
-deleteCategory
+deleteCategory,
+  // Farm unit functions
+  getFarmUnits,
+  addFarmUnit,
+  updateFarmUnit,
+  deleteFarmUnit,
+  // Overview: fixed asset functions
+  getAssets,
+  addAsset,
+  updateAsset,
+  sellAsset,
+  deleteAsset,
+  // Overview: personal expense functions
+  getPersonalExpenses,
+  addPersonalExpense,
+  updatePersonalExpense,
+  deletePersonalExpense
 }

@@ -1,0 +1,147 @@
+<div class="module-container">
+  <div class="module-header">
+    <div>
+      <h3>Overview Dashboard</h3>
+      <p class="subtitle">{{ currentFarm?.farm_name }} · Account-wide, across all farms</p>
+    </div>
+    <div class="header-actions">
+      <button class="btn-generate" (click)="generatePDF()" [disabled]="isGenerating || isLoading || !summary">
+        {{ isGenerating ? 'Generating...' : '📄 Generate PDF Report' }}
+      </button>
+    </div>
+  </div>
+
+  <!-- Date Filter -->
+  <div class="filter-bar">
+    <div class="filter-group">
+      <label>From:</label>
+      <input type="date" [(ngModel)]="dateFrom">
+      <label>To:</label>
+      <input type="date" [(ngModel)]="dateTo">
+      <button class="btn-primary" (click)="applyDateFilter()">Apply</button>
+      <button class="btn-secondary" (click)="clearDateFilter()">This Month</button>
+    </div>
+  </div>
+
+  <div class="empty-state" *ngIf="isLoading">
+    <p>Loading overview...</p>
+  </div>
+
+  <ng-container *ngIf="!isLoading && summary as s">
+
+    <!-- Warnings -->
+    <div class="warning-card" *ngFor="let w of s.warnings">
+      <span>⚠️</span>
+      <span>{{ w }}</span>
+    </div>
+
+    <!-- Headline block -->
+    <div class="headline-card">
+      <div class="headline-row">
+        <span class="headline-label">Total Revenue</span>
+        <span class="headline-value">Rs. {{ s.revenue.total | number:'1.0-0' }}</span>
+      </div>
+      <div class="headline-row">
+        <span class="headline-label">
+          Total Expenses
+          <span class="headline-sub">(of which personal: Rs. {{ s.personalWithdrawals | number:'1.0-0' }})</span>
+        </span>
+        <span class="headline-value">Rs. {{ s.expenses.total | number:'1.0-0' }}</span>
+      </div>
+
+      <div class="headline-divider"></div>
+
+      <div class="headline-row emphasis">
+        <span class="headline-label">Business Net Profit</span>
+        <span class="headline-value" [class.positive]="s.businessNetProfit >= 0" [class.negative]="s.businessNetProfit < 0">
+          Rs. {{ s.businessNetProfit | number:'1.0-0' }}
+        </span>
+      </div>
+      <div class="headline-row">
+        <span class="headline-label">Less: Personal Withdrawals</span>
+        <span class="headline-value">Rs. {{ s.personalWithdrawals | number:'1.0-0' }}</span>
+      </div>
+
+      <div class="headline-divider"></div>
+
+      <div class="headline-row emphasis final">
+        <span class="headline-label">Net Position</span>
+        <span class="headline-value" [class.positive]="s.netPosition >= 0" [class.negative]="s.netPosition < 0">
+          Rs. {{ s.netPosition | number:'1.0-0' }}
+        </span>
+      </div>
+
+      <p class="basis-note">{{ s.basisLabel }}</p>
+    </div>
+
+    <!-- Assets / bank / cash -->
+    <div class="summary-grid">
+      <div class="summary-card assets">
+        <div class="card-icon">🏗️</div>
+        <div class="card-label">Active Asset Value</div>
+        <div class="card-value">Rs. {{ s.assets.activeValue | number:'1.0-0' }}</div>
+      </div>
+      <div class="summary-card assets">
+        <div class="card-icon">📦</div>
+        <div class="card-label">Active Assets</div>
+        <div class="card-value">{{ s.assets.activeCount }}</div>
+      </div>
+      <div class="summary-card gain" [class.negative-card]="s.assets.realisedGainLoss < 0">
+        <div class="card-icon">📈</div>
+        <div class="card-label">Realised Gain / Loss (Sold Assets)</div>
+        <div class="card-value" [class.positive]="s.assets.realisedGainLoss >= 0" [class.negative]="s.assets.realisedGainLoss < 0">
+          Rs. {{ s.assets.realisedGainLoss | number:'1.0-0' }}
+        </div>
+      </div>
+      <div class="summary-card bank">
+        <div class="card-icon">🏦</div>
+        <div class="card-label">Bank Balance</div>
+        <div class="card-value">Rs. {{ s.bank.total | number:'1.0-0' }}</div>
+      </div>
+      <div class="summary-card cash">
+        <div class="card-icon">💵</div>
+        <div class="card-label">Cash Position (period)</div>
+        <div class="card-value" [class.positive]="s.cash.net >= 0" [class.negative]="s.cash.net < 0">
+          Rs. {{ s.cash.net | number:'1.0-0' }}
+        </div>
+      </div>
+    </div>
+    <p class="cash-note">{{ s.cash.note }}</p>
+
+    <!-- Per-farm breakdown -->
+    <div class="table-card">
+      <h4>Per-Farm Breakdown</h4>
+      <table>
+        <thead>
+          <tr>
+            <th>Farm</th>
+            <th>Module</th>
+            <th class="num">Revenue</th>
+            <th class="num">Expenses</th>
+            <th class="num">Profit</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr *ngFor="let f of s.perFarm" [class.unassigned-row]="f.unitId === null && f.moduleType !== 'distribution'">
+            <td>
+              {{ f.unitName }}
+              <span class="unassigned-note" *ngIf="f.unitId === null && f.moduleType !== 'distribution'">
+                ⚠️ no farm assigned
+              </span>
+            </td>
+            <td class="module-badge"><span [class]="'badge ' + f.moduleType">{{ f.moduleType }}</span></td>
+            <td class="num">Rs. {{ f.revenue | number:'1.0-0' }}</td>
+            <td class="num">Rs. {{ f.expenses | number:'1.0-0' }}</td>
+            <td class="num" [class.positive]="f.profit >= 0" [class.negative]="f.profit < 0">
+              Rs. {{ f.profit | number:'1.0-0' }}
+            </td>
+          </tr>
+          <tr *ngIf="s.perFarm.length === 0">
+            <td colspan="5" class="empty-row">No activity in this period.</td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+
+  </ng-container>
+</div>

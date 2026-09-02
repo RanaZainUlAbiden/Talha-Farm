@@ -6,6 +6,7 @@ import { CommonModule } from '@angular/common';
 import { Router, RouterOutlet } from '@angular/router';
 import { AuthService } from '../shared/services/auth.service';
 import { FlockService } from '../shared/services/flock.service';
+import { FarmUnitService } from '../shared/services/farm-unit.service';
 import { DatabaseService } from '../shared/services/database.service';
 import { LicenseService } from '../shared/services/license.service';
 import { Subscription } from 'rxjs';
@@ -25,6 +26,9 @@ export class LayoutComponent implements OnInit, OnDestroy {
   flocks: any[] = [];
   batches: any[] = [];
   showFlockDropdown = false;
+  currentUnit: any = null;
+  units: any[] = [];
+  showUnitDropdown = false;
   sidebarCollapsed = false;
   activeRoute = 'flock-health';
   activeBusinessTab: string = 'broiler';
@@ -33,6 +37,8 @@ export class LayoutComponent implements OnInit, OnDestroy {
   licenseStatus: string = '';
   showLicenseWarning: boolean = false;
   isLicenseActivated: boolean = false;
+  licenseExpired: boolean = false;
+  licenseExpiredMessage: string = '';
   private licenseCheckInterval: any = null;
 
   private subs = new Subscription();
@@ -48,7 +54,9 @@ export class LayoutComponent implements OnInit, OnDestroy {
     { label: 'Sale',          icon: '🛒', route: 'sale'             },
     { label: 'Income',        icon: '📈', route: 'income'           },
     { label: 'Report',        icon: '📄', route: 'report'           },
-    { label: 'Flocks',        icon: '🐣', route: 'flock-management' }
+    { label: 'Farm Report',   icon: '🏡', route: 'farm-report'      },
+    { label: 'Flocks',        icon: '🐣', route: 'flock-management' },
+    { label: 'Farms',         icon: '🏠', route: 'farm-units'       }
   ];
 
   layerMenu: any[] = [
@@ -62,7 +70,9 @@ export class LayoutComponent implements OnInit, OnDestroy {
     { label: 'Labour',          icon: '👷🏻‍♀️', route: 'labour' },
     { label: 'Mortality',       icon: '⚠️', route: 'layer-mortality'  },
     { label: 'Income',          icon: '📈', route: 'income'           },
-    { label: 'Report',          icon: '📄', route: 'layer-report'     }
+    { label: 'Report',          icon: '📄', route: 'layer-report'     },
+    { label: 'Farm Report',     icon: '🏡', route: 'farm-report'      },
+    { label: 'Farms',           icon: '🏠', route: 'farm-units'       }
   ];
 
   distributionMenu: any[] = [
@@ -86,11 +96,18 @@ export class LayoutComponent implements OnInit, OnDestroy {
     { label: 'Flocks',        icon: '🐣', route: 'flock-management' }
   ];
 
+  overviewMenu: any[] = [
+    { label: 'Dashboard',         icon: '📊', route: 'overview'            },
+    { label: 'Assets',            icon: '🏗️', route: 'assets'              },
+    { label: 'Personal Expenses', icon: '👛', route: 'personal-expenses'   }
+  ];
+
   get menuItems() {
     if (this.savedBusinessType === 'all') {
       switch (this.activeBusinessTab) {
         case 'layer': return this.layerMenu;
         case 'distribution': return this.distributionMenu;
+        case 'overview': return this.overviewMenu;
         default: return this.broilerMenu;
       }
     }
@@ -117,30 +134,78 @@ export class LayoutComponent implements OnInit, OnDestroy {
     return false;
   }
 
+  // Overview only ever exists as a tab within an 'all' account — there is no
+  // standalone 'overview' business_type — so unlike isLayerMode/isDistributionMode
+  // it doesn't need a top-level savedBusinessType branch.
+  get isOverviewMode(): boolean {
+    return this.savedBusinessType === 'all' && this.activeBusinessTab === 'overview';
+  }
+
   get dropdownItems(): any[] {
     return this.isLayerMode ? this.batches : this.flocks;
   }
 
-  switchBusinessTab(tab: string) {
+  async switchBusinessTab(tab: string) {
     this.activeBusinessTab = tab;
     localStorage.setItem('activeBusinessTab', tab);
+
+    // Load the new module's units/current-unit BEFORE navigating. The child
+    // route component reads farmUnitService's current value the instant it
+    // mounts (a BehaviorSubject replays synchronously on subscribe) — if we
+    // navigate first, it can mount and subscribe while this is still an
+    // in-flight DB call, capturing the OLD module's unit. Awaiting here
+    // means the shared state is already correct by the time anything reads it.
+    await this.refreshModuleData();
+    if (!this.isDistributionMode && !this.isOverviewMode) {
+      this.farmUnitService.notifyModuleChanged(this.isLayerMode ? 'layer' : 'broiler');
+    }
 
     // Resume whichever screen was last open in this tab, instead of
     // always jumping back to the first menu item.
     const remembered = this.lastRouteByTab[tab];
-    const menuForTab = tab === 'layer' ? this.layerMenu : tab === 'distribution' ? this.distributionMenu : this.broilerMenu;
+    const menuForTab = tab === 'layer' ? this.layerMenu : tab === 'distribution' ? this.distributionMenu : tab === 'overview' ? this.overviewMenu : this.broilerMenu;
     const isValidForTab = remembered && menuForTab.some(m => m.route === remembered);
     const targetRoute = isValidForTab ? remembered : (menuForTab[0]?.route || 'flock-health');
 
     this.activeRoute = targetRoute;
     this.router.navigate(['/app', targetRoute]);
-    this.loadActiveBusinessData();
+    this.cdr.detectChanges();
+  }
+
+  // Lets the Farms page change the logged-in account's business type without
+  // forcing a re-login: mirrors what ngOnInit derives from localStorage, then
+  // makes sure the active route still exists in the (possibly new) menu.
+  private async onBusinessTypeChanged(newType: string) {
+    this.currentFarm = this.authService.getCurrentFarm();
+    this.savedBusinessType = newType;
+    if (newType === 'all') {
+      this.activeBusinessTab = localStorage.getItem('activeBusinessTab') || 'broiler';
+    } else {
+      this.activeBusinessTab = newType;
+    }
+
+    // Same ordering fix as switchBusinessTab(): resolve the new module's
+    // units/current-unit before anything (a route change, a child mount)
+    // can read the shared state.
+    await this.refreshModuleData();
+    if (!this.isDistributionMode && !this.isOverviewMode) {
+      this.farmUnitService.notifyModuleChanged(this.isLayerMode ? 'layer' : 'broiler');
+    }
+
+    const validRoutes = this.menuItems.map((m: any) => m.route);
+    if (!validRoutes.includes(this.activeRoute)) {
+      const target = this.menuItems[0]?.route || 'flock-health';
+      this.activeRoute = target;
+      this.router.navigate(['/app', target]);
+    }
+
     this.cdr.detectChanges();
   }
 
   constructor(
     private authService: AuthService,
     private flockService: FlockService,
+    private farmUnitService: FarmUnitService,
     private db: DatabaseService,
     private router: Router,
     private cdr: ChangeDetectorRef,
@@ -193,7 +258,33 @@ export class LayoutComponent implements OnInit, OnDestroy {
       })
     );
 
-    this.loadActiveBusinessData();
+    this.subs.add(
+      this.farmUnitService.units$.subscribe(units => {
+        this.units = units;
+        this.cdr.detectChanges();
+      })
+    );
+
+    this.subs.add(
+      this.farmUnitService.currentUnit$.subscribe(unit => {
+        this.currentUnit = unit;
+        this.cdr.detectChanges();
+      })
+    );
+
+    this.subs.add(
+      this.farmUnitService.unitsChanged$.subscribe(() => {
+        this.refreshModuleData();
+      })
+    );
+
+    this.subs.add(
+      this.authService.businessTypeChanged$.subscribe(newType => {
+        this.onBusinessTypeChanged(newType);
+      })
+    );
+
+    this.refreshModuleData();
 
     const currentUrl = this.router.url.split('/').pop();
     if (currentUrl) this.activeRoute = currentUrl;
@@ -216,27 +307,35 @@ export class LayoutComponent implements OnInit, OnDestroy {
   
   /**
    * 🔥 Check if license is valid
+   *
+   * This runs on a 60s timer, so it must NEVER navigate on its own: a redirect
+   * fired mid-session destroys whatever form the user is filling in and loses
+   * their work without warning. On expiry we raise a banner instead and let the
+   * user finish and save. They leave for /activation only by clicking through
+   * it, or on the next app launch (the app already boots to /activation, which
+   * forwards to /login when the licence is valid).
    */
   private async checkLicense(): Promise<void> {
     const status = await this.licenseService.getStatus();
-    
+
     this.isLicenseActivated = status.activated;
-    
-    if (!status.activated && status.trialExpired) {
-      this.router.navigate(['/activation']);
-      return;
+    this.licenseExpired = !status.activated && status.trialExpired;
+
+    if (this.licenseExpired) {
+      this.licenseExpiredMessage = status.clockTampered
+        ? 'System clock problem — licence cannot be verified. Your work is still saved.'
+        : 'Trial expired. Your work is still saved — activate to keep using the app.';
     }
 
-    // Show license expiry days if activated, otherwise trial days
     if (status.activated) {
-      const daysLeft = await this.licenseService.getLicenseDaysRemaining();
-      this.licenseStatus = `✅ Licensed - ${daysLeft} day${daysLeft !== 1 ? 's' : ''} left`;
-      this.showLicenseWarning = daysLeft <= 1;
+      // An activated licence is permanent — no countdown, no expiry warning.
+      this.licenseStatus = '✅ Licensed';
+      this.showLicenseWarning = false;
     } else {
       this.licenseStatus = await this.licenseService.getTrialStatusMessage();
-      this.showLicenseWarning = !status.activated && status.daysRemaining <= 1 && status.daysRemaining > 0;
+      this.showLicenseWarning = this.licenseExpired || (status.daysRemaining <= 1 && status.daysRemaining > 0);
     }
-    
+
     this.cdr.detectChanges();
   }
 
@@ -249,8 +348,65 @@ export class LayoutComponent implements OnInit, OnDestroy {
   }
 
 
+  async refreshModuleData() {
+    await this.loadUnitsForActiveModule();
+    this.loadActiveBusinessData();
+  }
+
+  async loadUnitsForActiveModule() {
+    if (this.isDistributionMode || this.isOverviewMode) {
+      this.units = [];
+      this.currentUnit = null;
+      return;
+    }
+
+    const moduleType = this.isLayerMode ? 'layer' : 'broiler';
+    const units = await this.farmUnitService.loadUnits(this.currentFarm.farm_id, moduleType);
+    const current = this.farmUnitService.getCurrentUnit();
+    const currentBelongsToModule = current && current.module_type === moduleType &&
+      units.some((u: any) => u.unit_id === current.unit_id);
+
+    if (!currentBelongsToModule) {
+      // Restore whichever unit was last active in this module specifically —
+      // same reasoning as loadFlocks()/loadBatches() below, so switching away
+      // to another business tab and back doesn't reset the unit selection.
+      const lastIdKey = moduleType === 'layer' ? 'lastLayerUnitId' : 'lastBroilerUnitId';
+      const lastId = localStorage.getItem(lastIdKey);
+      const remembered = lastId ? units.find((u: any) => String(u.unit_id) === lastId) : null;
+      this.farmUnitService.setCurrentUnit(remembered || (units.length > 0 ? units[0] : null));
+    }
+
+    this.currentUnit = this.farmUnitService.getCurrentUnit();
+    if (this.currentUnit?.unit_id) {
+      const lastIdKey = moduleType === 'layer' ? 'lastLayerUnitId' : 'lastBroilerUnitId';
+      localStorage.setItem(lastIdKey, String(this.currentUnit.unit_id));
+    }
+    this.cdr.detectChanges();
+  }
+
+  selectUnit(unit: any) {
+    this.farmUnitService.setCurrentUnit(unit);
+    if (unit?.unit_id) {
+      const lastIdKey = this.isLayerMode ? 'lastLayerUnitId' : 'lastBroilerUnitId';
+      localStorage.setItem(lastIdKey, String(unit.unit_id));
+    }
+    this.currentUnit = unit;
+    this.showUnitDropdown = false;
+    this.loadActiveBusinessData();
+    this.cdr.detectChanges();
+  }
+
+  toggleUnitDropdown(event: Event) {
+    event.stopPropagation();
+    this.showUnitDropdown = !this.showUnitDropdown;
+    this.cdr.detectChanges();
+  }
+
    async loadFlocks() {
-    const flocks = await this.flockService.loadFlocks(this.currentFarm.farm_id);
+    // No units yet for this account/module — behave exactly as before the
+    // farm-selector existed rather than filtering to an empty list.
+    const unitId = this.units.length > 0 ? this.currentUnit?.unit_id : undefined;
+    const flocks = await this.flockService.loadFlocks(this.currentFarm.farm_id, unitId);
     const current = this.flockService.getCurrentFlock();
     const currentIsFlock = current && !current.batch_id && flocks.some((flock: any) => flock.flock_id === current.flock_id);
 
@@ -282,7 +438,7 @@ export class LayoutComponent implements OnInit, OnDestroy {
       return;
     }
 
-    if (this.isDistributionMode) {
+    if (this.isDistributionMode || this.isOverviewMode) {
       this.currentFlock = null;
       this.cdr.detectChanges();
       return;
@@ -294,10 +450,14 @@ export class LayoutComponent implements OnInit, OnDestroy {
  
 
   async loadBatches() {
-    const result = await this.db.get(
-      'SELECT * FROM batches WHERE farm_id = ? AND status = ?',
-      [this.currentFarm.farm_id, 'active']
-    );
+    // No units yet for this account/module — behave exactly as before the
+    // farm-selector existed rather than filtering to an empty list.
+    const unitId = this.units.length > 0 ? this.currentUnit?.unit_id : undefined;
+    const sql = unitId
+      ? 'SELECT * FROM batches WHERE farm_id = ? AND status = ? AND unit_id = ?'
+      : 'SELECT * FROM batches WHERE farm_id = ? AND status = ?';
+    const params = unitId ? [this.currentFarm.farm_id, 'active', unitId] : [this.currentFarm.farm_id, 'active'];
+    const result = await this.db.get(sql, params);
     this.batches = result.success ? result.data : [];
 
     const currentIsBatch = this.currentFlock?.batch_id &&
@@ -340,6 +500,7 @@ export class LayoutComponent implements OnInit, OnDestroy {
   @HostListener('document:click')
   closeDropdown() {
     this.showFlockDropdown = false;
+    this.showUnitDropdown = false;
     this.cdr.detectChanges();
   }
 

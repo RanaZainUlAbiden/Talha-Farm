@@ -8,6 +8,7 @@ import { DateOnlyPipe } from '../shared/pipes/date-format.pipe';
 import { PendingStateService } from '../shared/services/pending-state.service';
 import { PaginationComponent } from '../shared/components/pagination/pagination.component';
 import { FlockService } from '../shared/services/flock.service';
+import { FarmUnitService } from '../shared/services/farm-unit.service';
 import { Subscription } from 'rxjs';
 
 @Component({
@@ -21,6 +22,10 @@ export class LayerMortalityComponent implements OnInit, OnDestroy {
   currentFarm: any = null;
   batches: any[] = [];
   records: any[] = [];
+  // All layer farms for this account — drives the unit_id filter below.
+  units: any[] = [];
+  // The farm currently selected in the sidebar.
+  currentUnit: any = null;
   pendingRows: any[] = [];
   currentBatchId: number | null = null;
   editingId: number | null = null;
@@ -71,17 +76,40 @@ export class LayerMortalityComponent implements OnInit, OnDestroy {
     }
   }
 
-  constructor(private db: DatabaseService, private authService: AuthService, private cdr: ChangeDetectorRef, private pendingState: PendingStateService, private flockService: FlockService) {}
+  constructor(private db: DatabaseService, private authService: AuthService, private cdr: ChangeDetectorRef, private pendingState: PendingStateService, private flockService: FlockService, private farmUnitService: FarmUnitService) {}
 
-  ngOnInit() {
+  async ngOnInit() {
     this.currentFarm = this.authService.getCurrentFarm();
-    this.loadData();
+    // Load units first — the currentUnit$ subscription below fires
+    // synchronously (BehaviorSubject) and its filtering depends on
+    // this.units already being populated.
+    await this.loadUnits();
+    await this.loadData();
     const cached = this.pendingState.getState('LayerMortalityComponent');
     if (cached?.farmId === this.currentFarm?.farm_id) this.pendingRows = cached.pendingRows || [];
     this.applyActiveBatch(this.flockService.getCurrentFlock());
     this.subs.add(
       this.flockService.currentFlock$.subscribe(flock => this.applyActiveBatch(flock))
     );
+
+    this.subs.add(
+      this.farmUnitService.currentUnit$.subscribe(unit => {
+        this.currentUnit = unit;
+        this.loadData();
+      })
+    );
+
+    this.subs.add(
+      this.farmUnitService.unitsChanged$.subscribe(async () => {
+        await this.loadUnits();
+        this.loadData();
+      })
+    );
+  }
+
+  async loadUnits() {
+    const result = await this.db.getFarmUnits(this.currentFarm.farm_id, 'layer');
+    this.units = result.success ? result.data : [];
   }
 
   ngOnDestroy() {
@@ -99,12 +127,26 @@ export class LayerMortalityComponent implements OnInit, OnDestroy {
   }
 
   async loadData() {
-    const br = await this.db.get(`SELECT * FROM batches WHERE farm_id=? AND status='active'`, [this.currentFarm.farm_id]);
+    // No farms yet for this account — behave exactly as before the farm
+    // selector existed rather than filtering to an empty list.
+    const unitId = this.units.length > 0 ? this.currentUnit?.unit_id : undefined;
+
+    const brSql = unitId
+      ? `SELECT * FROM batches WHERE farm_id=? AND status='active' AND unit_id=?`
+      : `SELECT * FROM batches WHERE farm_id=? AND status='active'`;
+    const brParams = unitId ? [this.currentFarm.farm_id, unitId] : [this.currentFarm.farm_id];
+    const br = await this.db.get(brSql, brParams);
     this.batches = br.success ? br.data : [];
-    if (!this.currentBatchId && this.batches.length > 0) {
-      this.currentBatchId = this.batches[0].batch_id;
+
+    if (!this.batches.find(b => b.batch_id === this.currentBatchId)) {
+      this.currentBatchId = this.batches.length > 0 ? this.batches[0].batch_id : null;
     }
-    const mr = await this.db.get(`SELECT m.*, b.batch_name FROM layer_mortality m JOIN batches b ON m.batch_id=b.batch_id WHERE b.farm_id=? ORDER BY m.date DESC`, [this.currentFarm.farm_id]);
+
+    const mrSql = unitId
+      ? `SELECT m.*, b.batch_name FROM layer_mortality m JOIN batches b ON m.batch_id=b.batch_id WHERE b.farm_id=? AND b.unit_id=? ORDER BY m.date DESC`
+      : `SELECT m.*, b.batch_name FROM layer_mortality m JOIN batches b ON m.batch_id=b.batch_id WHERE b.farm_id=? ORDER BY m.date DESC`;
+    const mrParams = unitId ? [this.currentFarm.farm_id, unitId] : [this.currentFarm.farm_id];
+    const mr = await this.db.get(mrSql, mrParams);
     this.records = mr.success ? mr.data : [];
     this.cdr.detectChanges();
   }

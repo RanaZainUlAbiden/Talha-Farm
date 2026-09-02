@@ -10,11 +10,11 @@
     <!-- LOGIN MODE -->
     <div *ngIf="!showSetup && !showRegister">
       <div class="form-group">
-        <label>Farm Name</label>
+        <label>Username</label>
         <input
           type="text"
           [(ngModel)]="farmName"
-          placeholder="Enter your farm name"
+          placeholder="Enter your username"
           (keyup.enter)="onLogin()"
         />
       </div>
@@ -40,7 +40,7 @@
 
       <div class="action-links">
         <button class="link-btn" (click)="openRegister()">
-          + Register New Farm
+          + Create Account
         </button>
       </div>
     </div>
@@ -48,22 +48,22 @@
     <!-- FIRST TIME SETUP MODE (when no farms exist) -->
     <div *ngIf="showSetup">
       <p class="setup-info">
-        🎉 Welcome! Create your first farm to get started.
+        🎉 Welcome! Create your account to get started.
       </p>
 
       <div class="form-group">
-        <label>Farm Name</label>
+        <label>Username</label>
         <input type="text" [(ngModel)]="newFarmName"
-          placeholder="e.g. My Poultry Farm"/>
+          placeholder="Choose a username"/>
       </div>
 
       <div class="form-group">
         <label>Business Type</label>
         <select [(ngModel)]="businessType" class="business-select">
-          <option value="broiler">🐔 Broiler Farm</option>
-          <option value="layer">🥚 Layer Farm</option>
-          <option value="distribution">📦 Distribution</option>
-          <option value="all">🔄 All Three</option>
+          <option value="all">🔄 All Modules (Broiler + Layer + Distribution)</option>
+          <option value="broiler">🐔 Broiler Only</option>
+          <option value="layer">🥚 Layer Only</option>
+          <option value="distribution">📦 Distribution Only</option>
         </select>
       </div>
 
@@ -85,7 +85,7 @@
 
       <button class="login-btn" (click)="onSetup()"
         [disabled]="isLoading">
-        {{ isLoading ? 'Creating...' : 'Create Farm' }}
+        {{ isLoading ? 'Creating...' : 'Create Account' }}
       </button>
 
       <div class="action-links" *ngIf="farmsExist">
@@ -101,26 +101,27 @@
         <button class="back-btn" (click)="cancelRegister()">
           ← Back
         </button>
-        <h3 class="mode-title">Register New Farm</h3>
+        <h3 class="mode-title">Create Account</h3>
       </div>
 
       <p class="setup-info">
-        Create a new farm account. Each farm has its own separate data.
+        One account, many farms. Inside your account you'll set up separate
+        farms for Broiler and Layer to track independently.
       </p>
 
       <div class="form-group">
-        <label>Farm Name</label>
+        <label>Username</label>
         <input type="text" [(ngModel)]="newFarmName"
-          placeholder="e.g. My Second Farm"/>
+          placeholder="Choose a username"/>
       </div>
 
       <div class="form-group">
         <label>Business Type</label>
         <select [(ngModel)]="businessType" class="business-select">
-          <option value="broiler">🐔 Broiler Farm</option>
-          <option value="layer">🥚 Layer Farm</option>
-          <option value="distribution">📦 Distribution</option>
-          <option value="all">🔄 All Three</option>
+          <option value="all">🔄 All Modules (Broiler + Layer + Distribution)</option>
+          <option value="broiler">🐔 Broiler Only</option>
+          <option value="layer">🥚 Layer Only</option>
+          <option value="distribution">📦 Distribution Only</option>
         </select>
       </div>
 
@@ -142,7 +143,7 @@
 
       <button class="login-btn" (click)="onRegister()"
         [disabled]="isLoading">
-        {{ isLoading ? 'Registering...' : 'Register Farm' }}
+        {{ isLoading ? 'Creating...' : 'Create Account' }}
       </button>
     </div>
 
