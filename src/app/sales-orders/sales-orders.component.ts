@@ -2,7 +2,7 @@ import { Component, OnInit, ChangeDetectorRef, HostListener, OnDestroy, ViewChil
 import { CommonModule } from '@angular/common';
 import { FormsModule } from '@angular/forms';
 import { Router } from '@angular/router';
-import { DatabaseService } from '../shared/services/database.service';
+import { DatabaseService, DbBatchOp } from '../shared/services/database.service';
 import { AuthService } from '../shared/services/auth.service';
 import { FormStateService } from '../shared/services/form-state.service';
 import { DateOnlyPipe } from '../shared/pipes/date-format.pipe';
@@ -11,6 +11,14 @@ import { jsPDF } from 'jspdf';
 import autoTable from 'jspdf-autotable';
 import { PaginationComponent } from '../shared/components/pagination/pagination.component';
 import { DeleteCodeDialogComponent } from '../shared/components/delete-code-dialog/delete-code-dialog.component';
+
+/**
+ * Unwinds a bill save or delete that has already told the user why it stopped —
+ * a bank movement that could not be applied, for example. The transaction rolls
+ * back like any other failure, but the specific message survives instead of
+ * being overwritten with a generic one.
+ */
+class BillWriteAborted extends Error {}
 
 @Component({
   selector: 'app-sales-orders',
@@ -761,45 +769,78 @@ export class SalesOrdersComponent implements OnInit, OnDestroy {
     return true;
   }
 
+  // ── TRANSACTIONAL WRITE HELPERS ───────────────────────────
+
+  /**
+   * db.run(), db.get() and the DatabaseService helpers report failures as
+   * { success: false } instead of throwing, so a bad write inside a transaction
+   * would otherwise pass unnoticed and get committed along with everything
+   * else. Everything on the bill-save path goes through this.
+   */
+  private assertOk(result: any, what: string): any {
+    if (!result || !result.success) {
+      throw new Error(`${what}: ${(result && result.error) || 'unknown error'}`);
+    }
+    return result;
+  }
+
+  /** run() that aborts the enclosing transaction instead of failing quietly. */
+  private async mustRun(sql: string, params: any[] = []): Promise<any> {
+    return this.assertOk(await this.db.run(sql, params), 'Database write failed');
+  }
+
+  /** runBatch() that aborts the enclosing transaction if any statement fails. */
+  private async mustRunBatch(ops: DbBatchOp[], what: string): Promise<any> {
+    if (ops.length === 0) return { success: true, results: [] };
+    return this.assertOk(await this.db.runBatch(ops), what);
+  }
+
   // ── CUSTOMER LEDGER ───────────────────────────────────────
 
   async addToCustomerLedger(customerId: number, billId: number, totalAmount: number, paidAmount: number, billNumber: string) {
     if (!customerId) return;
-    
-    await this.db.addCustomerLedgerEntry({ 
-      customer_id: customerId, 
-      transaction_date: new Date().toISOString().split('T')[0], 
-      description: `Bill #${billNumber}`, 
-      debit: totalAmount, 
-      credit: 0, 
-      reference_type: 'bill', 
-      reference_id: billId 
-    });
-    
+
+    this.assertOk(await this.db.addCustomerLedgerEntry({
+      customer_id: customerId,
+      transaction_date: new Date().toISOString().split('T')[0],
+      description: `Bill #${billNumber}`,
+      debit: totalAmount,
+      credit: 0,
+      reference_type: 'bill',
+      reference_id: billId
+    }), 'Writing the customer ledger entry failed');
+
     if (paidAmount > 0) {
-      await this.db.addCustomerLedgerEntry({ 
-        customer_id: customerId, 
-        transaction_date: new Date().toISOString().split('T')[0], 
-        description: `Payment - Bill #${billNumber}`, 
-        debit: 0, 
-        credit: paidAmount, 
-        reference_type: 'payment', 
-        reference_id: billId 
-      });
+      this.assertOk(await this.db.addCustomerLedgerEntry({
+        customer_id: customerId,
+        transaction_date: new Date().toISOString().split('T')[0],
+        description: `Payment - Bill #${billNumber}`,
+        debit: 0,
+        credit: paidAmount,
+        reference_type: 'payment',
+        reference_id: billId
+      }), 'Writing the customer payment entry failed');
     }
-    
-    await this.db.updateCustomerOutstandingBalance(customerId);
+
+    this.assertOk(await this.db.updateCustomerOutstandingBalance(customerId), 'Updating the customer balance failed');
   }
 
-  async removeFromCustomerLedger(billId: number, customerId: number) { 
-    if (!customerId) return; 
-    await this.db.run('DELETE FROM customer_ledger WHERE reference_id = ? AND reference_type IN (?, ?)', [billId, 'bill', 'payment']); 
-    await this.db.updateCustomerOutstandingBalance(customerId); 
+  // strict is set by the bill-save path, where a failed write has to take the
+  // whole transaction down. The delete path keeps the older lenient behaviour.
+  async removeFromCustomerLedger(billId: number, customerId: number, strict: boolean = false) {
+    if (!customerId) return;
+    const check = (result: any, what: string) => { if (strict) this.assertOk(result, what); };
+    check(await this.db.run('DELETE FROM customer_ledger WHERE reference_id = ? AND reference_type IN (?, ?)', [billId, 'bill', 'payment']), 'Clearing the old ledger entries failed');
+    check(await this.db.updateCustomerOutstandingBalance(customerId), 'Updating the customer balance failed');
   }
 
   // ── STOCK OPERATIONS ──────────────────────────────────────
 
-  private async restoreBillStock(billId: number) {
+  private async restoreBillStock(billId: number, strict: boolean = false) {
+    // strict is set by the bill-save path, where a failed restore has to take
+    // the whole transaction down. The delete path keeps the older behaviour.
+    const check = (result: any, what: string) => { if (strict) this.assertOk(result, what); };
+
     const existingItems = await this.getBillItems(billId);
     const today = new Date().toISOString().split('T')[0];
 
@@ -819,16 +860,18 @@ export class SalesOrdersComponent implements OnInit, OnDestroy {
        HAVING net_qty > 0`,
       [billId]
     );
+    check(netResult, 'Could not read the batch history for this bill');
     const netRows = netResult.success && netResult.data ? netResult.data : [];
 
     if (netRows.length > 0) {
       for (const row of netRows) {
         if (!row.batch_id) continue;
         const batchResult = await this.db.get('SELECT * FROM product_batches WHERE batch_id = ?', [row.batch_id]);
+        check(batchResult, 'Could not read the stock batch to restore');
         if (batchResult.success && batchResult.data && batchResult.data.length > 0) {
           const targetBatch = batchResult.data[0];
-          await this.db.updateBatch(targetBatch.batch_id, { quantity: (targetBatch.quantity || 0) + row.net_qty });
-          await this.db.addBatchTransaction(
+          check(await this.db.updateBatch(targetBatch.batch_id, { quantity: (targetBatch.quantity || 0) + row.net_qty }), 'Restoring stock failed');
+          check(await this.db.addBatchTransaction(
             targetBatch.batch_id,
             row.product_id,
             'return',
@@ -836,7 +879,7 @@ export class SalesOrdersComponent implements OnInit, OnDestroy {
             today,
             billId,
             `Restored from deleted/edited sale`
-          );
+          ), 'Logging the stock restore failed');
         }
       }
     } else {
@@ -846,6 +889,7 @@ export class SalesOrdersComponent implements OnInit, OnDestroy {
         if (!item.product_id) continue;
 
         const batchesResult = await this.db.getBatchesByProduct(item.product_id, this.currentFarm.farm_id);
+        check(batchesResult, 'Could not read the stock batches to restore');
         let targetBatch = null;
 
         if (batchesResult.success && batchesResult.data && batchesResult.data.length > 0) {
@@ -853,8 +897,8 @@ export class SalesOrdersComponent implements OnInit, OnDestroy {
         }
 
         if (targetBatch) {
-          await this.db.updateBatch(targetBatch.batch_id, { quantity: (targetBatch.quantity || 0) + item.quantity });
-          await this.db.addBatchTransaction(
+          check(await this.db.updateBatch(targetBatch.batch_id, { quantity: (targetBatch.quantity || 0) + item.quantity }), 'Restoring stock failed');
+          check(await this.db.addBatchTransaction(
             targetBatch.batch_id,
             item.product_id,
             'return',
@@ -862,7 +906,7 @@ export class SalesOrdersComponent implements OnInit, OnDestroy {
             today,
             billId,
             `Restored from deleted/edited sale`
-          );
+          ), 'Logging the stock restore failed');
         } else {
           const oneYearLater = new Date();
           oneYearLater.setFullYear(oneYearLater.getFullYear() + 1);
@@ -874,8 +918,9 @@ export class SalesOrdersComponent implements OnInit, OnDestroy {
             quantity: item.quantity,
             purchase_price: 0
           });
+          check(batchResult, 'Creating a batch to restore stock into failed');
           if (batchResult.success && batchResult.batch_id) {
-            await this.db.addBatchTransaction(
+            check(await this.db.addBatchTransaction(
               batchResult.batch_id,
               item.product_id,
               'return',
@@ -883,94 +928,105 @@ export class SalesOrdersComponent implements OnInit, OnDestroy {
               today,
               billId,
               `Restored from deleted/edited sale`
-            );
+            ), 'Logging the stock restore failed');
           }
         }
       }
     }
   }
 
-  private async cleanupInternalTransfers(billId: number) {
+  private async cleanupInternalTransfers(billId: number, strict: boolean = false) {
+    // strict is set by the bill-save path, where leaving a stale medicine/feed/
+    // vaccination/expense row behind has to take the whole transaction down.
+    // The delete path keeps the older log-and-continue behaviour.
+    const check = (result: any, what: string) => { if (strict) this.assertOk(result, what); };
+
     try {
       const oldTransfers = await this.db.get('SELECT * FROM internal_transfers WHERE bill_id=?', [billId]);
+      check(oldTransfers, 'Could not read the existing internal transfers');
       if (oldTransfers.success && oldTransfers.data) {
         for (const t of oldTransfers.data) {
           const targetType = t.target_type || (t.expense_id ? 'expense' : null);
           const refId = t.reference_id || t.expense_id;
 
           if (targetType === 'medicine' && refId) {
-            await this.db.run('DELETE FROM medicine_entries WHERE entry_id=?', [refId]);
+            check(await this.db.run('DELETE FROM medicine_entries WHERE entry_id=?', [refId]), 'Removing the old medicine entry failed');
           } else if (targetType === 'feed' && refId) {
-            await this.db.run('DELETE FROM feed_entries WHERE entry_id=?', [refId]);
+            check(await this.db.run('DELETE FROM feed_entries WHERE entry_id=?', [refId]), 'Removing the old feed entry failed');
           } else if (targetType === 'vaccination' && refId) {
-            await this.db.run('DELETE FROM vaccinations WHERE vaccination_id=?', [refId]);
+            check(await this.db.run('DELETE FROM vaccinations WHERE vaccination_id=?', [refId]), 'Removing the old vaccination failed');
           } else if (t.expense_id) {
-            await this.db.run('DELETE FROM expenses WHERE expense_id=?', [t.expense_id]);
+            check(await this.db.run('DELETE FROM expenses WHERE expense_id=?', [t.expense_id]), 'Removing the old expense failed');
           }
         }
       }
-      await this.db.run('DELETE FROM internal_transfers WHERE bill_id=?', [billId]);
+      check(await this.db.run('DELETE FROM internal_transfers WHERE bill_id=?', [billId]), 'Removing the old internal transfers failed');
     } catch (e) {
+      if (strict) throw e;
       console.error('Error cleaning up internal transfers:', e);
     }
   }
 
   private async deductFromBatches(productId: number, quantity: number, selectedBatchId: number | null, billId?: number) {
-    try {
-      const batchesResult = await this.db.getBatchesByProduct(productId, this.currentFarm.farm_id);
-      if (!batchesResult.success || !batchesResult.data) return;
-      
-      let activeBatches = batchesResult.data
-        .filter((b: any) => (b.calculated_status === 'active' || b.calculated_status === 'expiring') && b.quantity > 0)
-        .sort((a: any, b: any) => (a.expiry_date || '').localeCompare(b.expiry_date || ''));
-        
-      if (selectedBatchId) {
-        const selectedBatch = activeBatches.find((b: any) => b.batch_id === selectedBatchId);
-        if (selectedBatch) {
-          activeBatches = [selectedBatch, ...activeBatches.filter((b: any) => b.batch_id !== selectedBatchId)];
-        }
+    const batchesResult = await this.db.getBatchesByProduct(productId, this.currentFarm.farm_id);
+    this.assertOk(batchesResult, 'Could not read the stock batches for this product');
+    if (!batchesResult.data) return;
+
+    let activeBatches = batchesResult.data
+      .filter((b: any) => (b.calculated_status === 'active' || b.calculated_status === 'expiring') && b.quantity > 0)
+      .sort((a: any, b: any) => (a.expiry_date || '').localeCompare(b.expiry_date || ''));
+
+    if (selectedBatchId) {
+      const selectedBatch = activeBatches.find((b: any) => b.batch_id === selectedBatchId);
+      if (selectedBatch) {
+        activeBatches = [selectedBatch, ...activeBatches.filter((b: any) => b.batch_id !== selectedBatchId)];
       }
-      
-      let remaining = quantity;
-      for (const batch of activeBatches) { 
-        if (remaining <= 0) break; 
-        const deduct = Math.min(remaining, batch.quantity || 0); 
-        await this.db.updateBatch(batch.batch_id, { quantity: (batch.quantity || 0) - deduct }); 
-        await this.db.addBatchTransaction(
-          batch.batch_id, 
-          productId, 
-          'sale', 
-          deduct, 
-          new Date().toISOString().split('T')[0], 
-          billId || null, 
-          'Sale order'
-        ); 
-        remaining -= deduct; 
-      }
-      
-      await this.db.updateBatchStatuses();
-    } catch (error) { 
-      console.error('Error deducting:', error); 
     }
+
+    // Unchanged FIFO walk — the difference is that the writes are collected and
+    // sent as one atomic batch instead of a round trip (and a full rewrite of
+    // the database file) per statement.
+    const today = new Date().toISOString().split('T')[0];
+    const ops: DbBatchOp[] = [];
+    let remaining = quantity;
+
+    for (const batch of activeBatches) {
+      if (remaining <= 0) break;
+      const deduct = Math.min(remaining, batch.quantity || 0);
+      ops.push({
+        sql: 'UPDATE product_batches SET quantity = ? WHERE batch_id = ?',
+        params: [(batch.quantity || 0) - deduct, batch.batch_id]
+      });
+      ops.push({
+        sql: `INSERT INTO batch_transactions
+       (batch_id, product_id, type, quantity, transaction_date, reference_id, notes)
+       VALUES (?, ?, ?, ?, ?, ?, ?)`,
+        params: [batch.batch_id, productId, 'sale', deduct, today, billId || null, 'Sale order']
+      });
+      remaining -= deduct;
+    }
+
+    await this.mustRunBatch(ops, 'Deducting stock failed');
+    this.assertOk(await this.db.updateBatchStatuses(), 'Updating the batch statuses failed');
   }
 
   // ── SAVE BILL ─────────────────────────────────────────────
 
   async saveBill(): Promise<number | null> {
     if (this.gridItems.length === 0 || this.isSubmitting) return null;
-    
-    if (this.customerType === 'internal' && !this.internalTargetFlockId) { 
-      this.errorMessage = 'Please select a target Flock/Batch.'; 
-      this.cdr.detectChanges(); 
-      return null; 
+
+    if (this.customerType === 'internal' && !this.internalTargetFlockId) {
+      this.errorMessage = 'Please select a target Flock/Batch.';
+      this.cdr.detectChanges();
+      return null;
     }
-    
+
     if (!(await this.validateStockForBill())) return null;
     this.isSubmitting = true;
 
-    const customerName = this.customerType === 'internal' ? 'Own Farm' : 
-                         (this.customerType === 'regular' ? 
-                           (this.customers.find(c => c.customer_id === this.selectedCustomerId)?.customer_name || 'Walk-in') : 
+    const customerName = this.customerType === 'internal' ? 'Own Farm' :
+                         (this.customerType === 'regular' ?
+                           (this.customers.find(c => c.customer_id === this.selectedCustomerId)?.customer_name || 'Walk-in') :
                            'Walk-in');
     const oldBill = this.isEditMode && this.editingBillId
       ? this.allBills.find(b => b.bill_id === this.editingBillId)
@@ -981,198 +1037,232 @@ export class SalesOrdersComponent implements OnInit, OnDestroy {
     let savedBillId: number | null = null;
 
     try {
-      // ── CALCULATE PAYMENTS ────────────────────────────────────
-      
-      let effectivePaid = 0;
-      let bankDeductAmount = 0;
-      let paymentType = 'cash';
+      // One transaction for the whole bill: the bank movement, the bill row, its
+      // items, the stock deductions, the ledger entries and the internal
+      // transfers either all land together or none of them do — and the database
+      // file is written once, on commit, instead of once per statement. A failure
+      // or a power cut part way through leaves the books exactly as they were.
+      //
+      // Reads inside here see the transaction's own uncommitted writes, so the
+      // steps that depend on reading back what an earlier step wrote (restore
+      // stock, then re-deduct it) still behave the way they always have.
+      savedBillId = await this.db.transaction(async () => {
+        // ── CALCULATE PAYMENTS ────────────────────────────────────
 
-      if (this.customerType === 'internal') {
-        paymentType = 'internal';
-        // 🔥 FIX: internal/Own Farm transfers have no outstanding receivable —
-        // the cost is already recognized as an expense in the target module,
-        // so the bill itself should be treated as fully paid, not stuck at
-        // amount_paid=0 forever (which made every internal bill show
-        // "Unpaid" permanently with no way to change it).
-        effectivePaid = totalAmount;
+        let effectivePaid = 0;
+        let bankDeductAmount = 0;
+        let paymentType = 'cash';
 
-        if (oldBill?.payment_type === 'bank') {
-          const bankApplied = await this.applyBankPaymentChange(oldBill, oldBill.customer_id, 0, billNumber);
-          if (!bankApplied) {
-            this.isSubmitting = false;
-            this.cdr.detectChanges();
-            return null;
+        if (this.customerType === 'internal') {
+          paymentType = 'internal';
+          // 🔥 FIX: internal/Own Farm transfers have no outstanding receivable —
+          // the cost is already recognized as an expense in the target module,
+          // so the bill itself should be treated as fully paid, not stuck at
+          // amount_paid=0 forever (which made every internal bill show
+          // "Unpaid" permanently with no way to change it).
+          effectivePaid = totalAmount;
+
+          if (oldBill?.payment_type === 'bank') {
+            const bankApplied = await this.applyBankPaymentChange(oldBill, oldBill.customer_id, 0, billNumber);
+            if (!bankApplied) throw new BillWriteAborted(this.errorMessage);
+          }
+        } else if (this.paymentMethod === 'bank' && this.selectedCustomerId) {
+          paymentType = 'bank';
+          effectivePaid = clampPaidAmount(this.paidAmount);
+          bankDeductAmount = effectivePaid;
+
+          const bankApplied = await this.applyBankPaymentChange(oldBill, this.selectedCustomerId, effectivePaid, billNumber);
+          if (!bankApplied) throw new BillWriteAborted(this.errorMessage);
+        } else {
+          effectivePaid = clampPaidAmount(this.paidAmount);
+          paymentType = 'cash';
+
+          if (oldBill?.payment_type === 'bank') {
+            const bankApplied = await this.applyBankPaymentChange(oldBill, this.selectedCustomerId, 0, billNumber);
+            if (!bankApplied) throw new BillWriteAborted(this.errorMessage);
           }
         }
-      } else if (this.paymentMethod === 'bank' && this.selectedCustomerId) {
-        paymentType = 'bank';
-        effectivePaid = clampPaidAmount(this.paidAmount);
-        bankDeductAmount = effectivePaid;
 
-        const bankApplied = await this.applyBankPaymentChange(oldBill, this.selectedCustomerId, effectivePaid, billNumber);
-        if (!bankApplied) {
-          this.isSubmitting = false;
-          this.cdr.detectChanges();
-          return null;
-        }
-      } else {
-        effectivePaid = clampPaidAmount(this.paidAmount);
-        paymentType = 'cash';
+        console.log('📊 Payment Details:', {
+          totalAmount,
+          paidAmount: this.paidAmount,
+          effectivePaid,
+          bankDeductAmount,
+          paymentMethod: this.paymentMethod,
+          paymentType,
+          customerId: this.selectedCustomerId
+        });
 
-        if (oldBill?.payment_type === 'bank') {
-          const bankApplied = await this.applyBankPaymentChange(oldBill, this.selectedCustomerId, 0, billNumber);
-          if (!bankApplied) {
-            this.isSubmitting = false;
-            this.cdr.detectChanges();
-            return null;
-          }
-        }
-      }
+        // ── SAVE OR UPDATE BILL ───────────────────────────────────
 
-      console.log('📊 Payment Details:', {
-        totalAmount,
-        paidAmount: this.paidAmount,
-        effectivePaid,
-        bankDeductAmount,
-        paymentMethod: this.paymentMethod,
-        paymentType,
-        customerId: this.selectedCustomerId
-      });
+        let billId: number | null;
 
-      // ── SAVE OR UPDATE BILL ───────────────────────────────────
+        if (this.isEditMode && this.editingBillId) {
+          billId = this.editingBillId;
+          if (oldBill?.customer_id) await this.removeFromCustomerLedger(this.editingBillId, oldBill.customer_id, true);
 
-      if (this.isEditMode && this.editingBillId) {
-        savedBillId = this.editingBillId;
-        if (oldBill?.customer_id) await this.removeFromCustomerLedger(this.editingBillId, oldBill.customer_id);
-        
-        await this.cleanupInternalTransfers(this.editingBillId);
-        
-        await this.restoreBillStock(this.editingBillId);
-        
-        await this.db.run(
-          'UPDATE bills SET customer_id=?, customer_name=?, subtotal=?, total_amount=?, amount_paid=?, payment_type=? WHERE bill_id=?',
-          [this.selectedCustomerId, customerName, totalAmount, totalAmount, effectivePaid, paymentType, this.editingBillId]
-        );
-        
-        await this.db.run('DELETE FROM bill_items WHERE bill_id=?', [this.editingBillId]);
-        for (const item of this.gridItems) { 
-          await this.db.run(
-            'INSERT INTO bill_items (bill_id, product_id, product_name, quantity, unit_price, total_price) VALUES (?,?,?,?,?,?)',
-            [this.editingBillId, item.productId, item.productName, item.quantity, item.unitPrice, item.totalPrice]
-          ); 
-          await this.deductFromBatches(item.productId, item.quantity, item.selectedBatchId, this.editingBillId); 
-        }
-        
-        if (this.selectedCustomerId) {
-          await this.addToCustomerLedger(this.selectedCustomerId, this.editingBillId, totalAmount, effectivePaid, billNumber);
-        }
-      } else {
-        await this.db.run(
-          'INSERT INTO bills (farm_id, bill_number, customer_id, customer_name, bill_date, subtotal, total_amount, amount_paid, payment_type) VALUES (?,?,?,?,?,?,?,?,?)',
-          [this.currentFarm.farm_id, billNumber, this.selectedCustomerId, customerName, 
-           new Date().toISOString().split('T')[0], totalAmount, totalAmount, effectivePaid, paymentType]
-        );
-        
-        const lastBill = await this.db.get('SELECT MAX(bill_id) as bid FROM bills WHERE farm_id=?', [this.currentFarm.farm_id]);
-        savedBillId = lastBill.success && lastBill.data[0] ? lastBill.data[0].bid : null;
-        
-        if (savedBillId) {
-          for (const item of this.gridItems) { 
-            await this.db.run(
-              'INSERT INTO bill_items (bill_id, product_id, product_name, quantity, unit_price, total_price) VALUES (?,?,?,?,?,?)',
-              [savedBillId, item.productId, item.productName, item.quantity, item.unitPrice, item.totalPrice]
-            ); 
-            await this.deductFromBatches(item.productId, item.quantity, item.selectedBatchId, savedBillId); 
-          }
-          
-          if (this.selectedCustomerId) {
-            await this.addToCustomerLedger(this.selectedCustomerId, savedBillId, totalAmount, effectivePaid, billNumber);
-          }
-        }
-      }
+          await this.cleanupInternalTransfers(this.editingBillId, true);
 
-      // ── INTERNAL TRANSFER ──────────────────────────────────────
-      
-      if (this.customerType === 'internal' && savedBillId && this.internalTargetFlockId) {
-        for (const item of this.gridItems) {
-          const billTag = billNumber ? ` (Bill #${billNumber})` : '';
-          const desc = item.productName + ' × ' + item.quantity + billTag;
-          const todayDate = new Date().toISOString().split('T')[0];
+          await this.restoreBillStock(this.editingBillId, true);
 
-          const productRes = await this.db.get('SELECT category FROM products WHERE product_id=?', [item.productId]);
-          const category = (productRes.success && productRes.data.length > 0) ? (productRes.data[0].category || '').toLowerCase() : '';
-
-          let expenseId = null;
-          let targetType = 'expense';
-          let referenceId = null;
-
-          if (category === 'medicine') {
-            targetType = 'medicine';
-            let traderRes = await this.db.get('SELECT trader_id FROM medicine_traders WHERE flock_id=? AND module_type=? AND trader_name=?', [this.internalTargetFlockId, this.internalTargetModule, 'Internal Distribution']);
-            let traderId = null;
-            if (traderRes.success && traderRes.data.length > 0) {
-              traderId = traderRes.data[0].trader_id;
-            } else {
-              const newTrader = await this.db.run('INSERT INTO medicine_traders (flock_id, trader_name, module_type) VALUES (?, ?, ?)', [this.internalTargetFlockId, 'Internal Distribution', this.internalTargetModule]);
-              traderId = newTrader.lastId;
-            }
-            if (traderId) {
-              const entryResult = await this.db.run('INSERT INTO medicine_entries (trader_id, flock_id, date, medicine_name, quantity, price_per_unit, total_amount, module_type, bill_id, bill_number) VALUES (?,?,?,?,?,?,?,?,?,?)',
-                [traderId, this.internalTargetFlockId, todayDate, item.productName + billTag, item.quantity, item.unitPrice, item.totalPrice, this.internalTargetModule, savedBillId, billNumber]);
-              referenceId = entryResult.lastId;
-            }
-          } else if (category === 'feed') {
-            targetType = 'feed';
-            let traderRes = await this.db.get('SELECT trader_id FROM feed_traders WHERE flock_id=? AND module_type=? AND trader_name=?', [this.internalTargetFlockId, this.internalTargetModule, 'Internal Distribution']);
-            let traderId = null;
-            if (traderRes.success && traderRes.data.length > 0) {
-              traderId = traderRes.data[0].trader_id;
-            } else {
-              const newTrader = await this.db.run('INSERT INTO feed_traders (flock_id, trader_name, module_type) VALUES (?, ?, ?)', [this.internalTargetFlockId, 'Internal Distribution', this.internalTargetModule]);
-              traderId = newTrader.lastId;
-            }
-            if (traderId) {
-              const entryResult = await this.db.run('INSERT INTO feed_entries (trader_id, flock_id, date, feed_name, quantity, price_per_unit, total_amount, module_type, bill_id, bill_number) VALUES (?,?,?,?,?,?,?,?,?,?)',
-                [traderId, this.internalTargetFlockId, todayDate, item.productName + billTag, item.quantity, item.unitPrice, item.totalPrice, this.internalTargetModule, savedBillId, billNumber]);
-              referenceId = entryResult.lastId;
-            }
-          } else if (category === 'vaccine' || category === 'vaccination') {
-            targetType = 'vaccination';
-            const vaccResult = await this.db.run('INSERT INTO vaccinations (batch_id, flock_id, date, vaccine_name, dose, notes, cost, done, bill_id, bill_number) VALUES (?,?,?,?,?,?,?,?,?,?)',
-                [this.internalTargetModule === 'layer' ? this.internalTargetFlockId : null, this.internalTargetModule === 'broiler' ? this.internalTargetFlockId : null, todayDate, item.productName, String(item.quantity), 'Internal Transfer' + billTag, item.totalPrice, 1, savedBillId, billNumber]);
-            referenceId = vaccResult.lastId;
-          } else {
-            targetType = 'expense';
-            const expenseResult = await this.db.run(
-              'INSERT INTO expenses (flock_id, date, description, amount, module_type) VALUES (?,?,?,?,?)',
-              [this.internalTargetFlockId, todayDate, desc, item.totalPrice, this.internalTargetModule]
-            );
-            expenseId = expenseResult.lastId;
-            referenceId = expenseId;
-          }
-
-          await this.db.run(
-            'INSERT INTO internal_transfers (bill_id, expense_id, target_module, target_flock_id, target_type, reference_id) VALUES (?,?,?,?,?,?)',
-            [savedBillId, expenseId, this.internalTargetModule, this.internalTargetFlockId, targetType, referenceId]
+          await this.mustRun(
+            'UPDATE bills SET customer_id=?, customer_name=?, subtotal=?, total_amount=?, amount_paid=?, payment_type=? WHERE bill_id=?',
+            [this.selectedCustomerId, customerName, totalAmount, totalAmount, effectivePaid, paymentType, this.editingBillId]
           );
-        }
-      }
 
-      // ── CLEANUP ─────────────────────────────────────────────────
-      
-      this.formState.clearState(this.FORM_KEY);
-      this.resetForm(); 
-      this.viewMode = 'list'; 
-      await this.loadBills(); 
-      await this.loadData();
-      
-    } catch (error: any) { 
-      this.errorMessage = 'Error saving: ' + error.message; 
+          await this.mustRun('DELETE FROM bill_items WHERE bill_id=?', [this.editingBillId]);
+          for (const item of this.gridItems) {
+            await this.mustRun(
+              'INSERT INTO bill_items (bill_id, product_id, product_name, quantity, unit_price, total_price) VALUES (?,?,?,?,?,?)',
+              [this.editingBillId, item.productId, item.productName, item.quantity, item.unitPrice, item.totalPrice]
+            );
+            await this.deductFromBatches(item.productId, item.quantity, item.selectedBatchId, this.editingBillId);
+          }
+
+          if (this.selectedCustomerId) {
+            await this.addToCustomerLedger(this.selectedCustomerId, this.editingBillId, totalAmount, effectivePaid, billNumber);
+          }
+        } else {
+          await this.mustRun(
+            'INSERT INTO bills (farm_id, bill_number, customer_id, customer_name, bill_date, subtotal, total_amount, amount_paid, payment_type) VALUES (?,?,?,?,?,?,?,?,?)',
+            [this.currentFarm.farm_id, billNumber, this.selectedCustomerId, customerName,
+             new Date().toISOString().split('T')[0], totalAmount, totalAmount, effectivePaid, paymentType]
+          );
+
+          const lastBill = await this.db.get('SELECT MAX(bill_id) as bid FROM bills WHERE farm_id=?', [this.currentFarm.farm_id]);
+          this.assertOk(lastBill, 'Could not read back the saved bill');
+          billId = lastBill.data[0] ? lastBill.data[0].bid : null;
+
+          // This used to fall through silently, leaving a bill row with no items,
+          // no stock movement and no ledger entry. Now it takes the save down.
+          if (!billId) throw new Error('The bill was saved but its id could not be read back');
+
+          for (const item of this.gridItems) {
+            await this.mustRun(
+              'INSERT INTO bill_items (bill_id, product_id, product_name, quantity, unit_price, total_price) VALUES (?,?,?,?,?,?)',
+              [billId, item.productId, item.productName, item.quantity, item.unitPrice, item.totalPrice]
+            );
+            await this.deductFromBatches(item.productId, item.quantity, item.selectedBatchId, billId);
+          }
+
+          if (this.selectedCustomerId) {
+            await this.addToCustomerLedger(this.selectedCustomerId, billId, totalAmount, effectivePaid, billNumber);
+          }
+        }
+
+        // ── INTERNAL TRANSFER ──────────────────────────────────────
+
+        if (this.customerType === 'internal' && billId && this.internalTargetFlockId) {
+          for (const item of this.gridItems) {
+            const billTag = billNumber ? ` (Bill #${billNumber})` : '';
+            const desc = item.productName + ' × ' + item.quantity + billTag;
+            const todayDate = new Date().toISOString().split('T')[0];
+
+            const productRes = await this.db.get('SELECT category FROM products WHERE product_id=?', [item.productId]);
+            this.assertOk(productRes, 'Could not read the product category');
+            const category = (productRes.data.length > 0) ? (productRes.data[0].category || '').toLowerCase() : '';
+
+            // The target-module row and the internal_transfers row that points at
+            // it go over as one batch: { $lastId: -1 } stands in for the id the
+            // previous statement produced, so no id has to make a round trip and
+            // a half-written transfer can't survive a failure.
+            const ops: DbBatchOp[] = [];
+            let targetType = 'expense';
+            let expenseIdRef: any = null;
+            let referenceIdRef: any = null;
+
+            if (category === 'medicine') {
+              targetType = 'medicine';
+              const traderRes = await this.db.get('SELECT trader_id FROM medicine_traders WHERE flock_id=? AND module_type=? AND trader_name=?', [this.internalTargetFlockId, this.internalTargetModule, 'Internal Distribution']);
+              this.assertOk(traderRes, 'Could not look up the internal distribution trader');
+
+              let traderIdRef: any = traderRes.data.length > 0 ? traderRes.data[0].trader_id : null;
+              if (traderIdRef === null) {
+                ops.push({
+                  sql: 'INSERT INTO medicine_traders (flock_id, trader_name, module_type) VALUES (?, ?, ?)',
+                  params: [this.internalTargetFlockId, 'Internal Distribution', this.internalTargetModule]
+                });
+                traderIdRef = { $lastId: -1 };
+              }
+
+              ops.push({
+                sql: 'INSERT INTO medicine_entries (trader_id, flock_id, date, medicine_name, quantity, price_per_unit, total_amount, module_type, bill_id, bill_number) VALUES (?,?,?,?,?,?,?,?,?,?)',
+                params: [traderIdRef, this.internalTargetFlockId, todayDate, item.productName + billTag, item.quantity, item.unitPrice, item.totalPrice, this.internalTargetModule, billId, billNumber]
+              });
+              referenceIdRef = { $lastId: -1 };
+            } else if (category === 'feed') {
+              targetType = 'feed';
+              const traderRes = await this.db.get('SELECT trader_id FROM feed_traders WHERE flock_id=? AND module_type=? AND trader_name=?', [this.internalTargetFlockId, this.internalTargetModule, 'Internal Distribution']);
+              this.assertOk(traderRes, 'Could not look up the internal distribution trader');
+
+              let traderIdRef: any = traderRes.data.length > 0 ? traderRes.data[0].trader_id : null;
+              if (traderIdRef === null) {
+                ops.push({
+                  sql: 'INSERT INTO feed_traders (flock_id, trader_name, module_type) VALUES (?, ?, ?)',
+                  params: [this.internalTargetFlockId, 'Internal Distribution', this.internalTargetModule]
+                });
+                traderIdRef = { $lastId: -1 };
+              }
+
+              ops.push({
+                sql: 'INSERT INTO feed_entries (trader_id, flock_id, date, feed_name, quantity, price_per_unit, total_amount, module_type, bill_id, bill_number) VALUES (?,?,?,?,?,?,?,?,?,?)',
+                params: [traderIdRef, this.internalTargetFlockId, todayDate, item.productName + billTag, item.quantity, item.unitPrice, item.totalPrice, this.internalTargetModule, billId, billNumber]
+              });
+              referenceIdRef = { $lastId: -1 };
+            } else if (category === 'vaccine' || category === 'vaccination') {
+              targetType = 'vaccination';
+              ops.push({
+                sql: 'INSERT INTO vaccinations (batch_id, flock_id, date, vaccine_name, dose, notes, cost, done, bill_id, bill_number) VALUES (?,?,?,?,?,?,?,?,?,?)',
+                params: [this.internalTargetModule === 'layer' ? this.internalTargetFlockId : null, this.internalTargetModule === 'broiler' ? this.internalTargetFlockId : null, todayDate, item.productName, String(item.quantity), 'Internal Transfer' + billTag, item.totalPrice, 1, billId, billNumber]
+              });
+              referenceIdRef = { $lastId: -1 };
+            } else {
+              targetType = 'expense';
+              ops.push({
+                sql: 'INSERT INTO expenses (flock_id, date, description, amount, module_type) VALUES (?,?,?,?,?)',
+                params: [this.internalTargetFlockId, todayDate, desc, item.totalPrice, this.internalTargetModule]
+              });
+              expenseIdRef = { $lastId: -1 };
+              referenceIdRef = { $lastId: -1 };
+            }
+
+            ops.push({
+              sql: 'INSERT INTO internal_transfers (bill_id, expense_id, target_module, target_flock_id, target_type, reference_id) VALUES (?,?,?,?,?,?)',
+              params: [billId, expenseIdRef, this.internalTargetModule, this.internalTargetFlockId, targetType, referenceIdRef]
+            });
+
+            await this.mustRunBatch(ops, `Internal transfer for ${item.productName} failed`);
+          }
+        }
+
+        return billId;
+      });
+    } catch (error: any) {
+      // The transaction rolled back — nothing at all was written.
+      if (!(error instanceof BillWriteAborted)) {
+        this.errorMessage = 'Error saving: ' + (error?.message || error);
+      }
       console.error('Save error:', error);
-    } finally { 
-      this.isSubmitting = false; 
-      this.cdr.detectChanges(); 
+      this.isSubmitting = false;
+      this.cdr.detectChanges();
+      return null;
     }
+
+    // Committed. A failure from here on is a screen-refresh problem, not a
+    // failed save, and must not be reported as one.
+    try {
+      this.formState.clearState(this.FORM_KEY);
+      this.resetForm();
+      this.viewMode = 'list';
+      await this.loadBills();
+      await this.loadData();
+    } catch (error: any) {
+      console.error('The bill was saved, but refreshing the screen failed:', error);
+    } finally {
+      this.isSubmitting = false;
+      this.cdr.detectChanges();
+    }
+
     return savedBillId;
   }
 
@@ -1204,40 +1294,68 @@ export class SalesOrdersComponent implements OnInit, OnDestroy {
 
   async onDeleteConfirmed() {
     if (!this.deletingBillId) return;
-    
+
     console.log('✅ Delete confirmed for bill:', this.deletingBillId);
-    
+
+    // Captured because the narrowing above does not survive into the closure,
+    // and because nothing below should re-read a field the UI can change.
+    const billId = this.deletingBillId;
+
     try {
-      const bill = this.allBills.find(b => b.bill_id === this.deletingBillId);
+      // Same shape as the save path: the bank refund, the ledger removal, the
+      // internal-transfer cleanup, the stock restore and both deletes either all
+      // land together or none of them do, and the database file is written once,
+      // on commit. A failure part way through used to leave a bill whose stock
+      // had been restored but whose row was still there, or the reverse.
+      await this.db.transaction(async () => {
+        const bill = this.allBills.find(b => b.bill_id === billId);
 
-      // 🔥 FIX: refund the customer's bank if this bill was paid via bank —
-      // otherwise the deducted amount is lost with no trace once the bill
-      // (and its reference) is gone.
-      if (bill?.payment_type === 'bank' && bill.customer_id && Number(bill.amount_paid) > 0) {
-        const refundOk = await this.applyBankPaymentChange(bill, bill.customer_id, 0, bill.bill_number);
-        if (!refundOk) {
-          this.cdr.detectChanges();
-          return;
+        // 🔥 FIX: refund the customer's bank if this bill was paid via bank —
+        // otherwise the deducted amount is lost with no trace once the bill
+        // (and its reference) is gone.
+        if (bill?.payment_type === 'bank' && bill.customer_id && Number(bill.amount_paid) > 0) {
+          const refundOk = await this.applyBankPaymentChange(bill, bill.customer_id, 0, bill.bill_number);
+          if (!refundOk) throw new BillWriteAborted(this.errorMessage);
         }
+
+        if (bill?.customer_id) {
+          await this.removeFromCustomerLedger(billId, bill.customer_id, true);
+        }
+
+        await this.cleanupInternalTransfers(billId, true);
+
+        await this.restoreBillStock(billId, true);
+
+        await this.mustRunBatch([
+          { sql: 'DELETE FROM bill_items WHERE bill_id=?', params: [billId] },
+          { sql: 'DELETE FROM bills WHERE bill_id=?', params: [billId] }
+        ], 'Deleting the bill failed');
+      });
+    } catch (error: any) {
+      // The transaction rolled back — nothing at all was written.
+      console.error('Delete error:', error);
+
+      if (error instanceof BillWriteAborted) {
+        // applyBankPaymentChange has already said why. Leave the confirmation
+        // dialog up so the user can retry, the way this path always has.
+        this.cdr.detectChanges();
+        return;
       }
 
-      if (bill?.customer_id) {
-        await this.removeFromCustomerLedger(this.deletingBillId, bill.customer_id);
-      }
-      
-      await this.cleanupInternalTransfers(this.deletingBillId);
-      
-      await this.restoreBillStock(this.deletingBillId);
-      await this.db.run('DELETE FROM bill_items WHERE bill_id=?', [this.deletingBillId]);
-      await this.db.run('DELETE FROM bills WHERE bill_id=?', [this.deletingBillId]);
-      
-      this.showDeleteDialog = false; 
-      this.deletingBillId = null; 
-      await this.loadData();
-    } catch (error: any) { 
-      this.errorMessage = 'Error deleting: ' + error.message; 
-      console.error('Delete error:', error);
+      this.errorMessage = 'Error deleting: ' + (error?.message || error);
       this.showDeleteDialog = false;
+      this.cdr.detectChanges();
+      return;
+    }
+
+    // Committed. A failure from here on is a screen-refresh problem, not a
+    // failed delete, and must not be reported as one.
+    this.showDeleteDialog = false;
+    this.deletingBillId = null;
+    try {
+      await this.loadData();
+    } catch (error: any) {
+      console.error('The bill was deleted, but refreshing the screen failed:', error);
       this.cdr.detectChanges();
     }
   }

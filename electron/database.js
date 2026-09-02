@@ -908,6 +908,14 @@ async function initializeDatabase() {
 // SAVE DATABASE
 // =============================================
 function saveDatabase(dbPath) {
+  // db.export() closes and re-opens the connection, which silently throws away
+  // any open transaction (verified against sql.js 1.14). Writing to disk
+  // mid-transaction would lose the very work being protected — commitTransaction()
+  // does the single write once everything is committed.
+  if (inTransaction) {
+    console.error('saveDatabase() called while a transaction is open — skipped; the commit will write instead.')
+    return
+  }
   if (db) {
     try {
       const data = db.export()
@@ -970,55 +978,286 @@ const PRIMARY_KEY_MAP = {
   personal_expenses: 'pexpense_id'
 };
 
-function runQuery(sql, params = []) {
-  try {
-    const sqlUpper = sql.trim().toUpperCase();
-    let lastId = null;
+// Executes a single statement and returns its lastId (INSERTs only). Throws on
+// SQL error so the caller can decide whether that merely gets reported
+// (runQuery) or unwinds a whole transaction (runBatch).
+//
+// The semantics here are deliberately the ones runQuery has always had:
+// INSERTs go through prepare/run so last_insert_rowid() means something, and
+// everything else goes through db.run(sql, params). Note that sql.js treats a
+// non-null params — `[]` included — as the "prepare" path, which executes only
+// the FIRST statement of a multi-statement string. Callers such as
+// updateBatchStatuses() depend on that, so do not "fix" it here.
+function executeStatement(sql, params = []) {
+  const sqlUpper = sql.trim().toUpperCase();
+  let lastId = null;
 
-    if (sqlUpper.startsWith('INSERT')) {
-      const stmt = db.prepare(sql);
-      stmt.run(params);
-      stmt.free();
+  if (sqlUpper.startsWith('INSERT')) {
+    const stmt = db.prepare(sql);
+    stmt.run(params);
+    stmt.free();
 
-      try {
-        const idResult = db.exec('SELECT last_insert_rowid() as id');
-        if (idResult && idResult.length > 0 && idResult[0].values && idResult[0].values.length > 0) {
-          lastId = idResult[0].values[0][0];
-        }
-      } catch (e) {
-        console.error('last_insert_rowid lookup failed:', e.message);
+    try {
+      const idResult = db.exec('SELECT last_insert_rowid() as id');
+      if (idResult && idResult.length > 0 && idResult[0].values && idResult[0].values.length > 0) {
+        lastId = idResult[0].values[0][0];
       }
-
-      if (!lastId) {
-        const tableMatch = sql.match(/INSERT\s+INTO\s+["`\[]?(\w+)["`\]]?/i);
-        const tableName = tableMatch ? tableMatch[1] : null;
-        const pk = tableName ? PRIMARY_KEY_MAP[tableName] : null;
-        if (pk) {
-          try {
-            const fallbackResult = db.exec(`SELECT MAX(${pk}) as id FROM ${tableName}`);
-            if (fallbackResult && fallbackResult.length > 0 && fallbackResult[0].values && fallbackResult[0].values.length > 0) {
-              lastId = fallbackResult[0].values[0][0];
-              console.log(`📝 last_insert_rowid() was unreliable — used MAX(${pk}) fallback: ${lastId}`);
-            }
-          } catch (e) {
-            console.error('Fallback lastId lookup failed:', e.message);
-          }
-        } else if (tableName) {
-          console.warn(`⚠️ No primary key mapping for table "${tableName}" — add it to PRIMARY_KEY_MAP if lastId is needed for it.`);
-        }
-      }
-
-      console.log(`📝 Last insert ID: ${lastId}`);
-    } else {
-      db.run(sql, params);
+    } catch (e) {
+      console.error('last_insert_rowid lookup failed:', e.message);
     }
 
-    const dbPath = path.join(app.getPath('userData'), 'sng_farm.db')
-    saveDatabase(dbPath)
+    if (!lastId) {
+      const tableMatch = sql.match(/INSERT\s+INTO\s+["`\[]?(\w+)["`\]]?/i);
+      const tableName = tableMatch ? tableMatch[1] : null;
+      const pk = tableName ? PRIMARY_KEY_MAP[tableName] : null;
+      if (pk) {
+        try {
+          const fallbackResult = db.exec(`SELECT MAX(${pk}) as id FROM ${tableName}`);
+          if (fallbackResult && fallbackResult.length > 0 && fallbackResult[0].values && fallbackResult[0].values.length > 0) {
+            lastId = fallbackResult[0].values[0][0];
+            console.log(`📝 last_insert_rowid() was unreliable — used MAX(${pk}) fallback: ${lastId}`);
+          }
+        } catch (e) {
+          console.error('Fallback lastId lookup failed:', e.message);
+        }
+      } else if (tableName) {
+        console.warn(`⚠️ No primary key mapping for table "${tableName}" — add it to PRIMARY_KEY_MAP if lastId is needed for it.`);
+      }
+    }
+
+    console.log(`📝 Last insert ID: ${lastId}`);
+  } else {
+    db.run(sql, params);
+  }
+
+  return { lastId: lastId };
+}
+
+function runQuery(sql, params = []) {
+  try {
+    const { lastId } = executeStatement(sql, params);
+
+    // Inside a transaction the write is not durable until COMMIT, which does
+    // the single export. Exporting here would destroy the open transaction.
+    if (!inTransaction) {
+      saveDatabase(getDbPath())
+    }
 
     return { success: true, lastId: lastId };
   } catch (err) {
     return { success: false, error: err.message }
+  }
+}
+
+// =============================================
+// TRANSACTIONS
+// =============================================
+// A transaction is owned by one renderer flow: begin -> work -> commit, with a
+// rollback in that flow's finally. Reads issued in between go over this same
+// connection, so they see the transaction's own uncommitted rows — which is what
+// lets a multi-step save (restore stock, then re-deduct it) behave exactly as it
+// did back when every statement committed immediately.
+let inTransaction = false
+let transactionWatchdog = null
+let savepointCounter = 0
+
+// If a flow dies without committing, every later write would stop reaching disk
+// (runQuery skips saveDatabase while a transaction is open). Unwind an
+// abandoned transaction rather than leaving the app in that state.
+const TRANSACTION_TIMEOUT_MS = 60000
+
+function getDbPath() {
+  return path.join(app.getPath('userData'), 'sng_farm.db')
+}
+
+function isInTransaction() {
+  return inTransaction
+}
+
+function startTransactionWatchdog() {
+  clearTransactionWatchdog()
+  transactionWatchdog = setTimeout(() => {
+    transactionWatchdog = null
+    if (!inTransaction) return
+    console.error(`⚠️ A database transaction has been open for more than ${TRANSACTION_TIMEOUT_MS}ms — rolling it back so writes can reach disk again.`)
+    rollbackTransaction()
+  }, TRANSACTION_TIMEOUT_MS)
+  if (typeof transactionWatchdog.unref === 'function') transactionWatchdog.unref()
+}
+
+function clearTransactionWatchdog() {
+  if (transactionWatchdog) {
+    clearTimeout(transactionWatchdog)
+    transactionWatchdog = null
+  }
+}
+
+function beginTransaction() {
+  if (inTransaction) {
+    return { success: false, error: 'A database transaction is already open' }
+  }
+  try {
+    db.run('BEGIN TRANSACTION')
+    inTransaction = true
+    startTransactionWatchdog()
+    return { success: true }
+  } catch (err) {
+    return { success: false, error: err.message }
+  }
+}
+
+function commitTransaction() {
+  if (!inTransaction) {
+    return { success: false, error: 'No database transaction is open' }
+  }
+
+  try {
+    db.run('COMMIT')
+  } catch (err) {
+    // The commit itself failed — don't leave the transaction half-open.
+    inTransaction = false
+    clearTransactionWatchdog()
+    try {
+      db.run('ROLLBACK')
+    } catch (rollbackErr) {
+      console.error('Rollback after a failed commit also failed:', rollbackErr.message)
+    }
+    return { success: false, error: err.message }
+  }
+
+  inTransaction = false
+  clearTransactionWatchdog()
+  // The one and only disk write for everything the transaction contained.
+  saveDatabase(getDbPath())
+  return { success: true }
+}
+
+function rollbackTransaction() {
+  if (!inTransaction) {
+    // Safe to call from a finally block that doesn't know whether the
+    // transaction is still open.
+    return { success: true, rolledBack: false }
+  }
+
+  inTransaction = false
+  clearTransactionWatchdog()
+  try {
+    db.run('ROLLBACK')
+    return { success: true, rolledBack: true }
+  } catch (err) {
+    console.error('Rollback failed:', err.message)
+    return { success: false, error: err.message }
+  }
+}
+
+// Resolves { $lastId: n } placeholders against the ids of earlier operations in
+// the same batch. n >= 0 is an absolute operation index; n < 0 is relative to
+// the current one (-1 being the operation immediately before it).
+function resolveBatchParams(params, results, opIndex) {
+  if (!Array.isArray(params)) return []
+
+  return params.map((param) => {
+    if (!param || typeof param !== 'object' || !('$lastId' in param)) return param
+
+    const requested = param.$lastId
+    if (typeof requested !== 'number') {
+      throw new Error(`Statement ${opIndex + 1} has a $lastId reference that is not a number`)
+    }
+
+    const ref = requested < 0 ? opIndex + requested : requested
+    if (ref < 0 || ref >= results.length) {
+      throw new Error(`Statement ${opIndex + 1} references the id of statement ${ref + 1}, which has not run`)
+    }
+
+    const id = results[ref].lastId
+    if (id === null || id === undefined) {
+      throw new Error(`Statement ${opIndex + 1} needs the inserted id of statement ${ref + 1}, but no id came back`)
+    }
+    return id
+  })
+}
+
+// Runs an ordered list of { sql, params } atomically: either all of them commit
+// or none of them do, and the database file is written once — not once per
+// statement the way runQuery does it.
+function runBatch(ops) {
+  if (!Array.isArray(ops) || ops.length === 0) {
+    return { success: false, error: 'runBatch expects a non-empty array of { sql, params } operations' }
+  }
+
+  // A batch issued while a transaction is already open becomes a savepoint, so
+  // it can unwind on its own without discarding the outer transaction. SQLite
+  // rejects a nested BEGIN outright.
+  const nested = inTransaction
+  const savepoint = `batch_sp_${++savepointCounter}`
+
+  try {
+    db.run(nested ? `SAVEPOINT ${savepoint}` : 'BEGIN TRANSACTION')
+  } catch (err) {
+    return { success: false, error: err.message }
+  }
+  if (!nested) {
+    inTransaction = true
+    startTransactionWatchdog()
+  }
+
+  const unwind = () => {
+    try {
+      db.run(nested ? `ROLLBACK TO ${savepoint}` : 'ROLLBACK')
+      if (nested) db.run(`RELEASE ${savepoint}`)
+    } catch (err) {
+      console.error('Rolling back a failed batch failed:', err.message)
+    }
+    if (!nested) {
+      inTransaction = false
+      clearTransactionWatchdog()
+    }
+  }
+
+  const results = []
+  let failure = null
+
+  for (let i = 0; i < ops.length; i++) {
+    const op = ops[i] || {}
+    try {
+      if (!op.sql || typeof op.sql !== 'string') {
+        throw new Error('Statement is missing its SQL')
+      }
+      results.push(executeStatement(op.sql, resolveBatchParams(op.params, results, i)))
+    } catch (err) {
+      failure = { index: i, sql: op.sql || '', error: err.message }
+      break
+    }
+  }
+
+  if (failure) {
+    unwind()
+    console.error(`Batch failed at statement ${failure.index + 1}/${ops.length}: ${failure.error}\n  SQL: ${failure.sql}`)
+    return {
+      success: false,
+      error: `${failure.error} (statement ${failure.index + 1} of ${ops.length})`,
+      failedIndex: failure.index,
+      failedSql: failure.sql
+    }
+  }
+
+  try {
+    db.run(nested ? `RELEASE ${savepoint}` : 'COMMIT')
+  } catch (err) {
+    unwind()
+    return { success: false, error: err.message }
+  }
+
+  if (!nested) {
+    inTransaction = false
+    clearTransactionWatchdog()
+    saveDatabase(getDbPath())
+  }
+
+  return {
+    success: true,
+    results: results,
+    lastId: results.length > 0 ? results[results.length - 1].lastId : null
   }
 }
 
@@ -2205,8 +2444,13 @@ module.exports = {
   getAppSetting,
 setAppSetting,
   initializeDatabase, 
-  runQuery, 
+  runQuery,
   getQuery,
+  runBatch,
+  beginTransaction,
+  commitTransaction,
+  rollbackTransaction,
+  isInTransaction,
   getBatchesByProduct,
   addBatch,
   updateBatch,

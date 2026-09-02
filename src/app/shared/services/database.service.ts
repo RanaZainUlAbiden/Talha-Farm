@@ -1,10 +1,25 @@
 import { Injectable, NgZone } from '@angular/core';
 
+/**
+ * One statement in a batch. A params entry of `{ $lastId: n }` is replaced, in
+ * the main process, with the id inserted by operation `n` of the same batch —
+ * `n < 0` counts back from the current operation, so `{ $lastId: -1 }` means
+ * "the row the previous statement just inserted".
+ */
+export interface DbBatchOp {
+  sql: string;
+  params?: any[];
+}
+
 declare global {
   interface Window {
     electronAPI: {
       dbRun: (sql: string, params?: any[]) => Promise<any>;
       dbGet: (sql: string, params?: any[]) => Promise<any>;
+      dbRunBatch: (ops: DbBatchOp[]) => Promise<any>;
+      dbBeginTransaction: () => Promise<any>;
+      dbCommitTransaction: () => Promise<any>;
+      dbRollbackTransaction: () => Promise<any>;
       getMachineId: () => Promise<string>;
       backupDatabase: () => Promise<any>;
       restoreDatabase: () => Promise<any>;
@@ -53,6 +68,85 @@ export class DatabaseService {
         .then((res: any) => this.zone.run(() => resolve(res)))
         .catch((err: any) => this.zone.run(() => reject(err)));
     });
+  }
+
+  /**
+   * Runs an ordered list of statements atomically: either all of them commit or
+   * none of them do, and the database file is written once instead of once per
+   * statement. Use it for a run of writes with no reads in between; where a
+   * later statement needs an id an earlier one inserted, reference it with
+   * `{ $lastId: n }` rather than making a round trip for it.
+   */
+  runBatch(ops: DbBatchOp[]): Promise<any> {
+    return new Promise((resolve, reject) => {
+      window.electronAPI.dbRunBatch(ops)
+        .then((res: any) => this.zone.run(() => resolve(res)))
+        .catch((err: any) => this.zone.run(() => reject(err)));
+    });
+  }
+
+  beginTransaction(): Promise<any> {
+    return new Promise((resolve, reject) => {
+      window.electronAPI.dbBeginTransaction()
+        .then((res: any) => this.zone.run(() => resolve(res)))
+        .catch((err: any) => this.zone.run(() => reject(err)));
+    });
+  }
+
+  commitTransaction(): Promise<any> {
+    return new Promise((resolve, reject) => {
+      window.electronAPI.dbCommitTransaction()
+        .then((res: any) => this.zone.run(() => resolve(res)))
+        .catch((err: any) => this.zone.run(() => reject(err)));
+    });
+  }
+
+  rollbackTransaction(): Promise<any> {
+    return new Promise((resolve, reject) => {
+      window.electronAPI.dbRollbackTransaction()
+        .then((res: any) => this.zone.run(() => resolve(res)))
+        .catch((err: any) => this.zone.run(() => reject(err)));
+    });
+  }
+
+  /**
+   * Runs `work` inside one database transaction. Everything it writes commits
+   * together, and the database file is written once, on commit; if `work`
+   * throws, the whole thing is rolled back and the error is re-thrown for the
+   * caller to report.
+   *
+   * Reads issued inside `work` see the transaction's own uncommitted writes,
+   * so a step that has to read back what an earlier step wrote still works.
+   *
+   * Note that run()/get() report failures as `{ success: false }` instead of
+   * throwing — check those results and throw, or a failed write will pass
+   * unnoticed and the transaction will commit around it.
+   */
+  async transaction<T>(work: () => Promise<T>): Promise<T> {
+    const started = await this.beginTransaction();
+    if (!started || !started.success) {
+      throw new Error(started?.error || 'Could not start a database transaction');
+    }
+
+    let result: T;
+    try {
+      result = await work();
+    } catch (err) {
+      const rolledBack = await this.rollbackTransaction();
+      if (!rolledBack || !rolledBack.success) {
+        console.error('Rollback failed after a transaction error:', rolledBack?.error);
+      }
+      throw err;
+    }
+
+    // commitTransaction() rolls back by itself if the COMMIT fails, so nothing
+    // is left half-applied here either.
+    const committed = await this.commitTransaction();
+    if (!committed || !committed.success) {
+      throw new Error(committed?.error || 'Could not commit the database transaction');
+    }
+
+    return result;
   }
 
   getMachineId(): Promise<string> {

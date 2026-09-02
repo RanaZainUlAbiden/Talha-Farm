@@ -5,6 +5,15 @@ contextBridge.exposeInMainWorld('electronAPI', {
   dbRun: (sql, params) => ipcRenderer.invoke('db-run', sql, params),
   dbGet: (sql, params) => ipcRenderer.invoke('db-get', sql, params),
 
+  // Atomic multi-statement write: one BEGIN/COMMIT, one write to disk
+  dbRunBatch: (ops) => ipcRenderer.invoke('db-run-batch', ops),
+
+  // Transaction spanning several calls — always pair a begin with a commit or
+  // a rollback, or the writes never reach disk
+  dbBeginTransaction: () => ipcRenderer.invoke('db-begin-transaction'),
+  dbCommitTransaction: () => ipcRenderer.invoke('db-commit-transaction'),
+  dbRollbackTransaction: () => ipcRenderer.invoke('db-rollback-transaction'),
+
   // System information
   getMachineId: () => ipcRenderer.invoke('get-machine-id'),
 

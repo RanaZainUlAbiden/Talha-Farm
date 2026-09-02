@@ -3,7 +3,7 @@ const path = require('path')
 const fs = require('fs')
 const { machineIdSync } = require('node-machine-id')
 const { autoUpdater } = require('electron-updater')
-const { initializeDatabase, runQuery, getQuery } = require('./database')
+const { initializeDatabase, runQuery, getQuery, runBatch, beginTransaction, commitTransaction, rollbackTransaction } = require('./database')
 const fsPromises = require('fs').promises
 const os = require('os')
 
@@ -137,6 +137,30 @@ app.on('gpu-process-crashed', (event, killed) => {
 
 ipcMain.handle('db-run', async (event, sql, params) => {
   return runQuery(sql, params)
+})
+
+// Runs an ordered list of { sql, params } as one unit: all of it commits or
+// none of it does, and the database file is written once instead of once per
+// statement. A params entry of { $lastId: n } is replaced with the id inserted
+// by operation n of the same batch (n < 0 counts back from the current one),
+// so chained inserts never need a round trip to the renderer.
+ipcMain.handle('db-run-batch', async (event, ops) => {
+  return runBatch(ops)
+})
+
+// Transaction spanning several IPC calls, for saves whose next statement
+// depends on reading back what the previous ones wrote. The caller MUST commit
+// or roll back; anything left open is rolled back automatically after a minute.
+ipcMain.handle('db-begin-transaction', async () => {
+  return beginTransaction()
+})
+
+ipcMain.handle('db-commit-transaction', async () => {
+  return commitTransaction()
+})
+
+ipcMain.handle('db-rollback-transaction', async () => {
+  return rollbackTransaction()
 })
 
 ipcMain.handle('get-auto-backup-path', async () => {
