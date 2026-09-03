@@ -52,11 +52,20 @@ export class FlockService {
     return this.currentFlockSubject.value;
   }
 
-  async loadFlocks(farmId: number, unitId?: number): Promise<any[]> {
-    const sql = unitId
-      ? `SELECT * FROM flocks WHERE farm_id = ? AND unit_id = ? ORDER BY flock_id ASC`
-      : `SELECT * FROM flocks WHERE farm_id = ? ORDER BY flock_id ASC`;
-    const params = unitId ? [farmId, unitId] : [farmId];
+  // activeOnly is for the sidebar selector only — Flock Management still needs
+  // the full list (incl. closed) so the user can see and reopen them, so it
+  // queries the DB directly instead of going through this shared method.
+  async loadFlocks(farmId: number, unitId?: number, activeOnly: boolean = false): Promise<any[]> {
+    const conditions = ['farm_id = ?'];
+    const params: any[] = [farmId];
+    if (unitId) {
+      conditions.push('unit_id = ?');
+      params.push(unitId);
+    }
+    if (activeOnly) {
+      conditions.push(`status = 'active'`);
+    }
+    const sql = `SELECT * FROM flocks WHERE ${conditions.join(' AND ')} ORDER BY flock_id ASC`;
     const result = await this.db.get(sql, params);
     const flocks = result.success ? result.data : [];
     this.flocksSubject.next(flocks);

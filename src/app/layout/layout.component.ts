@@ -406,7 +406,7 @@ export class LayoutComponent implements OnInit, OnDestroy {
     // No units yet for this account/module — behave exactly as before the
     // farm-selector existed rather than filtering to an empty list.
     const unitId = this.units.length > 0 ? this.currentUnit?.unit_id : undefined;
-    const flocks = await this.flockService.loadFlocks(this.currentFarm.farm_id, unitId);
+    const flocks = await this.flockService.loadFlocks(this.currentFarm.farm_id, unitId, true);
     const current = this.flockService.getCurrentFlock();
     const currentIsFlock = current && !current.batch_id && flocks.some((flock: any) => flock.flock_id === current.flock_id);
 

@@ -307,6 +307,12 @@ db.run(`CREATE TABLE IF NOT EXISTS categories (category_id INTEGER PRIMARY KEY A
     asset_name      TEXT NOT NULL,
     category        TEXT,
     purchase_date   DATE NOT NULL,
+    -- The full agreed price. Canonical since assets became payable in
+    -- installments; purchase_amount is kept in step with it for older readers.
+    total_price     REAL,
+    -- Legacy mirror of total_price. Predates installments, when an asset was
+    -- bought outright and this was both price and payment. Every write path
+    -- still sets it, so anything reading it gets the right number.
     purchase_amount REAL NOT NULL DEFAULT 0,
     payment_source  TEXT DEFAULT 'cash',
     bank_id         INTEGER,
@@ -324,7 +330,11 @@ db.run(`CREATE TABLE IF NOT EXISTS categories (category_id INTEGER PRIMARY KEY A
     pexpense_id     INTEGER PRIMARY KEY AUTOINCREMENT,
     farm_id         INTEGER NOT NULL,
     date            DATE NOT NULL,
+    -- The category's name, kept populated alongside category_id on every write.
+    -- It is the fallback the UI matches on when a row's link is missing, so an
+    -- entry can never fall out of the category grid entirely.
     category        TEXT,
+    category_id     INTEGER,
     description     TEXT,
     amount          REAL NOT NULL DEFAULT 0,
     payment_source  TEXT DEFAULT 'cash',
@@ -332,20 +342,63 @@ db.run(`CREATE TABLE IF NOT EXISTS categories (category_id INTEGER PRIMARY KEY A
     notes           TEXT,
     created_at      DATETIME DEFAULT CURRENT_TIMESTAMP,
     FOREIGN KEY (farm_id) REFERENCES farms(farm_id),
+    FOREIGN KEY (bank_id) REFERENCES bank_accounts(bank_id),
+    FOREIGN KEY (category_id) REFERENCES expense_categories(category_id)
+  );`)
+
+  // Installment payments against an asset. An asset's agreed price lives on
+  // assets.total_price; what has actually been handed over is the sum of these
+  // rows. Foreign keys are declared but NOT enforced (no PRAGMA foreign_keys),
+  // so deleting an asset must delete its payments explicitly — see
+  // assets.component.ts, which does both in one runBatch.
+  db.run(`CREATE TABLE IF NOT EXISTS asset_payments (
+    payment_id      INTEGER PRIMARY KEY AUTOINCREMENT,
+    asset_id        INTEGER NOT NULL,
+    farm_id         INTEGER NOT NULL,
+    date            DATE NOT NULL,
+    amount          REAL NOT NULL DEFAULT 0,
+    payment_source  TEXT DEFAULT 'cash',
+    bank_id         INTEGER,
+    notes           TEXT,
+    created_at      DATETIME DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (asset_id) REFERENCES assets(asset_id),
+    FOREIGN KEY (farm_id) REFERENCES farms(farm_id),
     FOREIGN KEY (bank_id) REFERENCES bank_accounts(bank_id)
+  );`)
+
+  // User-defined personal expense categories, replacing the hardcoded
+  // Household/Medical/Education/Travel/Other list. personal_expenses keeps its
+  // `category` TEXT column populated alongside category_id — see
+  // backfillExpenseCategories() for why that redundancy is load-bearing.
+  db.run(`CREATE TABLE IF NOT EXISTS expense_categories (
+    category_id     INTEGER PRIMARY KEY AUTOINCREMENT,
+    farm_id         INTEGER NOT NULL,
+    category_name   TEXT NOT NULL,
+    created_at      DATETIME DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (farm_id) REFERENCES farms(farm_id)
   );`)
 
   db.run(`CREATE INDEX IF NOT EXISTS idx_assets_farm ON assets(farm_id);`)
   db.run(`CREATE INDEX IF NOT EXISTS idx_assets_status ON assets(status);`)
   db.run(`CREATE INDEX IF NOT EXISTS idx_personal_expenses_farm ON personal_expenses(farm_id);`)
   db.run(`CREATE INDEX IF NOT EXISTS idx_personal_expenses_date ON personal_expenses(date);`)
+  db.run(`CREATE INDEX IF NOT EXISTS idx_asset_payments_asset ON asset_payments(asset_id);`)
+  db.run(`CREATE INDEX IF NOT EXISTS idx_asset_payments_farm ON asset_payments(farm_id);`)
+  db.run(`CREATE INDEX IF NOT EXISTS idx_asset_payments_date ON asset_payments(date);`)
+  db.run(`CREATE INDEX IF NOT EXISTS idx_expense_categories_farm ON expense_categories(farm_id);`)
+  // Two categories with the same name on one account would split that account's
+  // card grid in two, so uniqueness is enforced here rather than only in the UI.
+  // NOCASE because "Travel" and "travel" are the same account to the client.
+  db.run(`CREATE UNIQUE INDEX IF NOT EXISTS idx_expense_categories_unique
+          ON expense_categories(farm_id, category_name COLLATE NOCASE);`)
+  db.run(`CREATE INDEX IF NOT EXISTS idx_personal_expenses_category ON personal_expenses(category_id);`)
 }
 
 // =============================================
 // ATTEMPT TO RECOVER DATA FROM CORRUPTED DB
 // =============================================
 function attemptRecovery(dbPath, oldDb, SQL) {
-  const tables = ['farms', 'farm_units', 'flocks', 'ledgers', 'expenses', 'ledger_entries', 'medicine_traders', 'medicine_entries', 'feed_traders', 'feed_entries', 'sales', 'income', 'flock_health', 'balance', 'brokers', 'activation', 'batches', 'egg_collection', 'egg_sales', 'vaccinations', 'layer_mortality', 'products', 'customers', 'suppliers', 'purchase_orders', 'sales_orders', 'customer_payments', 'product_batches', 'batch_transactions', 'customer_ledger', 'supplier_ledger', 'bank_accounts', 'bank_ledger', 'expense_ledger', 'categories', 'sales_returns', 'sales_return_items', 'internal_transfers','purchase_returns','labour', 'labour_payments', 'hen_sales', 'assets', 'personal_expenses']
+  const tables = ['farms', 'farm_units', 'flocks', 'ledgers', 'expenses', 'ledger_entries', 'medicine_traders', 'medicine_entries', 'feed_traders', 'feed_entries', 'sales', 'income', 'flock_health', 'balance', 'brokers', 'activation', 'batches', 'egg_collection', 'egg_sales', 'vaccinations', 'layer_mortality', 'products', 'customers', 'suppliers', 'purchase_orders', 'sales_orders', 'customer_payments', 'product_batches', 'batch_transactions', 'customer_ledger', 'supplier_ledger', 'bank_accounts', 'bank_ledger', 'expense_ledger', 'categories', 'sales_returns', 'sales_return_items', 'internal_transfers','purchase_returns','labour', 'labour_payments', 'hen_sales', 'assets', 'personal_expenses', 'asset_payments', 'expense_categories']
   
   const newDb = new SQL.Database()
   createTables(newDb)
@@ -591,6 +644,175 @@ function backfillFarmUnits(db) {
   console.log(`farm_units backfill complete — ${unitsCreated} unit(s) touched across ${farms.length} account(s)`)
 }
 
+// =============================================
+// ONE-TIME BACKFILL: assets bought on installments
+// =============================================
+// Assets used to be bought outright: one `purchase_amount`, paid in full on
+// `purchase_date`. They are now payable over time, so the agreed price lives on
+// `assets.total_price` and what has actually been handed over is the sum of the
+// asset's `asset_payments` rows.
+//
+// The trap this migration exists to avoid: without it, every asset already in
+// the database would have total_price NULL and no payment rows, so the new
+// screens would report the client's fully-paid assets as 100% outstanding. So an
+// existing purchase_amount is read as BOTH the agreed price AND a single payment
+// already made, which is exactly what it meant before.
+//
+// Same convergent shape as backfillFarmUnits: guarded by an app_settings flag,
+// every statement individually re-runnable, and the flag written last so any
+// throw leaves it unset and the next launch picks up where this one stopped.
+// Note that step 2 is guarded by NOT EXISTS rather than by the flag alone --
+// that is what stops a retry from seeding a second payment for the same asset.
+function backfillAssetInstallments(db) {
+  const MIGRATION_KEY = 'migration_asset_installments_v1'
+  // app_settings is keyed (farm_id, key); farms.farm_id is AUTOINCREMENT and
+  // never yields 0, so 0 is the app-wide scope used for migration flags.
+  const SETTINGS_SCOPE_APP = 0
+
+  const selectRows = (sql, params = []) => {
+    const stmt = db.prepare(sql)
+    stmt.bind(params)
+    const rows = []
+    while (stmt.step()) rows.push(stmt.getAsObject())
+    stmt.free()
+    return rows
+  }
+
+  const alreadyApplied = selectRows(
+    `SELECT value FROM app_settings WHERE farm_id = ? AND key = ?`,
+    [SETTINGS_SCOPE_APP, MIGRATION_KEY]
+  )
+  if (alreadyApplied.length > 0) return
+
+  // 1. The price that was paid becomes the price that was agreed. Only touches
+  //    rows the migration has not already set, so it is safe to re-run.
+  db.run(`UPDATE assets
+          SET total_price = COALESCE(purchase_amount, 0)
+          WHERE total_price IS NULL`)
+
+  const pending = selectRows(
+    `SELECT COUNT(*) AS count FROM assets a
+     WHERE COALESCE(a.purchase_amount, 0) > 0
+       AND NOT EXISTS (SELECT 1 FROM asset_payments p WHERE p.asset_id = a.asset_id)`
+  )[0].count
+
+  // 2. ...and the money that changed hands becomes a payment record, dated and
+  //    sourced exactly as the original purchase was, so the Overview's cash
+  //    figures come out unchanged. Assets recorded with a zero price get no
+  //    payment row -- there was no money to record.
+  if (pending > 0) {
+    db.run(`INSERT INTO asset_payments (asset_id, farm_id, date, amount, payment_source, bank_id, notes)
+            SELECT a.asset_id, a.farm_id, a.purchase_date, a.purchase_amount,
+                   COALESCE(a.payment_source, 'cash'), a.bank_id,
+                   'Opening payment carried over from the original purchase record'
+            FROM assets a
+            WHERE COALESCE(a.purchase_amount, 0) > 0
+              AND NOT EXISTS (SELECT 1 FROM asset_payments p WHERE p.asset_id = a.asset_id)`)
+  }
+
+  db.run(
+    `INSERT INTO app_settings (farm_id, key, value) VALUES (?, ?, ?)
+     ON CONFLICT(farm_id, key) DO UPDATE SET value = excluded.value`,
+    [SETTINGS_SCOPE_APP, MIGRATION_KEY, '1']
+  )
+
+  console.log(`asset installments backfill complete -- ${pending} asset(s) given an opening payment`)
+}
+
+// =============================================
+// ONE-TIME BACKFILL: user-defined personal expense categories
+// =============================================
+// Personal expense categories were a hardcoded list in the component
+// (Household/Medical/Education/Travel/Other) written into personal_expenses as
+// free text. They are now rows in expense_categories that the client creates,
+// renames and deletes, and each one is an account you click into.
+//
+// Ordering here is the same lesson farm_units taught: create the category rows
+// FIRST, then point the expense rows at them. Crashing between the two leaves a
+// category with no entries -- harmless, and the re-run adopts it via INSERT OR
+// IGNORE instead of duplicating it. The reverse order would leave category_id
+// values referencing categories that do not exist, and with foreign keys off
+// there would be nothing left to say what the intent had been.
+//
+// personal_expenses.category is NOT cleared, here or anywhere else. Every write
+// path keeps it in step with category_id, and the UI matches entries on
+// `category_id = ? OR (category_id IS NULL AND category = ?)`. So if a link is
+// ever missing, the entry still shows up under its named category and still
+// counts against that category's total rather than silently disappearing from a
+// grid that only knows about ids.
+function backfillExpenseCategories(db) {
+  const MIGRATION_KEY = 'migration_expense_categories_v1'
+  const SETTINGS_SCOPE_APP = 0
+  // Entries saved with no category at all still need a card to live under.
+  const FALLBACK_CATEGORY = 'Uncategorised'
+
+  const selectRows = (sql, params = []) => {
+    const stmt = db.prepare(sql)
+    stmt.bind(params)
+    const rows = []
+    while (stmt.step()) rows.push(stmt.getAsObject())
+    stmt.free()
+    return rows
+  }
+
+  const alreadyApplied = selectRows(
+    `SELECT value FROM app_settings WHERE farm_id = ? AND key = ?`,
+    [SETTINGS_SCOPE_APP, MIGRATION_KEY]
+  )
+  if (alreadyApplied.length > 0) return
+
+  // 1. One category per distinct name per account. OR IGNORE against the
+  //    UNIQUE(farm_id, category_name COLLATE NOCASE) index makes this
+  //    re-runnable and collapses "Travel"/"travel" into one category.
+  db.run(`INSERT OR IGNORE INTO expense_categories (farm_id, category_name)
+          SELECT DISTINCT pe.farm_id, TRIM(pe.category)
+          FROM personal_expenses pe
+          WHERE TRIM(COALESCE(pe.category, '')) <> ''`)
+
+  // 2. A fallback category, but only for accounts that actually have entries
+  //    with no category -- no point giving every account an empty card.
+  db.run(`INSERT OR IGNORE INTO expense_categories (farm_id, category_name)
+          SELECT DISTINCT pe.farm_id, ?
+          FROM personal_expenses pe
+          WHERE TRIM(COALESCE(pe.category, '')) = ''`, [FALLBACK_CATEGORY])
+
+  // 3. Only now, with every category row committed, link the entries. Matched
+  //    per farm_id so one account can never be pointed at another's category.
+  db.run(`UPDATE personal_expenses
+          SET category_id = (
+            SELECT c.category_id FROM expense_categories c
+            WHERE c.farm_id = personal_expenses.farm_id
+              AND c.category_name = TRIM(personal_expenses.category) COLLATE NOCASE
+          )
+          WHERE category_id IS NULL
+            AND TRIM(COALESCE(category, '')) <> ''`)
+
+  // Uncategorised entries get both the link and the text, so they behave like
+  // every other row from here on.
+  db.run(`UPDATE personal_expenses
+          SET category_id = (
+                SELECT c.category_id FROM expense_categories c
+                WHERE c.farm_id = personal_expenses.farm_id
+                  AND c.category_name = ? COLLATE NOCASE
+              ),
+              category = ?
+          WHERE category_id IS NULL
+            AND TRIM(COALESCE(category, '')) = ''`, [FALLBACK_CATEGORY, FALLBACK_CATEGORY])
+
+  const categories = selectRows(`SELECT COUNT(*) AS count FROM expense_categories`)[0].count
+  const unlinked = selectRows(
+    `SELECT COUNT(*) AS count FROM personal_expenses WHERE category_id IS NULL`
+  )[0].count
+
+  db.run(
+    `INSERT INTO app_settings (farm_id, key, value) VALUES (?, ?, ?)
+     ON CONFLICT(farm_id, key) DO UPDATE SET value = excluded.value`,
+    [SETTINGS_SCOPE_APP, MIGRATION_KEY, '1']
+  )
+
+  console.log(`expense categories backfill complete -- ${categories} category row(s), ${unlinked} entry/entries left unlinked`)
+}
+
 // migration_farm_units_v1 above only ever runs once — it fixes every flock/batch
 // that had a NULL unit_id as of the FIRST launch after farm_units shipped, then
 // sets its flag and never runs again. Before flock/batch creation was made to
@@ -786,6 +1008,13 @@ async function initializeDatabase() {
     // when module_type = 'layer', and labour needs that ambiguity resolved first.
     `ALTER TABLE flocks ADD COLUMN unit_id INTEGER`,
     `ALTER TABLE batches ADD COLUMN unit_id INTEGER`,
+    // Assets bought on installments. total_price is the full agreed price;
+    // purchase_amount stays as its mirror (see the assets table definition).
+    // Backfilled from purchase_amount by backfillAssetInstallments() below.
+    `ALTER TABLE assets ADD COLUMN total_price REAL`,
+    // User-defined personal expense categories. The `category` text column is
+    // deliberately left in place and still written — see backfillExpenseCategories().
+    `ALTER TABLE personal_expenses ADD COLUMN category_id INTEGER`,
   ]
   
   for (const sql of alterStatements) {
@@ -895,6 +1124,23 @@ async function initializeDatabase() {
     console.error('orphaned unit_id repair failed, will retry on next launch:', e.message)
   }
 
+  // Must run after alterStatements — it reads assets.total_price, which the
+  // ALTER above adds to a legacy table. Swallowing the error is deliberate and
+  // matches the migrations above: the flag stays unset, so a failure retries on
+  // the next launch instead of blocking startup.
+  try {
+    backfillAssetInstallments(db)
+  } catch (e) {
+    console.error('asset installments backfill failed, will retry on next launch:', e.message)
+  }
+
+  // Must run after alterStatements — it writes personal_expenses.category_id.
+  try {
+    backfillExpenseCategories(db)
+  } catch (e) {
+    console.error('expense categories backfill failed, will retry on next launch:', e.message)
+  }
+
   saveDatabase(dbPath)
 
   if (recovered) {
@@ -975,7 +1221,9 @@ const PRIMARY_KEY_MAP = {
   sales_return_items: 'item_id',
   internal_transfers: 'transfer_id',
   assets: 'asset_id',
-  personal_expenses: 'pexpense_id'
+  personal_expenses: 'pexpense_id',
+  asset_payments: 'payment_id',
+  expense_categories: 'category_id'
 };
 
 // Executes a single statement and returns its lastId (INSERTs only). Throws on
@@ -2312,14 +2560,18 @@ function getAssets(farmId, status = null) {
 }
 
 function addAsset(asset) {
-  const { farm_id, unit_id, asset_name, category, purchase_date, purchase_amount, payment_source, bank_id, notes } = asset
+  const { farm_id, unit_id, asset_name, category, purchase_date, total_price, purchase_amount, payment_source, bank_id, notes } = asset
   if (!farm_id || !asset_name || !purchase_date) {
     return { success: false, error: 'farm_id, asset_name and purchase_date are required' }
   }
+  // total_price is the agreed price; purchase_amount is its legacy mirror and is
+  // always written with the same value. Accepting either name keeps older
+  // callers working. What has actually been PAID lives in asset_payments.
+  const price = total_price !== undefined && total_price !== null ? total_price : (purchase_amount || 0)
   return runQuery(
-    `INSERT INTO assets (farm_id, unit_id, asset_name, category, purchase_date, purchase_amount, payment_source, bank_id, notes)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-    [farm_id, unit_id || null, asset_name, category || null, purchase_date, purchase_amount || 0, payment_source || 'cash', bank_id || null, notes || null]
+    `INSERT INTO assets (farm_id, unit_id, asset_name, category, purchase_date, total_price, purchase_amount, payment_source, bank_id, notes)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    [farm_id, unit_id || null, asset_name, category || null, purchase_date, price, price, payment_source || 'cash', bank_id || null, notes || null]
   )
 }
 
@@ -2331,7 +2583,15 @@ function updateAsset(assetId, data) {
   if (data.asset_name !== undefined) { fields.push('asset_name = ?'); values.push(data.asset_name) }
   if (data.category !== undefined) { fields.push('category = ?'); values.push(data.category) }
   if (data.purchase_date !== undefined) { fields.push('purchase_date = ?'); values.push(data.purchase_date) }
-  if (data.purchase_amount !== undefined) { fields.push('purchase_amount = ?'); values.push(data.purchase_amount) }
+  // Either price field updates BOTH columns — they are one value stored twice,
+  // and letting a caller set one alone is how they would drift apart.
+  const newPrice = data.total_price !== undefined ? data.total_price
+                 : data.purchase_amount !== undefined ? data.purchase_amount
+                 : undefined
+  if (newPrice !== undefined) {
+    fields.push('total_price = ?'); values.push(newPrice)
+    fields.push('purchase_amount = ?'); values.push(newPrice)
+  }
   if (data.payment_source !== undefined) { fields.push('payment_source = ?'); values.push(data.payment_source) }
   if (data.bank_id !== undefined) { fields.push('bank_id = ?'); values.push(data.bank_id) }
   if (data.notes !== undefined) { fields.push('notes = ?'); values.push(data.notes) }
@@ -2358,8 +2618,40 @@ function sellAsset(assetId, saleDate, saleAmount) {
   )
 }
 
+// Foreign keys are declared but never enforced (no PRAGMA foreign_keys), so
+// nothing cascades — the payments have to be deleted by hand or they are left
+// orphaned, still counting toward the account's outstanding installments.
+// runBatch so the asset and its payments go together or not at all.
 function deleteAsset(assetId) {
-  return runQuery(`DELETE FROM assets WHERE asset_id = ?`, [assetId])
+  return runBatch([
+    { sql: `DELETE FROM asset_payments WHERE asset_id = ?`, params: [assetId] },
+    { sql: `DELETE FROM assets WHERE asset_id = ?`, params: [assetId] }
+  ])
+}
+
+// ── OVERVIEW MODULE: ASSET INSTALLMENT PAYMENTS ──────────
+
+function getAssetPayments(assetId) {
+  return getQuery(
+    `SELECT * FROM asset_payments WHERE asset_id = ? ORDER BY date DESC, payment_id DESC`,
+    [assetId]
+  )
+}
+
+function addAssetPayment(payment) {
+  const { asset_id, farm_id, date, amount, payment_source, bank_id, notes } = payment
+  if (!asset_id || !farm_id || !date) {
+    return { success: false, error: 'asset_id, farm_id and date are required' }
+  }
+  return runQuery(
+    `INSERT INTO asset_payments (asset_id, farm_id, date, amount, payment_source, bank_id, notes)
+     VALUES (?, ?, ?, ?, ?, ?, ?)`,
+    [asset_id, farm_id, date, amount || 0, payment_source || 'cash', bank_id || null, notes || null]
+  )
+}
+
+function deleteAssetPayment(paymentId) {
+  return runQuery(`DELETE FROM asset_payments WHERE payment_id = ?`, [paymentId])
 }
 
 // ── OVERVIEW MODULE: PERSONAL EXPENSES ───────────────────
@@ -2504,6 +2796,9 @@ deleteCategory,
   updateAsset,
   sellAsset,
   deleteAsset,
+  getAssetPayments,
+  addAssetPayment,
+  deleteAssetPayment,
   // Overview: personal expense functions
   getPersonalExpenses,
   addPersonalExpense,

@@ -56,11 +56,27 @@ export class LabourManagementComponent implements OnInit, OnDestroy {
 
   async ngOnInit() {
     this.currentFarm = this.authService.getCurrentFarm();
-    // Load units first — the currentUnit$ subscription below fires
-    // synchronously (BehaviorSubject) and its filtering depends on
-    // this.units already being populated.
-    await this.loadUnits();
-    await this.loadData();
+    if (!this.currentFarm) {
+      this.isLoading = false;
+      this.errorMessage = 'No farm selected — please log in again.';
+      this.cdr.detectChanges();
+      return;
+    }
+    try {
+      // Load units first — the currentUnit$ subscription below fires
+      // synchronously (BehaviorSubject) and its filtering depends on
+      // this.units already being populated.
+      await this.loadUnits();
+      await this.loadData();
+    } catch (error: any) {
+      // loadData() already guards isLoading with its own finally; this only
+      // catches a failure in loadUnits(), which has none — without it,
+      // isLoading would stay true forever and the Add button would stay
+      // disabled with no visible reason.
+      this.isLoading = false;
+      this.errorMessage = 'Error loading labour: ' + error.message;
+      this.cdr.detectChanges();
+    }
 
     this.subs.add(
       this.farmUnitService.currentUnit$.subscribe(unit => {
@@ -140,16 +156,19 @@ export class LabourManagementComponent implements OnInit, OnDestroy {
     if (!this.form.labour_name.trim()) return;
     this.errorMessage = '';
     try {
-      if (this.editingId) {
-        await this.db.run(
-          `UPDATE labour SET labour_name=?, phone=?, role=? WHERE labour_id=?`,
-          [this.form.labour_name.trim(), this.form.phone, this.form.role, this.editingId]
-        );
-      } else {
-        await this.db.run(
-          `INSERT INTO labour (farm_id, labour_name, phone, role) VALUES (?,?,?,?)`,
-          [this.currentFarm.farm_id, this.form.labour_name.trim(), this.form.phone, this.form.role]
-        );
+      const result = this.editingId
+        ? await this.db.run(
+            `UPDATE labour SET labour_name=?, phone=?, role=? WHERE labour_id=?`,
+            [this.form.labour_name.trim(), this.form.phone, this.form.role, this.editingId]
+          )
+        : await this.db.run(
+            `INSERT INTO labour (farm_id, labour_name, phone, role) VALUES (?,?,?,?)`,
+            [this.currentFarm.farm_id, this.form.labour_name.trim(), this.form.phone, this.form.role]
+          );
+      if (!result.success) {
+        this.errorMessage = 'Error saving: ' + result.error;
+        this.cdr.detectChanges();
+        return;
       }
       this.showForm = false;
       this.editingId = null;
@@ -169,7 +188,13 @@ export class LabourManagementComponent implements OnInit, OnDestroy {
       // Payments already recorded for this labourer are kept for history —
       // only the roster entry is removed, matching how other Distribution
       // deletes in this app behave.
-      await this.db.run(`DELETE FROM labour WHERE labour_id=?`, [this.deletingId]);
+      const result = await this.db.run(`DELETE FROM labour WHERE labour_id=?`, [this.deletingId]);
+      if (!result.success) {
+        this.errorMessage = 'Error deleting: ' + result.error;
+        this.showDeleteDialog = false;
+        this.cdr.detectChanges();
+        return;
+      }
       this.showDeleteDialog = false;
       this.deletingId = null;
       await this.loadData();

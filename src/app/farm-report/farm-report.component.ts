@@ -572,11 +572,26 @@ export class FarmReportComponent implements OnInit, OnDestroy {
         drawFooter(i, totalRef);
       }
 
-      doc.save(`${farmName}-${unitName}-Farm-Report.pdf`);
+      await this.printPdf(doc, `${farmName}-${unitName}-Farm-Report.pdf`);
 
     } finally {
       this.isGenerating = false;
       this.cdr.detectChanges();
+    }
+  }
+
+  private async printPdf(doc: jsPDF, filename: string) {
+    try {
+      const dataUri = doc.output('datauristring');
+      const base64 = dataUri.split(',')[1];
+      const result = await (window as any).electronAPI.printPdfBase64(base64);
+      if (!result || !result.success) {
+        console.error('Print failed, falling back to save:', result?.error);
+        doc.save(filename);
+      }
+    } catch (e) {
+      console.error('Print error, falling back to save:', e);
+      doc.save(filename);
     }
   }
 

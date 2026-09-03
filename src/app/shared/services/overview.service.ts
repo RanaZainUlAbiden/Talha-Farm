@@ -33,6 +33,26 @@ import { DatabaseService } from './database.service';
  * `basisLabel` is meant to be rendered verbatim next to the headline number.
  *
  * ─────────────────────────────────────────────────────────────────────────
+ * DISTRIBUTION COST: COST OF GOODS SOLD, NOT PURCHASES
+ * ─────────────────────────────────────────────────────────────────────────
+ * Distribution's cost is the purchase cost of the stock that actually SOLD,
+ * traced through `batch_transactions` -> `product_batches.purchase_price`.
+ * It is not `purchase_orders.total_amount`.
+ *
+ * Charging every purchase against the period treats buying stock as spending
+ * money, when it converts cash into an asset the owner still holds. A shop
+ * that had bought Rs 7.24m of stock and sold Rs 12.5k of it read as a Rs 7.24m
+ * loss, with Rs 7.23m of that sitting on its own shelves. `qDistributionCogs()`
+ * carries the full derivation, including how partly-costed and uncosted sales
+ * are handled; `distribution-report.component.ts` computes the same figure the
+ * same way, so the two screens agree.
+ *
+ * Purchase returns are consequently NOT credited against profit any more:
+ * stock sent back to a supplier never sold, so its cost never entered COGS.
+ * `expenses.purchases` and `expenses.purchaseReturns` are still reported for
+ * reference, but neither is part of `expenses.total`.
+ *
+ * ─────────────────────────────────────────────────────────────────────────
  * INTERNAL TRANSFERS
  * ─────────────────────────────────────────────────────────────────────────
  * When distribution "sells" to a broiler flock or layer batch, the app books
@@ -75,8 +95,19 @@ export interface OverviewExpenses {
   labour: number;
   /** broiler ledger_entries debits, excluding those mirrored from expenses */
   ledgerDebits: number;
-  /** purchase_orders less purchase_returns */
+  /**
+   * Purchase cost of the distribution stock that actually sold in the period.
+   * This is the distribution module's cost of sales and IS part of `total`.
+   */
+  costOfGoodsSold: number;
+  /**
+   * Gross purchase_orders in the period. Reference only — NOT in `total`.
+   * Buying stock is an asset swap, not an expense; `costOfGoodsSold` is the
+   * expense. Shown so the dashboard can reconcile purchases to stock on hand.
+   */
   purchases: number;
+  /** purchase_returns in the period. Reference only — NOT in `total`. */
+  purchaseReturns: number;
   /** expense_ledger — the distribution module's own expense book */
   distributionExpenses: number;
   byModule: { broiler: number; layer: number; distribution: number };
@@ -134,12 +165,28 @@ export interface OverviewInternalTransfers {
   expenseRowCount: number;
 }
 
+/**
+ * Distribution stock still on hand, valued at what it cost to buy. Not part of
+ * profit — it is the asset the purchases turned into, reported so a large
+ * purchase figure can be reconciled against something visible.
+ *
+ * Point-in-time, valued as at now: `product_batches` holds only a live quantity
+ * with no movement history to rewind, so this ignores `range`.
+ */
+export interface OverviewInventory {
+  /** Cost value of unexpired stock with quantity remaining. */
+  value: number;
+  /** Units sitting in batches with no purchase price — valued at a fallback rate. */
+  unpricedUnits: number;
+}
+
 export interface OverviewSummary {
   basis: 'accrual';
   basisLabel: string;
   range: OverviewDateRange;
   revenue: OverviewRevenue;
   expenses: OverviewExpenses;
+  inventory: OverviewInventory;
   businessNetProfit: number;
   personalWithdrawals: number;
   netPosition: number;
@@ -163,7 +210,9 @@ interface UnitRow {
 type ModuleKey = 'broiler' | 'layer' | 'distribution';
 
 const BASIS_LABEL =
-  'Accrual basis — revenue counted when the sale is recorded, not when it is collected. ' +
+  'Accrual basis - revenue counted when the sale is recorded, not when it is collected. ' +
+  'Distribution cost is the purchase cost of the stock that actually sold; stock still ' +
+  'on the shelves is reported as inventory, not charged against profit. ' +
   'Internal farm-to-farm transfers are excluded from both sides.';
 
 const CASH_NOTE =
@@ -202,7 +251,7 @@ export class OverviewService {
       broilerVaccination, layerVaccination,
       broilerLabour, layerLabour,
       broilerLedgerDebits,
-      purchases, purchaseReturns, distributionExpenses,
+      purchases, purchaseReturns, distributionCogs, inventoryOnHand, distributionExpenses,
       internalExpenseSide,
       assetsRealised, assetsActive, assetPurchases,
       personal,
@@ -233,6 +282,8 @@ export class OverviewService {
       this.unitRows(this.qLedgerDebits(farmId, range), warnings),
       this.scalarRow(this.qPurchases(farmId, range), warnings),
       this.scalarRow(this.qPurchaseReturns(farmId, range), warnings),
+      this.scalarRow(this.qDistributionCogs(farmId, range), warnings),
+      this.scalarRow(this.qInventoryOnHand(farmId), warnings),
       this.scalarRow(this.qDistributionExpenses(farmId, range), warnings),
       this.scalarRow(this.qInternalExpenseSide(farmId, range), warnings),
 
@@ -264,9 +315,13 @@ export class OverviewService {
     const vaccination = this.sum(broilerVaccination) + this.sum(layerVaccination);
     const labour = this.sum(broilerLabour) + this.sum(layerLabour);
     const ledgerDebits = this.sum(broilerLedgerDebits);
-    // Purchase returns recover cost from the supplier, so they reduce the
-    // period's purchase cost — same treatment as distribution-report.
-    const netPurchases = this.num(purchases['amount']) - this.num(purchaseReturns['amount']);
+    // Distribution's cost of sales is COGS, not purchases. See qDistributionCogs().
+    // Purchases and purchase returns are reported alongside it for reconciliation
+    // but neither enters the total: money spent on stock that has not sold is an
+    // asset, and stock handed back to a supplier never sold in the first place.
+    const grossPurchases = this.num(purchases['amount']);
+    const purchaseReturnsTotal = this.num(purchaseReturns['amount']);
+    const costOfGoodsSold = this.num(distributionCogs['amount']);
     const distExpenses = this.num(distributionExpenses['amount']);
 
     const broilerExpenseTotal =
@@ -275,7 +330,7 @@ export class OverviewService {
     const layerExpenseTotal =
       this.sum(layerExpenses) + this.sum(layerMedicine) + this.sum(layerFeed) +
       this.sum(layerVaccination) + this.sum(layerLabour);
-    const distributionExpenseTotal = netPurchases + distExpenses;
+    const distributionExpenseTotal = costOfGoodsSold + distExpenses;
 
     const expenses: OverviewExpenses = {
       total: broilerExpenseTotal + layerExpenseTotal + distributionExpenseTotal,
@@ -285,7 +340,9 @@ export class OverviewService {
       vaccination,
       labour,
       ledgerDebits,
-      purchases: netPurchases,
+      costOfGoodsSold,
+      purchases: grossPurchases,
+      purchaseReturns: purchaseReturnsTotal,
       distributionExpenses: distExpenses,
       byModule: {
         broiler: broilerExpenseTotal,
@@ -293,6 +350,27 @@ export class OverviewService {
         distribution: distributionExpenseTotal
       }
     };
+
+    const inventory: OverviewInventory = {
+      value: this.num(inventoryOnHand['amount']),
+      unpricedUnits: this.num(inventoryOnHand['unpriced_qty'])
+    };
+
+    const uncostedUnits = this.num(distributionCogs['uncosted_qty']);
+    if (uncostedUnits > 0) {
+      warnings.push(
+        `${uncostedUnits.toLocaleString()} unit(s) of distribution stock sold in this period are ` +
+        'costed at an estimated rate rather than the price recorded on the batch they came from ' +
+        '(bills predating the batch module, or batches saved without a purchase price). ' +
+        'The Distribution Report breaks this down per product.'
+      );
+    }
+    if (inventory.unpricedUnits > 0) {
+      warnings.push(
+        `${inventory.unpricedUnits.toLocaleString()} unit(s) of stock on hand sit in batches with no ` +
+        'purchase price, so the inventory value shown for them is an estimate.'
+      );
+    }
 
     const businessNetProfit = revenue.total - expenses.total;
     const personalWithdrawals = this.num(personal['amount']);
@@ -368,6 +446,7 @@ export class OverviewService {
       range,
       revenue,
       expenses,
+      inventory,
       businessNetProfit,
       personalWithdrawals,
       netPosition,
@@ -710,7 +789,185 @@ export class OverviewService {
     return [sql, params];
   }
 
+  /**
+   * Fallback purchase rate per product, as a CTE body. Consumes ONE `?` (farm_id).
+   *
+   * `products.cost_price` alone is not dependable: `inventory.component.ts` is
+   * the only writer, so it is whatever was last typed by hand and purchase
+   * orders never refresh it. The chain falls through to the weighted-average
+   * rate across that product's purchase orders, then to its most recent batch
+   * that carries a price. Products that come up empty on all three rate 0, and
+   * whatever they cost is reported as uncosted rather than buried.
+   */
+  private productRateCte(): string {
+    return `SELECT p.product_id AS product_id,
+                   COALESCE(
+                     NULLIF(p.cost_price, 0),
+                     NULLIF((SELECT CASE WHEN COALESCE(SUM(po.quantity), 0) > 0
+                                         THEN SUM(po.total_amount) / SUM(po.quantity)
+                                         ELSE 0 END
+                             FROM purchase_orders po
+                             WHERE po.product_id = p.product_id AND po.farm_id = p.farm_id), 0),
+                     NULLIF((SELECT pb.purchase_price
+                             FROM product_batches pb
+                             WHERE pb.product_id = p.product_id AND pb.farm_id = p.farm_id
+                               AND COALESCE(pb.purchase_price, 0) > 0
+                             ORDER BY pb.batch_id DESC LIMIT 1), 0),
+                     0) AS unit_cost
+            FROM products p
+            WHERE p.farm_id = ?`;
+  }
+
+  /**
+   * COST OF GOODS SOLD for the distribution module — the purchase cost of the
+   * stock that actually left on the period's bills.
+   *
+   * `sales-orders.component.ts` deducts stock oldest-expiry-first and writes one
+   * `batch_transactions` row per batch it draws from (`type = 'sale'`,
+   * `reference_id = bills.bill_id`); the rate is `purchase_price` on the batch
+   * that row points at. Stock coming back is `type = 'return'` and is netted
+   * off, otherwise an edited bill charges its goods twice — a bill edit posts a
+   * `return` and then re-deducts a fresh `sale`.
+   *
+   * `return` rows overload `reference_id`: `restoreBillStock()` puts a
+   * `bills.bill_id` there, `restoreReturnedStock()` puts a
+   * `sales_returns.return_id`. Both id spaces start at 1, so the join also
+   * requires the note to start with that return's `return_number` — which the
+   * sales-return path always writes and the bill-edit path ("Restored from
+   * deleted/edited sale") never does.
+   *
+   * `type = 'purchase'` and `type = 'adjustment'` are excluded deliberately:
+   * adjustments are stock leaving for a purchase edit, a purchase return or a
+   * batch deletion. None of it sold, so none of it is a cost of sales.
+   *
+   * Sales returns need no further handling — `sales-returns.component.ts`
+   * rewrites `bills.total_amount` in place as well as posting the `return`
+   * rows, so both revenue and cost already net out.
+   *
+   * Units on `bill_items` that no priced batch draw covers — bills predating
+   * the batch module, batches saved with `purchase_price = 0`, or a FIFO walk
+   * that ran out of stock — are re-priced at `productRateCte()`'s fallback
+   * rather than left at zero, which would overstate profit. Whatever is still
+   * uncosted after that is returned as `uncosted_qty` and warned about.
+   *
+   * Internal bills are INCLUDED here, even though `qDistributionBills()` drops
+   * them from revenue. Goods transferred to a flock or batch were genuinely
+   * consumed by the business; `eliminateInternalRows()` removes the mirrored
+   * broiler/layer cost row (which stands at the bill's selling price), so the
+   * purchase cost has to remain or the transfer would cost the account nothing.
+   *
+   * `cash_amount` is 0: no cash moves when stock sells, it moved when the stock
+   * was bought. The cash statement keeps using `qPurchases()` for that.
+   *
+   * Batch draws against a bill with no surviving `bill_items` line are not
+   * picked up. A fully returned bill nets to roughly zero anyway, so the
+   * omission is immaterial and this stays a single grouped query.
+   */
+  private qDistributionCogs(farmId: number, range: OverviewDateRange): [string, any[]] {
+    const params: any[] = [farmId, farmId, farmId, farmId, farmId];
+    const sql =
+      `WITH tx AS (
+         SELECT bt.reference_id AS bill_id,
+                bt.product_id   AS product_id,
+                bt.quantity     AS net_qty,
+                CASE WHEN COALESCE(pb.purchase_price, 0) > 0
+                     THEN bt.quantity * pb.purchase_price ELSE 0 END AS priced_cost,
+                CASE WHEN COALESCE(pb.purchase_price, 0) > 0
+                     THEN 0 ELSE bt.quantity END AS unpriced_qty
+         FROM batch_transactions bt
+         JOIN product_batches pb ON pb.batch_id = bt.batch_id
+         WHERE pb.farm_id = ? AND bt.type = 'sale' AND bt.reference_id IS NOT NULL
+
+         UNION ALL
+
+         SELECT COALESCE(sr.bill_id, bt.reference_id) AS bill_id,
+                bt.product_id   AS product_id,
+                -bt.quantity    AS net_qty,
+                CASE WHEN COALESCE(pb.purchase_price, 0) > 0
+                     THEN -(bt.quantity * pb.purchase_price) ELSE 0 END AS priced_cost,
+                CASE WHEN COALESCE(pb.purchase_price, 0) > 0
+                     THEN 0 ELSE -bt.quantity END AS unpriced_qty
+         FROM batch_transactions bt
+         JOIN product_batches pb ON pb.batch_id = bt.batch_id
+         LEFT JOIN sales_returns sr
+                ON sr.return_id = bt.reference_id
+               AND sr.farm_id = ?
+               AND bt.notes LIKE sr.return_number || '%'
+         WHERE pb.farm_id = ? AND bt.type = 'return' AND bt.reference_id IS NOT NULL
+       ),
+       drawn AS (
+         SELECT bill_id, product_id,
+                SUM(net_qty)      AS net_qty,
+                SUM(priced_cost)  AS priced_cost,
+                SUM(unpriced_qty) AS unpriced_qty
+         FROM tx
+         GROUP BY bill_id, product_id
+       ),
+       rate AS (
+         ${this.productRateCte()}
+       ),
+       sold AS (
+         SELECT bi.bill_id AS bill_id, bi.product_id AS product_id,
+                COALESCE(SUM(bi.quantity), 0) AS qty
+         FROM bill_items bi
+         JOIN bills b ON b.bill_id = bi.bill_id
+         WHERE b.farm_id = ?` + this.dateClause('b.bill_date', range, params) + `
+         GROUP BY bi.bill_id, bi.product_id
+       )
+       SELECT COALESCE(SUM(
+                COALESCE(d.priced_cost, 0)
+                + (MAX(COALESCE(d.unpriced_qty, 0), 0)
+                   + MAX(s.qty - COALESCE(d.net_qty, 0), 0)) * COALESCE(r.unit_cost, 0)
+              ), 0) AS amount,
+              0 AS cash_amount,
+              COALESCE(SUM(
+                CASE WHEN COALESCE(r.unit_cost, 0) > 0 THEN 0
+                     ELSE MAX(COALESCE(d.unpriced_qty, 0), 0)
+                          + MAX(s.qty - COALESCE(d.net_qty, 0), 0) END
+              ), 0) AS uncosted_qty,
+              COUNT(*) AS row_count
+       FROM sold s
+       LEFT JOIN drawn d
+              ON d.bill_id = s.bill_id
+             AND (d.product_id = s.product_id
+                  OR (d.product_id IS NULL AND s.product_id IS NULL))
+       LEFT JOIN rate r ON r.product_id = s.product_id`;
+    return [sql, params];
+  }
+
+  /**
+   * Distribution stock on hand, valued at what it cost to buy — the asset the
+   * purchases turned into, and the reason a large purchase figure is not a loss.
+   *
+   * Same stock filter `DatabaseService.getTotalStock()` applies (quantity left,
+   * not past expiry) so value and quantity describe the same stock. Batches with
+   * no recorded price fall back to `productRateCte()`, matching how
+   * `qDistributionCogs()` prices the same units.
+   *
+   * `range` is ignored: `product_batches` carries a live quantity and no
+   * movement history to rewind, so this can only ever be "as at now".
+   */
+  private qInventoryOnHand(farmId: number): [string, any[]] {
+    const params: any[] = [farmId, farmId];
+    const sql =
+      `WITH rate AS (
+         ${this.productRateCte()}
+       )
+       SELECT COALESCE(SUM(CASE WHEN COALESCE(pb.purchase_price, 0) > 0
+                                THEN pb.quantity * pb.purchase_price
+                                ELSE pb.quantity * COALESCE(r.unit_cost, 0) END), 0) AS amount,
+              0 AS cash_amount,
+              COALESCE(SUM(CASE WHEN COALESCE(pb.purchase_price, 0) > 0
+                                THEN 0 ELSE pb.quantity END), 0) AS unpriced_qty,
+              COUNT(*) AS row_count
+       FROM product_batches pb
+       LEFT JOIN rate r ON r.product_id = pb.product_id
+       WHERE pb.farm_id = ? AND pb.quantity > 0 AND pb.expiry_date >= date('now')`;
+    return [sql, params];
+  }
+
   private qPurchases(farmId: number, range: OverviewDateRange): [string, any[]] {
+
     const params: any[] = [farmId];
     const sql =
       `SELECT COALESCE(SUM(po.total_amount), 0) AS amount,
@@ -1069,9 +1326,11 @@ export class OverviewService {
       revenue: { total: 0, broiler: 0, layer: 0, distribution: 0, distributionCollected: 0 },
       expenses: {
         total: 0, general: 0, medicine: 0, feed: 0, vaccination: 0, labour: 0,
-        ledgerDebits: 0, purchases: 0, distributionExpenses: 0,
+        ledgerDebits: 0, costOfGoodsSold: 0, purchases: 0, purchaseReturns: 0,
+        distributionExpenses: 0,
         byModule: { broiler: 0, layer: 0, distribution: 0 }
       },
+      inventory: { value: 0, unpricedUnits: 0 },
       businessNetProfit: 0,
       personalWithdrawals: 0,
       netPosition: 0,

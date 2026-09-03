@@ -9,7 +9,7 @@
       (click)="generatePDF()"
       *ngIf="currentFlock"
       [disabled]="isGenerating">
-      {{ isGenerating ? 'Generating...' : '📄 Generate PDF Report' }}
+      {{ isGenerating ? 'Printing...' : '🖨️ Print Report' }}
     </button>
   </div>
 
@@ -154,7 +154,7 @@
     </div>
 
     <div class="generate-hint">
-      Selections are saved automatically. Click "Generate PDF Report" to download.
+      Selections are saved automatically. Click "Print Report" to print.
     </div>
   </div>
 

@@ -109,9 +109,16 @@ export class FlockManagementComponent implements OnInit, OnDestroy {
   private async refresh() {
     // No farms yet for this account — behave exactly as before the farm
     // selector existed rather than filtering to an empty list.
+    // Queries the DB directly (not flockService.loadFlocks) so this page's
+    // full list — including closed flocks — never overwrites the sidebar's
+    // filtered active-only selector, which shares the same flocksSubject.
     const unitId = this.units.length > 0 ? this.currentUnit?.unit_id : undefined;
-    const flocks = await this.flockService.loadFlocks(this.currentFarm.farm_id, unitId);
-    this.flocks = flocks;
+    const sql = unitId
+      ? `SELECT * FROM flocks WHERE farm_id = ? AND unit_id = ? ORDER BY flock_id ASC`
+      : `SELECT * FROM flocks WHERE farm_id = ? ORDER BY flock_id ASC`;
+    const params = unitId ? [this.currentFarm.farm_id, unitId] : [this.currentFarm.farm_id];
+    const result = await this.db.get(sql, params);
+    this.flocks = result.success ? result.data : [];
     this.cdr.detectChanges();
   }
 

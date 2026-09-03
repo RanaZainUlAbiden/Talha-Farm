@@ -7,7 +7,7 @@
     </div>
     <div class="header-actions">
       <button class="btn-generate" (click)="generatePDF()" [disabled]="isGenerating">
-        {{ isGenerating ? 'Generating...' : '📄 Generate PDF Report' }}
+        {{ isGenerating ? 'Printing...' : '🖨️ Print Report' }}
       </button>
     </div>
   </div>
@@ -51,6 +51,11 @@
       <div class="card-label">Total Sales</div>
       <div class="card-value">Rs. {{ totalSales | number:'1.0-0' }}</div>
     </div>
+    <div class="summary-card cogs">
+      <div class="card-icon">🧾</div>
+      <div class="card-label">Cost of Goods Sold</div>
+      <div class="card-value">Rs. {{ totalCOGS | number:'1.0-0' }}</div>
+    </div>
     <div class="summary-card expenses" style="border-left: 4px solid #f44336; background: #fff;">
       <div class="card-icon" style="background: #ffebee; color: #d32f2f;">💸</div>
       <div class="card-label">Total Expenses</div>
@@ -60,6 +65,73 @@
       <div class="card-icon" style="background: #e8f5e9; color: #2e7d32;">🏆</div>
       <div class="card-label">Profit / Loss</div>
       <div class="card-value" [style.color]="totalProfitLoss >= 0 ? '#2e7d32' : '#d32f2f'">Rs. {{ totalProfitLoss | number:'1.0-0' }}</div>
+    </div>
+  </div>
+
+  <!-- Where the money went: purchases are not a loss until the stock sells -->
+  <div class="reconciliation-card" *ngIf="!isLoading">
+    <div class="recon-head">
+      <span class="recon-title">🧮 Where the money went</span>
+      <span class="recon-sub">Buying stock turns cash into an asset. It becomes a cost only when it sells.</span>
+    </div>
+
+    <div class="recon-grid">
+      <div class="recon-col">
+        <div class="recon-row">
+          <span>Total purchases (all stock bought)</span>
+          <span class="num">Rs. {{ totalPurchases | number:'1.0-0' }}</span>
+        </div>
+        <div class="recon-row">
+          <span>Less: returned to supplier</span>
+          <span class="num">- Rs. {{ totalPurchaseReturns | number:'1.0-0' }}</span>
+        </div>
+        <div class="recon-row">
+          <span>Less: cost of the stock that sold</span>
+          <span class="num">- Rs. {{ totalCOGS | number:'1.0-0' }}</span>
+        </div>
+        <div class="recon-row strong">
+          <span>= Stock bought but not yet sold</span>
+          <span class="num">Rs. {{ purchasesNotYetSold | number:'1.0-0' }}</span>
+        </div>
+        <div class="recon-row muted">
+          <span>Total inventory on hand (at cost)</span>
+          <span class="num">Rs. {{ totalInventoryValue | number:'1.0-0' }}</span>
+        </div>
+      </div>
+
+      <div class="recon-col">
+        <div class="recon-row">
+          <span>Paid sales (revenue counted)</span>
+          <span class="num">Rs. {{ totalPaidSales | number:'1.0-0' }}</span>
+        </div>
+        <div class="recon-row">
+          <span>Less: cost of goods sold</span>
+          <span class="num">- Rs. {{ totalCOGS | number:'1.0-0' }}</span>
+        </div>
+        <div class="recon-row strong">
+          <span>= Gross profit</span>
+          <span class="num" [style.color]="grossProfit >= 0 ? '#2e7d32' : '#d32f2f'">Rs. {{ grossProfit | number:'1.0-0' }}</span>
+        </div>
+        <div class="recon-row">
+          <span>Less: expenses</span>
+          <span class="num">- Rs. {{ totalExpenses | number:'1.0-0' }}</span>
+        </div>
+        <div class="recon-row strong">
+          <span>= Profit / Loss</span>
+          <span class="num" [style.color]="totalProfitLoss >= 0 ? '#2e7d32' : '#d32f2f'">Rs. {{ totalProfitLoss | number:'1.0-0' }}</span>
+        </div>
+        <div class="recon-row muted">
+          <span>Unpaid bills (not counted as revenue)</span>
+          <span class="num">Rs. {{ totalUnpaidSales | number:'1.0-0' }}</span>
+        </div>
+      </div>
+    </div>
+
+    <div class="recon-note" *ngIf="cogsWarnings.length > 0">
+      <strong>⚠ Data quality notes on the cost figure</strong>
+      <ul>
+        <li *ngFor="let w of cogsWarnings">{{ w }}</li>
+      </ul>
     </div>
   </div>
 
@@ -165,9 +237,9 @@
           <td>{{ p.unit || '—' }}</td>
           <td>{{ p.calculated_stock || 0 | number }}</td>
           <td>{{ p.batch_count || 0 }}</td>
-          <td>Rs. {{ p.cost_price | number:'1.0-0' }}</td>
+          <td>Rs. {{ getProductUnitCost(p) | number:'1.0-0' }}</td>
           <td>Rs. {{ p.selling_price | number:'1.0-0' }}</td>
-          <td class="amount">Rs. {{ (p.calculated_stock || 0) * (p.cost_price || 0) | number:'1.0-0' }}</td>
+          <td class="amount">Rs. {{ getProductValue(p) | number:'1.0-0' }}</td>
         </tr>
         <tr class="total-row">
           <td colspan="7"><strong>Total Inventory Value</strong></td>
@@ -379,7 +451,7 @@
   </div>
 
   <div class="generate-hint" *ngIf="!isLoading">
-    Selections are saved automatically. Click "Generate PDF Report" to download.
+    Selections are saved automatically. Click "Print Report" to print.
   </div>
 
 </div>

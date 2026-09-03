@@ -121,11 +121,97 @@
   &.inventory  { border-top: 4px solid #1a5c38; }
   &.purchases  { border-top: 4px solid #e65100; }
   &.sales      { border-top: 4px solid #0d47a1; }
+  &.cogs       { border-top: 4px solid #6a1b9a; }
 }
 
 .card-icon  { font-size: 24px; margin-bottom: 8px; }
 .card-label { font-size: 12px; color: #888; font-weight: 500; margin-bottom: 6px; }
 .card-value { font-size: 18px; font-weight: 700; color: #1a1a1a; }
+
+// Reconciliation — makes it visible that purchased stock is an asset, not a loss
+.reconciliation-card {
+  background: white;
+  border-radius: 12px;
+  border: 1px solid #e0e0e0;
+  padding: 18px 20px;
+  margin-bottom: 24px;
+}
+
+.recon-head {
+  margin-bottom: 14px;
+
+  .recon-title {
+    display: block;
+    font-size: 14px;
+    font-weight: 700;
+    color: #1a1a1a;
+  }
+
+  .recon-sub {
+    display: block;
+    margin-top: 3px;
+    font-size: 12px;
+    color: #888;
+  }
+}
+
+.recon-grid {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 12px 28px;
+}
+
+.recon-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 12px;
+  padding: 6px 0;
+  border-bottom: 1px dashed #eee;
+  font-size: 13px;
+  color: #444;
+
+  .num {
+    font-weight: 600;
+    color: #1a1a1a;
+    white-space: nowrap;
+  }
+
+  &.strong {
+    border-bottom: 1px solid #d0d0d0;
+    font-weight: 700;
+    color: #1a1a1a;
+  }
+
+  &.muted {
+    border-bottom: none;
+    color: #888;
+    font-size: 12px;
+
+    .num { color: #888; font-weight: 500; }
+  }
+}
+
+.recon-note {
+  margin-top: 14px;
+  padding: 12px 14px;
+  border-radius: 8px;
+  background: #fff8e1;
+  border: 1px solid #ffe082;
+  font-size: 12px;
+  color: #6d4c00;
+
+  ul {
+    margin: 6px 0 0;
+    padding-left: 18px;
+  }
+
+  li { margin-bottom: 4px; }
+}
+
+@media (max-width: 900px) {
+  .recon-grid { grid-template-columns: 1fr; }
+}
 
 // Section Selector
 .sections-panel {

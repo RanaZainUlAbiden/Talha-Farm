@@ -158,7 +158,7 @@ export class OverviewComponent implements OnInit {
       doc.setFont('helvetica', 'bold');
       doc.setFontSize(11);
       doc.setTextColor(...BLACK);
-      doc.text('ASSETS & CASH POSITION', 14, y);
+      doc.text('STOCK, ASSETS & CASH POSITION', 14, y);
       y += 3;
       doc.line(14, y, pageWidth - 14, y);
       y += 6;
@@ -166,6 +166,10 @@ export class OverviewComponent implements OnInit {
       autoTable(doc, {
         startY: y,
         body: [
+          ['Distribution Stock Bought (purchase orders)', rs(s.expenses.purchases)],
+          ['Distribution Stock Returned to Supplier', rs(s.expenses.purchaseReturns)],
+          ['Cost of Goods Sold (charged against profit)', rs(s.expenses.costOfGoodsSold)],
+          ['Distribution Stock on Hand, at cost', rs(s.inventory.value)],
           ['Active Asset Value', rs(s.assets.activeValue)],
           ['Active Asset Count', String(s.assets.activeCount)],
           ['Realised Gain / Loss on Sold Assets', rs(s.assets.realisedGainLoss)],
@@ -241,10 +245,25 @@ export class OverviewComponent implements OnInit {
         doc.text(`Page ${i} of ${totalPages}`, pageWidth / 2, pageHeight - 4, { align: 'center' });
       }
 
-      doc.save(`${farmName}-Overview-${this.dateFrom}-to-${this.dateTo}.pdf`);
+      await this.printPdf(doc, `${farmName}-Overview-${this.dateFrom}-to-${this.dateTo}.pdf`);
     } finally {
       this.isGenerating = false;
       this.cdr.detectChanges();
+    }
+  }
+
+  private async printPdf(doc: jsPDF, filename: string) {
+    try {
+      const dataUri = doc.output('datauristring');
+      const base64 = dataUri.split(',')[1];
+      const result = await (window as any).electronAPI.printPdfBase64(base64);
+      if (!result || !result.success) {
+        console.error('Print failed, falling back to save:', result?.error);
+        doc.save(filename);
+      }
+    } catch (e) {
+      console.error('Print error, falling back to save:', e);
+      doc.save(filename);
     }
   }
 }

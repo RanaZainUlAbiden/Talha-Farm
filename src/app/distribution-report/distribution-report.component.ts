@@ -6,6 +6,21 @@ import { AuthService } from '../shared/services/auth.service';
 import { jsPDF } from 'jspdf';
 import autoTable from 'jspdf-autotable';
 
+/**
+ * What one bill's goods actually cost, split so the report can be honest about
+ * how much of the number is measured and how much is estimated.
+ */
+interface BillCost {
+  /** Purchase cost of the goods that left stock on this bill. */
+  cogs: number;
+  /** Units inside `cogs` priced from a fallback rate, not from their own batch. */
+  estimatedUnits: number;
+  /** The portion of `cogs` those units contributed. */
+  estimatedCost: number;
+  /** Units with no cost source anywhere — they contribute 0 and are warned about. */
+  unpricedUnits: number;
+}
+
 @Component({
   selector: 'app-distribution-report',
   standalone: true,
@@ -26,6 +41,11 @@ export class DistributionReportComponent implements OnInit {
   isLoading = true;
   errorMessage = '';
 
+  /** bill_id -> cost of goods sold on that bill. Built by `loadCostOfGoods()`. */
+  private billCosts = new Map<number, BillCost>();
+  /** Data-quality notes about the COGS figure, surfaced in the UI and the PDF. */
+  cogsWarnings: string[] = [];
+
   // Features
   sections = {
     inventory: true,
@@ -43,17 +63,19 @@ export class DistributionReportComponent implements OnInit {
   // ── CALCULATIONS ──────────────────────────────────────────
 
   /**
-   * 🔥 FIX: Inventory Value calculated from actual batch stock
-   * Each product's value = (current_stock from batches) * (cost_price)
+   * Inventory Value — what the stock still on hand cost to buy.
+   *
+   * Valued from `product_batches.purchase_price` (the price actually paid for
+   * that batch), not from `products.cost_price`, so it is measured on the same
+   * basis as COGS: every unit is worth what it cost, whether it has sold yet or
+   * not. Units sitting in a batch with no recorded price fall back to the same
+   * rate `costOfGoodsSold` uses — see `loadCostOfGoods()`.
+   *
+   * This is the counterweight to `totalPurchases`. Purchases that have not sold
+   * yet are not a loss; they are here, as stock the owner still holds.
    */
   get totalInventoryValue(): number {
-    let total = 0;
-    for (const product of this.products) {
-      const stock = product.calculated_stock || 0;
-      const costPrice = product.cost_price || 0;
-      total += stock * costPrice;
-    }
-    return total;
+    return this.products.reduce((sum: number, p: any) => sum + (Number(p.inventory_value) || 0), 0);
   }
 
   get filteredPurchases(): any[] {
@@ -154,13 +176,79 @@ export class DistributionReportComponent implements OnInit {
     return this.filteredExpenses.reduce((sum: number, e: any) => sum + (e.amount || 0), 0);
   }
 
+  /**
+   * COST OF GOODS SOLD — the purchase cost of the stock that actually left on
+   * the bills in range, taken from `batch_transactions` -> `product_batches`.
+   *
+   * This is deliberately NOT total purchases. Buying stock converts cash into
+   * an asset; it becomes a cost only when that stock is sold. Charging every
+   * purchase against the period made a shop that had bought Rs 7.24m of stock
+   * and sold Rs 12.5k of it look like it had lost Rs 7.24m, when almost all of
+   * that money was still on the shelves.
+   *
+   * Summed over `filteredSales` rather than queried with its own date filter,
+   * so revenue and cost are always drawn from the exact same set of bills — a
+   * bill can never contribute revenue to one side and nothing to the other.
+   */
+  get totalCOGS(): number {
+    return this.filteredSales.reduce(
+      (sum: number, s: any) => sum + (this.billCosts.get(s.bill_id)?.cogs || 0), 0
+    );
+  }
+
+  /** Portion of `totalCOGS` priced from a fallback rate rather than its own batch. */
+  get estimatedCOGS(): number {
+    return this.filteredSales.reduce(
+      (sum: number, s: any) => sum + (this.billCosts.get(s.bill_id)?.estimatedCost || 0), 0
+    );
+  }
+
+  get estimatedCOGSUnits(): number {
+    return this.filteredSales.reduce(
+      (sum: number, s: any) => sum + (this.billCosts.get(s.bill_id)?.estimatedUnits || 0), 0
+    );
+  }
+
+  /** Units sold that have no cost source at all — they sit in COGS at zero. */
+  get unpricedCOGSUnits(): number {
+    return this.filteredSales.reduce(
+      (sum: number, s: any) => sum + (this.billCosts.get(s.bill_id)?.unpricedUnits || 0), 0
+    );
+  }
+
+  get billsWithEstimatedCost(): number {
+    return this.filteredSales.filter((s: any) => {
+      const c = this.billCosts.get(s.bill_id);
+      return !!c && (c.estimatedUnits > 0 || c.unpricedUnits > 0);
+    }).length;
+  }
+
+  /** Revenue less the cost of what was sold, before running expenses. */
+  get grossProfit(): number {
+    return this.totalPaidSales - this.totalCOGS;
+  }
+
+  /**
+   * Stock bought in this period that has not been sold on. Not a loss — it is
+   * inventory the owner still holds, and it is the difference between the
+   * frightening "Total Purchases" number and the real cost of trading.
+   */
+  get purchasesNotYetSold(): number {
+    return this.totalPurchases - this.totalPurchaseReturns - this.totalCOGS;
+  }
+
   get totalProfitLoss(): number {
-    // 🔥 Cash-basis profit — only PAID sales count as revenue, so an
-    // unpaid bill contributes nothing positive while its cost is already
-    // counted, pulling profit down until it's actually collected.
-    // Purchase returns reduce the effective cost of goods (money/credit
-    // recovered from suppliers), so they're added back here.
-    return this.totalPaidSales - (this.totalPurchases - this.totalPurchaseReturns) - this.totalExpenses;
+    // Profit = paid sales revenue − cost of goods sold − expenses.
+    //
+    // Revenue stays CASH basis: only `bills.amount_paid` counts, so an unpaid
+    // bill contributes nothing positive while the cost of the goods it moved is
+    // already charged, pulling profit down until the money is actually collected.
+    //
+    // Purchase returns are NOT added back here. Stock returned to a supplier was
+    // never sold, so it never entered COGS; `purchase-returns.component.ts` has
+    // already removed it from inventory. Crediting it against profit as the old
+    // formula did booked a gain that never happened.
+    return this.totalPaidSales - this.totalCOGS - this.totalExpenses;
   }
 
   /**
@@ -211,12 +299,15 @@ export class DistributionReportComponent implements OnInit {
   }
 
   /**
-   * Get product inventory value
+   * Get product inventory value — batch purchase price, matching COGS.
    */
   getProductValue(product: any): number {
-    const stock = product.calculated_stock || 0;
-    const costPrice = product.cost_price || 0;
-    return stock * costPrice;
+    return Number(product?.inventory_value) || 0;
+  }
+
+  /** The rate `loadCostOfGoods()` settled on for a product, for display. */
+  getProductUnitCost(product: any): number {
+    return Number(product?.effective_unit_cost) || 0;
   }
 
   constructor(
@@ -334,6 +425,10 @@ export class DistributionReportComponent implements OnInit {
       );
       this.expenses = ex.success ? ex.data : [];
 
+      // Cost of goods sold + inventory valuation. Runs last: it needs both the
+      // product list and the bill list already in place.
+      await this.loadCostOfGoods();
+
       // Determine bill paid status
       for (const bill of this.sales) {
         bill.is_paid = this.getBillPaidAmount(bill) >= (Number(bill.total_amount) || 0);
@@ -348,6 +443,9 @@ export class DistributionReportComponent implements OnInit {
       console.log(`Total Returns: Rs. ${this.totalReturns.toLocaleString()}`);
       console.log(`Total Expenses: Rs. ${this.totalExpenses.toLocaleString()}`);
       console.log(`Inventory Value: Rs. ${this.totalInventoryValue.toLocaleString()}`);
+      console.log(`Cost of Goods Sold: Rs. ${this.totalCOGS.toLocaleString()}`);
+      console.log(`Profit / Loss: Rs. ${this.totalProfitLoss.toLocaleString()}`);
+      if (this.cogsWarnings.length) console.warn('COGS data quality:', this.cogsWarnings);
 
     } catch (error: any) {
       this.errorMessage = 'Failed to load data: ' + error.message;
@@ -355,6 +453,287 @@ export class DistributionReportComponent implements OnInit {
     } finally {
       this.isLoading = false;
       this.cdr.detectChanges();
+    }
+  }
+
+  // ── COST OF GOODS SOLD ────────────────────────────────────
+
+  /**
+   * Builds `billCosts` — the purchase cost of the goods each bill moved — and
+   * values the stock still on hand, both on the same rates so the two numbers
+   * reconcile against purchases.
+   *
+   * Where the cost comes from
+   * -------------------------
+   * `sales-orders.component.ts` walks the product's batches oldest-expiry-first
+   * and writes one `batch_transactions` row per batch it draws from, stamped
+   * `type = 'sale'` and `reference_id = bills.bill_id`. The rate for those units
+   * is `product_batches.purchase_price` on the batch the row points at. This
+   * only reads those rows; it never writes and never touches the FIFO logic.
+   *
+   * Stock coming back is `type = 'return'` and has to be netted off, or an
+   * edited bill counts its goods twice — a bill edit restores stock (a `return`)
+   * and then re-deducts it (a fresh `sale`). Two different writers produce
+   * `return` rows and they overload `reference_id` differently:
+   *
+   *   restoreBillStock()      (bill edited)     reference_id = bills.bill_id
+   *   restoreReturnedStock()  (customer return) reference_id = sales_returns.return_id
+   *
+   * Both id spaces start at 1, so matching on the id alone would misfile a bill
+   * edit as somebody else's customer return. The join below also requires the
+   * note to start with that return's `return_number`, which `restoreReturnedStock`
+   * always writes and `restoreBillStock` ("Restored from deleted/edited sale")
+   * never does. Anything failing both tests is treated as a bill reference.
+   *
+   * `type = 'purchase'` and `type = 'adjustment'` are excluded on purpose:
+   * adjustments are stock leaving for a purchase edit, a purchase return or a
+   * batch deletion. That stock was never sold, so it is not a cost of sales.
+   *
+   * Sales returns need nothing further. `sales-returns.component.ts` rewrites
+   * `bills.total_amount` and `amount_paid` in place as well as posting the
+   * `return` rows, so revenue and cost both net out already; subtracting
+   * `totalReturns` again here would double-count it.
+   *
+   * Uncosted units
+   * --------------
+   * Not every sale is fully costed, in three different ways:
+   *
+   *   1. Bills predating the batch module have no `batch_transactions` at all.
+   *   2. Some batches carry `purchase_price = 0` — `restoreBillStock`'s
+   *      last-resort branch creates them, and the batch screen allows a blank
+   *      price. A FIFO sale drawing on one of those would cost nothing.
+   *   3. `deductFromBatches` stops when the batches run dry, so a bill sold
+   *      short of stock logs fewer units than it billed.
+   *
+   * Letting any of those stand at zero would overstate profit, which is the very
+   * failure this rewrite exists to fix. So every unit on `bill_items` not backed
+   * by a priced batch draw is re-priced at a fallback rate — first
+   * `products.cost_price`, then the weighted-average rate across that product's
+   * `purchase_orders`, then its most recent priced batch. The chain is needed
+   * because `products.cost_price` is only ever written by hand on the inventory
+   * screen (purchase orders do not maintain it), so alone it is often stale or 0.
+   *
+   * Units that come up empty on all three are counted at zero — there is no
+   * honest number available — but they are tallied into `unpricedUnits` and
+   * reported as a warning on screen and in the PDF, so an overstated profit is
+   * visible rather than silent.
+   */
+  private async loadCostOfGoods() {
+    this.billCosts.clear();
+    this.cogsWarnings = [];
+
+    const farmId = this.currentFarm?.farm_id;
+    if (!farmId) return;
+
+    const num = (v: any) => {
+      const n = Number(v);
+      return Number.isFinite(n) ? n : 0;
+    };
+
+    // ── 1. Fallback unit cost per product ───────────────────────────────
+    // products.cost_price -> weighted-average purchase rate -> latest priced batch.
+    const costRes = await this.db.get(
+      `SELECT p.product_id,
+              COALESCE(
+                NULLIF(p.cost_price, 0),
+                NULLIF((SELECT CASE WHEN COALESCE(SUM(po.quantity), 0) > 0
+                                    THEN SUM(po.total_amount) / SUM(po.quantity)
+                                    ELSE 0 END
+                        FROM purchase_orders po
+                        WHERE po.product_id = p.product_id AND po.farm_id = p.farm_id), 0),
+                NULLIF((SELECT pb.purchase_price
+                        FROM product_batches pb
+                        WHERE pb.product_id = p.product_id AND pb.farm_id = p.farm_id
+                          AND COALESCE(pb.purchase_price, 0) > 0
+                        ORDER BY pb.batch_id DESC LIMIT 1), 0),
+                0) AS unit_cost
+       FROM products p
+       WHERE p.farm_id = ?`,
+      [farmId]
+    );
+    if (!costRes.success) {
+      this.cogsWarnings.push('Could not read product cost rates: ' + (costRes.error || 'unknown error'));
+    }
+    const unitCost = new Map<number, number>();
+    for (const row of (costRes.success && costRes.data) ? costRes.data : []) {
+      unitCost.set(Number(row.product_id), num(row.unit_cost));
+    }
+    for (const product of this.products) {
+      product.effective_unit_cost = unitCost.get(Number(product.product_id)) || 0;
+    }
+
+    // ── 2. Inventory value, on the same rates ───────────────────────────
+    // Same stock filter getTotalStock() uses, so value and quantity agree.
+    const invRes = await this.db.get(
+      `SELECT pb.product_id,
+              COALESCE(SUM(CASE WHEN COALESCE(pb.purchase_price, 0) > 0
+                                THEN pb.quantity * pb.purchase_price ELSE 0 END), 0) AS priced_value,
+              COALESCE(SUM(CASE WHEN COALESCE(pb.purchase_price, 0) > 0
+                                THEN 0 ELSE pb.quantity END), 0) AS unpriced_qty
+       FROM product_batches pb
+       WHERE pb.farm_id = ? AND pb.quantity > 0 AND pb.expiry_date >= date('now')
+       GROUP BY pb.product_id`,
+      [farmId]
+    );
+    if (!invRes.success) {
+      this.cogsWarnings.push('Could not value the stock on hand: ' + (invRes.error || 'unknown error'));
+    }
+    const inventory = new Map<number, { priced: number; unpricedQty: number }>();
+    for (const row of (invRes.success && invRes.data) ? invRes.data : []) {
+      inventory.set(Number(row.product_id), {
+        priced: num(row.priced_value),
+        unpricedQty: num(row.unpriced_qty)
+      });
+    }
+    for (const product of this.products) {
+      const inv = inventory.get(Number(product.product_id));
+      const rate = product.effective_unit_cost || 0;
+      product.inventory_value = inv ? inv.priced + inv.unpricedQty * rate : 0;
+    }
+
+    // ── 3. Net units drawn per bill and product, and what they cost ─────
+    const loggedRes = await this.db.get(
+      `SELECT bill_id, product_id,
+              SUM(net_qty)      AS net_qty,
+              SUM(priced_cost)  AS priced_cost,
+              SUM(unpriced_qty) AS unpriced_qty
+       FROM (
+         SELECT bt.reference_id AS bill_id,
+                bt.product_id   AS product_id,
+                bt.quantity     AS net_qty,
+                CASE WHEN COALESCE(pb.purchase_price, 0) > 0
+                     THEN bt.quantity * pb.purchase_price ELSE 0 END AS priced_cost,
+                CASE WHEN COALESCE(pb.purchase_price, 0) > 0
+                     THEN 0 ELSE bt.quantity END AS unpriced_qty
+         FROM batch_transactions bt
+         JOIN product_batches pb ON pb.batch_id = bt.batch_id
+         WHERE pb.farm_id = ? AND bt.type = 'sale' AND bt.reference_id IS NOT NULL
+
+         UNION ALL
+
+         SELECT COALESCE(sr.bill_id, bt.reference_id) AS bill_id,
+                bt.product_id   AS product_id,
+                -bt.quantity    AS net_qty,
+                CASE WHEN COALESCE(pb.purchase_price, 0) > 0
+                     THEN -(bt.quantity * pb.purchase_price) ELSE 0 END AS priced_cost,
+                CASE WHEN COALESCE(pb.purchase_price, 0) > 0
+                     THEN 0 ELSE -bt.quantity END AS unpriced_qty
+         FROM batch_transactions bt
+         JOIN product_batches pb ON pb.batch_id = bt.batch_id
+         LEFT JOIN sales_returns sr
+                ON sr.return_id = bt.reference_id
+               AND sr.farm_id = ?
+               AND bt.notes LIKE sr.return_number || '%'
+         WHERE pb.farm_id = ? AND bt.type = 'return' AND bt.reference_id IS NOT NULL
+       )
+       GROUP BY bill_id, product_id`,
+      [farmId, farmId, farmId]
+    );
+    if (!loggedRes.success) {
+      this.cogsWarnings.push('Could not read the batch movement behind the sales: ' + (loggedRes.error || 'unknown error'));
+    }
+
+    // key: `${bill_id}:${product_id}`
+    const logged = new Map<string, { netQty: number; pricedCost: number; unpricedQty: number }>();
+    for (const row of (loggedRes.success && loggedRes.data) ? loggedRes.data : []) {
+      const billId = Number(row.bill_id);
+      if (!billId) continue;
+      logged.set(billId + ':' + (row.product_id ?? 'null'), {
+        netQty: num(row.net_qty),
+        pricedCost: num(row.priced_cost),
+        unpricedQty: num(row.unpriced_qty)
+      });
+    }
+
+    // ── 4. What each bill actually billed ───────────────────────────────
+    // bill_items is the source of truth for units sold; sales returns reduce it
+    // in place, exactly as they reduce the netted batch movement above.
+    const itemsRes = await this.db.get(
+      `SELECT bi.bill_id, bi.product_id, COALESCE(SUM(bi.quantity), 0) AS qty
+       FROM bill_items bi
+       JOIN bills b ON b.bill_id = bi.bill_id
+       WHERE b.farm_id = ?
+       GROUP BY bi.bill_id, bi.product_id`,
+      [farmId]
+    );
+    if (!itemsRes.success) {
+      this.cogsWarnings.push('Could not read the sold quantities: ' + (itemsRes.error || 'unknown error'));
+    }
+
+    // ── 5. Assemble, re-pricing anything the batches did not cost ───────
+    const seenKeys = new Set<string>();
+
+    const bump = (billId: number, patch: Partial<BillCost>) => {
+      const cur = this.billCosts.get(billId)
+        || { cogs: 0, estimatedUnits: 0, estimatedCost: 0, unpricedUnits: 0 };
+      cur.cogs += patch.cogs || 0;
+      cur.estimatedUnits += patch.estimatedUnits || 0;
+      cur.estimatedCost += patch.estimatedCost || 0;
+      cur.unpricedUnits += patch.unpricedUnits || 0;
+      this.billCosts.set(billId, cur);
+    };
+
+    for (const row of (itemsRes.success && itemsRes.data) ? itemsRes.data : []) {
+      const billId = Number(row.bill_id);
+      if (!billId) continue;
+      const productId = row.product_id ?? null;
+      const key = billId + ':' + (productId ?? 'null');
+      seenKeys.add(key);
+
+      const soldQty = num(row.qty);
+      const draw = logged.get(key);
+      const netQty = draw ? draw.netQty : 0;
+
+      // Units the batches priced, and units they did not: the ones drawn from a
+      // zero-price batch, plus any the FIFO walk never logged at all.
+      const zeroPriced = Math.max(draw ? draw.unpricedQty : 0, 0);
+      const neverLogged = Math.max(soldQty - netQty, 0);
+      const estimateQty = zeroPriced + neverLogged;
+      const pricedCost = draw ? draw.pricedCost : 0;
+
+      const rate = productId === null ? 0 : (unitCost.get(Number(productId)) || 0);
+
+      if (estimateQty > 0 && rate <= 0) {
+        // No batch price, no product price, no purchase history. Counting these
+        // at zero is the only option left, so make the gap visible instead.
+        bump(billId, { cogs: pricedCost, unpricedUnits: estimateQty });
+        continue;
+      }
+
+      bump(billId, {
+        cogs: pricedCost + estimateQty * rate,
+        estimatedUnits: estimateQty,
+        estimatedCost: estimateQty * rate
+      });
+    }
+
+    // Batch movement pointing at a bill that no longer carries a matching item
+    // line still cost the business money — keep it rather than lose it silently.
+    for (const [key, draw] of logged) {
+      if (seenKeys.has(key)) continue;
+      if (draw.pricedCost === 0) continue;
+      bump(Number(key.split(':')[0]), { cogs: draw.pricedCost });
+    }
+
+    // ── 6. Data-quality warnings ────────────────────────────────────────
+    const estUnits = this.estimatedCOGSUnits;
+    const unpriced = this.unpricedCOGSUnits;
+
+    if (estUnits > 0) {
+      this.cogsWarnings.push(
+        `${estUnits.toLocaleString()} unit(s) sold across ${this.billsWithEstimatedCost} bill(s) had no priced ` +
+        `stock batch behind them (older bills, or batches saved without a purchase price). They are costed at ` +
+        `the product's current purchase rate, so Rs. ${Math.round(this.estimatedCOGS).toLocaleString()} of the ` +
+        `cost of goods sold is an estimate rather than a recorded batch price.`
+      );
+    }
+    if (unpriced > 0) {
+      this.cogsWarnings.push(
+        `${unpriced.toLocaleString()} unit(s) sold have no purchase price recorded anywhere — not on their batch, ` +
+        `not on the product, and not on any purchase order. They are counted at zero cost, so profit is ` +
+        `overstated by whatever they actually cost. Set a cost price for these products on the Inventory ` +
+        `screen to correct the figure.`
+      );
     }
   }
 
@@ -472,20 +851,30 @@ export class DistributionReportComponent implements OnInit {
         doc.text('SUMMARY', margin, y);
         y += 8;
 
-        const summaryData = [
+        const rs = (n: number) => 'Rs. ' + Math.round(n).toLocaleString();
+
+        const summaryData: [string, string][] = [
           ['Total Products', String(this.totalProducts)],
           ['Total Purchase Orders', String(this.totalPurchasesCount)],
           ['Total Sales Bills', String(this.totalSalesCount)],
-          ['Total Returns', 'Rs. ' + this.totalReturns.toLocaleString()],
+          ['Total Returns', rs(this.totalReturns)],
           ['Total Expenses Count', String(this.totalExpensesCount)],
-          ['Total Purchases (all stock bought)', 'Rs. ' + this.totalPurchases.toLocaleString()],
-          ['Purchase Returns (refunded by suppliers)', 'Rs. ' + this.totalPurchaseReturns.toLocaleString()],
-          ['Current Inventory Value (unsold stock)', 'Rs. ' + this.totalInventoryValue.toLocaleString()],
-          ['Total Sales (Billed)', 'Rs. ' + this.totalSales.toLocaleString()],
-          ['Total Paid Sales', 'Rs. ' + this.totalPaidSales.toLocaleString()],
-          ['Total Unpaid Sales', 'Rs. ' + this.totalUnpaidSales.toLocaleString()],
-          ['Total Expenses', 'Rs. ' + this.totalExpenses.toLocaleString()],
-          ['Profit / Loss (Paid Sales - Net Purchases - Expenses)', 'Rs. ' + this.totalProfitLoss.toLocaleString()]
+
+          // ── Where the money went ──
+          ['Total Purchases (all stock bought)', rs(this.totalPurchases)],
+          ['Less: Purchase Returns (sent back to supplier)', rs(this.totalPurchaseReturns)],
+          ['Less: Cost of Goods Sold (stock that actually sold)', rs(this.totalCOGS)],
+          ['= Stock bought but not yet sold', rs(this.purchasesNotYetSold)],
+          ['Current Inventory Value (all unsold stock, at cost)', rs(this.totalInventoryValue)],
+
+          // ── Trading result ──
+          ['Total Sales (Billed)', rs(this.totalSales)],
+          ['Total Paid Sales (revenue counted)', rs(this.totalPaidSales)],
+          ['Total Unpaid Sales (not counted as revenue)', rs(this.totalUnpaidSales)],
+          ['Cost of Goods Sold', rs(this.totalCOGS)],
+          ['Gross Profit (Paid Sales - Cost of Goods Sold)', rs(this.grossProfit)],
+          ['Total Expenses', rs(this.totalExpenses)],
+          ['Profit / Loss (Paid Sales - Cost of Goods Sold - Expenses)', rs(this.totalProfitLoss)]
         ];
 
         doc.setFont('helvetica', 'normal');
@@ -494,8 +883,42 @@ export class DistributionReportComponent implements OnInit {
           doc.setTextColor(...G);
           doc.text(label + ':', margin + 6, y);
           doc.setTextColor(...B);
-          doc.text(value, margin + 80, y);
+          doc.text(value, margin + 105, y);
           y += 6;
+        }
+
+        // Buying stock is not a loss — it converts cash into an asset. Spell that
+        // out on the page, because "Total Purchases" is the number that alarms.
+        y += 2;
+        doc.setFont('helvetica', 'italic');
+        doc.setFontSize(7.5);
+        doc.setTextColor(...G);
+        const basisNote = doc.splitTextToSize(
+          'Profit charges only the purchase cost of the stock that actually sold (cost of goods sold), ' +
+          'traced through the stock batches each sale drew from. Stock still on the shelves is an asset ' +
+          'you own, not money lost, so it is shown as Inventory Value instead of being charged against ' +
+          'profit. Revenue is cash basis: an unpaid bill is not counted until it is collected. Purchase ' +
+          'returns are not credited to profit — that stock never sold, so its cost never entered the ' +
+          'profit calculation.',
+          pw - margin * 2 - 12
+        );
+        doc.text(basisNote, margin + 6, y);
+        y += basisNote.length * 3.6 + 3;
+
+        if (this.cogsWarnings.length > 0) {
+          doc.setFont('helvetica', 'bold');
+          doc.setFontSize(8);
+          doc.setTextColor(198, 40, 40);
+          doc.text('Data quality notes on the cost figure:', margin + 6, y);
+          y += 4.5;
+          doc.setFont('helvetica', 'normal');
+          doc.setFontSize(7.5);
+          doc.setTextColor(...G);
+          for (const w of this.cogsWarnings) {
+            const lines = doc.splitTextToSize('- ' + w, pw - margin * 2 - 12);
+            doc.text(lines, margin + 6, y);
+            y += lines.length * 3.6 + 2;
+          }
         }
       }
 
@@ -507,11 +930,9 @@ export class DistributionReportComponent implements OnInit {
         this.addPageHeader(doc, farmName, today, 'INVENTORY DETAIL (Current Stock from Batches)');
 
         // Sort products by stock value (highest first)
-        const sortedProducts = [...this.products].sort((a, b) => {
-          const valA = (a.calculated_stock || 0) * (a.cost_price || 0);
-          const valB = (b.calculated_stock || 0) * (b.cost_price || 0);
-          return valB - valA;
-        });
+        const sortedProducts = [...this.products].sort(
+          (a, b) => this.getProductValue(b) - this.getProductValue(a)
+        );
 
         const inventoryBody = sortedProducts.map(p => [
           p.product_name,
@@ -519,9 +940,9 @@ export class DistributionReportComponent implements OnInit {
           String(p.unit || '—'),
           String(p.calculated_stock || 0),
           String(p.batch_count || 0),
-          'Rs. ' + (p.cost_price || 0).toLocaleString(),
+          'Rs. ' + Math.round(this.getProductUnitCost(p)).toLocaleString(),
           'Rs. ' + (p.selling_price || 0).toLocaleString(),
-          'Rs. ' + ((p.calculated_stock || 0) * (p.cost_price || 0)).toLocaleString()
+          'Rs. ' + Math.round(this.getProductValue(p)).toLocaleString()
         ]);
 
         autoTable(doc, {
@@ -552,7 +973,11 @@ export class DistributionReportComponent implements OnInit {
         doc.setFont('helvetica', 'normal');
         doc.setFontSize(7);
         doc.setTextColor(...G);
-        doc.text('* Inventory value calculated as: Current Stock × Cost Price', margin, finalY + 5);
+        doc.text(
+          '* Each batch is valued at the price actually paid for it (product_batches.purchase_price); ' +
+          'batches saved without a price fall back to the product cost rate shown in the Cost column.',
+          margin, finalY + 5
+        );
       }
 
       // ── PURCHASES ──────────────────────────────────────────
@@ -771,13 +1196,28 @@ export class DistributionReportComponent implements OnInit {
         doc.text('Page ' + i + ' of ' + totalPages, pw / 2, ph - 4, { align: 'center' });
       }
 
-      doc.save(farmName + '-Distribution-Report.pdf');
+      await this.printPdf(doc, farmName + '-Distribution-Report.pdf');
 
     } catch (error) {
       console.error('PDF Generation Error:', error);
     } finally {
       this.isGenerating = false;
       this.cdr.detectChanges();
+    }
+  }
+
+  private async printPdf(doc: jsPDF, filename: string) {
+    try {
+      const dataUri = doc.output('datauristring');
+      const base64 = dataUri.split(',')[1];
+      const result = await (window as any).electronAPI.printPdfBase64(base64);
+      if (!result || !result.success) {
+        console.error('Print failed, falling back to save:', result?.error);
+        doc.save(filename);
+      }
+    } catch (e) {
+      console.error('Print error, falling back to save:', e);
+      doc.save(filename);
     }
   }
 

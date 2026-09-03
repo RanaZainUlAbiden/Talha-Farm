@@ -6,7 +6,7 @@
     </div>
     <div class="header-actions">
       <button class="btn-generate" (click)="generatePDF()" [disabled]="isGenerating || isLoading || !summary">
-        {{ isGenerating ? 'Generating...' : '📄 Generate PDF Report' }}
+        {{ isGenerating ? 'Printing...' : '🖨️ Print Report' }}
       </button>
     </div>
   </div>
@@ -72,6 +72,35 @@
       </div>
 
       <p class="basis-note">{{ s.basisLabel }}</p>
+    </div>
+
+    <!-- Distribution stock: purchases are an asset until they sell -->
+    <div class="table-card">
+      <h4>Distribution Stock &amp; Cost of Sales</h4>
+      <table>
+        <tbody>
+          <tr>
+            <td>Stock bought this period (purchase orders)</td>
+            <td class="num">Rs. {{ s.expenses.purchases | number:'1.0-0' }}</td>
+          </tr>
+          <tr>
+            <td>Returned to supplier</td>
+            <td class="num">Rs. {{ s.expenses.purchaseReturns | number:'1.0-0' }}</td>
+          </tr>
+          <tr>
+            <td><strong>Cost of goods sold (charged against profit)</strong></td>
+            <td class="num"><strong>Rs. {{ s.expenses.costOfGoodsSold | number:'1.0-0' }}</strong></td>
+          </tr>
+          <tr>
+            <td>Stock on hand today, at cost (an asset, not a cost)</td>
+            <td class="num">Rs. {{ s.inventory.value | number:'1.0-0' }}</td>
+          </tr>
+        </tbody>
+      </table>
+      <p class="cash-note">
+        Only the purchase cost of stock that actually sold is charged against profit. Money spent on
+        stock still sitting in inventory has not been lost — it is held as the stock above.
+      </p>
     </div>
 
     <!-- Assets / bank / cash -->
