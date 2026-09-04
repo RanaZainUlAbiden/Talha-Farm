@@ -10,6 +10,7 @@ import { Subscription } from 'rxjs';
 import { skip } from 'rxjs/operators';
 import { PaginationComponent } from '../shared/components/pagination/pagination.component';
 
+import { toLocalDateString } from '../shared/utils/date.util';
 @Component({
   selector: 'app-labour',
   standalone: true,
@@ -166,7 +167,7 @@ export class LabourComponent implements OnInit, OnDestroy {
   makeNewRow(): any {
     return {
       labour_id: this.roster.length > 0 ? this.roster[0].labour_id : null,
-      date: new Date().toISOString().split('T')[0],
+      date: toLocalDateString(),
       description: '',
       amount: null,
       payment_type: 'cash'

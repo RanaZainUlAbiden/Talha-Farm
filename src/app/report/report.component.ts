@@ -8,6 +8,7 @@ import { DatabaseService } from '../shared/services/database.service';
 import { Subscription } from 'rxjs';
 import { skip } from 'rxjs/operators';
 import { jsPDF } from 'jspdf';
+import { displayFcr } from '../shared/utils/fcr.util';
 import autoTable from 'jspdf-autotable';
 
 @Component({
@@ -681,7 +682,7 @@ coverY += 8;
         addPage('Flock Health');
         bwTable(
           y,
-          [['Day', 'Total Birds', 'Mortality', 'Remaining', 'Feed (kg)', 'Avg Wt', 'FCR']],
+          [['Day', 'Total Birds', 'Mortality', 'Remaining', 'Feed (Bags)', 'Avg Wt (g)', 'FCR']],
           this.health.map(h => [
             `Day ${h.week_number}`,
             (h.total_birds || 0).toLocaleString(),
@@ -689,7 +690,10 @@ coverY += 8;
             ((h.total_birds - h.mortality) || 0).toLocaleString(),
             (h.feed_used   || 0).toLocaleString(),
             h.avg_weight   || '0',
-            h.fcr          || '0'
+            // Derived from cumulative feed the same way the Flock Health screen
+            // derives it — not the stored `fcr`, which for rows saved before the
+            // cumulative-denominator fix holds the old inflated number.
+            displayFcr(h, this.health) || '0'
           ])
         );
       }

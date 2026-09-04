@@ -8,6 +8,7 @@ import { ConfirmDialogComponent } from '../shared/components/confirm-dialog/conf
 import { Subscription } from 'rxjs';
 import { skip } from 'rxjs/operators';
 import { PendingStateService } from '../shared/services/pending-state.service';
+import { computeAutoFcr, displayFcr } from '../shared/utils/fcr.util';
 
 @Component({
   selector: 'app-flock-health',
@@ -55,18 +56,44 @@ export class FlockHealthComponent implements OnInit, OnDestroy {
     return (row.total_birds || 0) - (row.mortality || 0);
   }
 
-  getRowAutoFcr(row: any): number {
-    const remaining = this.getRowRemaining(row);
-    const feed = row.feed_used || 0; // bags used (1 bag = 50kg)
-    const avgW = row.avg_weight || 0; // chick weight entered directly in grams
-    if (remaining <= 0 || avgW <= 0 || feed <= 0) return 0;
-    // FCR = [(remaining birds / 1000) × chick weight (g)] / bags of feed used
-    return parseFloat((((remaining / 1000) * avgW) / feed).toFixed(3));
+  /**
+   * Every row the FCR denominator is drawn from: the saved records, with the one
+   * being edited swapped for the live form values, plus the unsaved pending rows.
+   * Feed is cumulative from day 1, so one row's FCR depends on all the others.
+   */
+  private get fcrRows(): any[] {
+    const saved = this.healthRecords.map(r =>
+      this.editingId !== null && r.health_id === this.editingId
+        ? { ...r, ...this.editForm }
+        : r
+    );
+    return saved.concat(this.pendingRows);
   }
 
-  onRowFeedOrWeightChange(row: any) {
-    if (!row.fcrManuallyEdited) {
-      row.fcr = this.getRowAutoFcr(row) || null;
+  getRowAutoFcr(row: any): number {
+    return computeAutoFcr(row, this.fcrRows);
+  }
+
+  /**
+   * FCR shown for a saved row. Derived rather than read back from the stored
+   * `fcr` column, so changing an earlier day's feed moves every later day's
+   * value, and so rows written by the old formula read correctly without their
+   * stored value being rewritten. Hand-entered rows keep what was typed.
+   */
+  getDisplayFcr(record: any): number {
+    return displayFcr(record, this.fcrRows);
+  }
+
+  /**
+   * A day's feed lands in every later day's cumulative denominator, so one edit
+   * moves more than one row — refresh every unsaved row, not just the one typed
+   * into. Rows whose FCR was entered by hand keep their value.
+   */
+  onRowFeedOrWeightChange() {
+    for (const row of this.pendingRows) {
+      if (!row.fcrManuallyEdited) {
+        row.fcr = this.getRowAutoFcr(row) || null;
+      }
     }
   }
 
@@ -79,12 +106,7 @@ export class FlockHealthComponent implements OnInit, OnDestroy {
   }
 
   get editAutoFcr(): number {
-    const remaining = this.editRemaining;
-    const feed = this.editForm.feed_used || 0; // bags used (1 bag = 50kg)
-    const avgW = this.editForm.avg_weight || 0; // chick weight entered directly in grams
-    if (remaining <= 0 || avgW <= 0 || feed <= 0) return 0;
-    // FCR = [(remaining birds / 1000) × chick weight (g)] / bags of feed used
-    return parseFloat((((remaining / 1000) * avgW) / feed).toFixed(3));
+    return computeAutoFcr(this.editForm, this.fcrRows);
   }
 
   onEditFeedOrWeightChange() {
@@ -166,13 +188,25 @@ export class FlockHealthComponent implements OnInit, OnDestroy {
   }
 
   // ── Pending Rows (Multi-row add) ─────────────────────────────
+  /**
+   * Highest day index across saved and unsaved rows. Deleting a row does not
+   * renumber the ones after it, so a new row must be placed past the highest
+   * surviving day — counting rows (`.length`) collides with whatever day was
+   * left behind by an earlier delete.
+   */
+  private maxWeekNumber(): number {
+    const fromSaved = this.healthRecords.reduce((max, r) => Math.max(max, Number(r.week_number) || 0), 0);
+    const fromPending = this.pendingRows.reduce((max, r) => Math.max(max, Number(r.week_number) || 0), 0);
+    return Math.max(fromSaved, fromPending);
+  }
+
   makeNewRow(): any {
     const last = this.healthRecords.length > 0
       ? this.healthRecords[this.healthRecords.length - 1]
       : null;
 
     return {
-      week_number: this.healthRecords.length + this.pendingRows.length + 1,
+      week_number: this.maxWeekNumber() + 1,
       total_birds: last ? last.total_birds - last.mortality : null,
       mortality: null,
       feed_used: null,
@@ -200,7 +234,7 @@ export class FlockHealthComponent implements OnInit, OnDestroy {
   }
 
   recalculateWeekNumbers() {
-    const baseWeek = this.healthRecords.length;
+    const baseWeek = this.healthRecords.reduce((max, r) => Math.max(max, Number(r.week_number) || 0), 0);
     this.pendingRows.forEach((row, i) => {
       row.week_number = baseWeek + i + 1;
     });
@@ -227,8 +261,8 @@ export class FlockHealthComponent implements OnInit, OnDestroy {
 
         await this.db.run(
           `INSERT INTO flock_health
-            (flock_id, week_number, total_birds, mortality, feed_used, avg_weight, fcr)
-           VALUES (?, ?, ?, ?, ?, ?, ?)`,
+            (flock_id, week_number, total_birds, mortality, feed_used, avg_weight, fcr, fcr_manual)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
           [
             this.currentFlock.flock_id,
             row.week_number,
@@ -236,7 +270,8 @@ export class FlockHealthComponent implements OnInit, OnDestroy {
             row.mortality || 0,
             row.feed_used || 0,
             row.avg_weight || 0,
-            fcr
+            fcr,
+            row.fcrManuallyEdited ? 1 : 0
           ]
         );
         insertedCount++;
@@ -274,7 +309,9 @@ export class FlockHealthComponent implements OnInit, OnDestroy {
       feed_used: record.feed_used,
       avg_weight: record.avg_weight,
       fcr: record.fcr,
-      fcrManuallyEdited: false
+      // A hand-entered FCR stays hand-entered across reloads — the flag lives in
+      // the `fcr_manual` column, not just in this session.
+      fcrManuallyEdited: !!record.fcr_manual
     };
   }
 
@@ -288,17 +325,22 @@ export class FlockHealthComponent implements OnInit, OnDestroy {
     if (this.isSaving) return;
 
     this.isSaving = true;
-    this.editingId = null;
 
+    // Compute the FCR while `editingId` still points at this row — `fcrRows`
+    // (and so the cumulative-feed denominator) only substitutes the live
+    // `editForm` values in place of the stale saved row while editingId matches.
+    // Clearing editingId first would compute against the pre-edit feed_used.
     const fcr = this.editForm.fcrManuallyEdited
       ? (this.editForm.fcr || 0)
       : this.editAutoFcr;
+
+    this.editingId = null;
 
     try {
       await this.db.run(
         `UPDATE flock_health SET
           week_number = ?, total_birds = ?, mortality = ?,
-          feed_used = ?, avg_weight = ?, fcr = ?
+          feed_used = ?, avg_weight = ?, fcr = ?, fcr_manual = ?
          WHERE health_id = ?`,
         [
           this.editForm.week_number,
@@ -307,6 +349,7 @@ export class FlockHealthComponent implements OnInit, OnDestroy {
           this.editForm.feed_used,
           this.editForm.avg_weight,
           fcr,
+          this.editForm.fcrManuallyEdited ? 1 : 0,
           healthId
         ]
       );

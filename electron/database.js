@@ -3,6 +3,10 @@ const fs = require('fs')
 const { app } = require('electron')
 
 let db = null
+// The initSqlJs handle, kept module-scope so a poisoned connection can be
+// rebuilt from the last committed file without re-running initializeDatabase()
+// (which would re-run every migration). See reloadFromDisk().
+let SQL = null
 
 // =============================================
 // CREATE ALL TABLES
@@ -46,7 +50,7 @@ function createTables(db) {
   db.run(`CREATE TABLE IF NOT EXISTS feed_entries (entry_id INTEGER PRIMARY KEY AUTOINCREMENT, trader_id INTEGER NOT NULL, flock_id INTEGER NOT NULL, date DATE NOT NULL, feed_name TEXT NOT NULL, quantity REAL NOT NULL, price_per_unit REAL NOT NULL, total_amount REAL NOT NULL, module_type TEXT DEFAULT 'broiler', bill_id INTEGER, bill_number TEXT, FOREIGN KEY (trader_id) REFERENCES feed_traders(trader_id), FOREIGN KEY (flock_id) REFERENCES flocks(flock_id));`)
   db.run(`CREATE TABLE IF NOT EXISTS sales (sale_id INTEGER PRIMARY KEY AUTOINCREMENT, flock_id INTEGER NOT NULL, date DATE NOT NULL, vehicle_number TEXT, broker TEXT, empty_weight REAL, load_weight REAL, bird_weight REAL, rate REAL NOT NULL, total_amount REAL NOT NULL, payment_type TEXT DEFAULT 'cash', driver_name TEXT DEFAULT '', driver_phone TEXT DEFAULT '', receipt_image TEXT, module_type TEXT DEFAULT 'broiler', FOREIGN KEY (flock_id) REFERENCES flocks(flock_id));`)
   db.run(`CREATE TABLE IF NOT EXISTS income (income_id INTEGER PRIMARY KEY AUTOINCREMENT, flock_id INTEGER NOT NULL, date DATE NOT NULL, description TEXT, amount REAL NOT NULL, source TEXT DEFAULT 'manual', module_type TEXT DEFAULT 'broiler', FOREIGN KEY (flock_id) REFERENCES flocks(flock_id));`)
-  db.run(`CREATE TABLE IF NOT EXISTS flock_health (health_id INTEGER PRIMARY KEY AUTOINCREMENT, flock_id INTEGER NOT NULL, week_number INTEGER NOT NULL, total_birds INTEGER NOT NULL, mortality INTEGER DEFAULT 0, feed_used REAL DEFAULT 0, avg_weight REAL DEFAULT 0, fcr REAL DEFAULT 0, FOREIGN KEY (flock_id) REFERENCES flocks(flock_id));`)
+  db.run(`CREATE TABLE IF NOT EXISTS flock_health (health_id INTEGER PRIMARY KEY AUTOINCREMENT, flock_id INTEGER NOT NULL, week_number INTEGER NOT NULL, total_birds INTEGER NOT NULL, mortality INTEGER DEFAULT 0, feed_used REAL DEFAULT 0, avg_weight REAL DEFAULT 0, fcr REAL DEFAULT 0, fcr_manual INTEGER DEFAULT 0, FOREIGN KEY (flock_id) REFERENCES flocks(flock_id));`)
   db.run(`CREATE TABLE IF NOT EXISTS balance (balance_id INTEGER PRIMARY KEY AUTOINCREMENT, flock_id INTEGER NOT NULL, date DATE NOT NULL, description TEXT, amount REAL NOT NULL, type TEXT NOT NULL, module_type TEXT DEFAULT 'broiler', FOREIGN KEY (flock_id) REFERENCES flocks(flock_id));`)
   db.run(`CREATE TABLE IF NOT EXISTS brokers (broker_id INTEGER PRIMARY KEY AUTOINCREMENT, flock_id INTEGER NOT NULL, broker_name TEXT NOT NULL, FOREIGN KEY (flock_id) REFERENCES flocks(flock_id));`)
 db.run(`CREATE TABLE IF NOT EXISTS activation (machine_id TEXT PRIMARY KEY, activation_code TEXT NOT NULL, trial_start_date TEXT, last_launch_date TEXT, is_permanent INTEGER DEFAULT 0, activated_at DATETIME DEFAULT CURRENT_TIMESTAMP, is_active INTEGER DEFAULT 1,activation_cycle INTEGER DEFAULT 0);`)
@@ -391,7 +395,12 @@ db.run(`CREATE TABLE IF NOT EXISTS categories (category_id INTEGER PRIMARY KEY A
   // NOCASE because "Travel" and "travel" are the same account to the client.
   db.run(`CREATE UNIQUE INDEX IF NOT EXISTS idx_expense_categories_unique
           ON expense_categories(farm_id, category_name COLLATE NOCASE);`)
-  db.run(`CREATE INDEX IF NOT EXISTS idx_personal_expenses_category ON personal_expenses(category_id);`)
+  // NOTE: the index on personal_expenses(category_id) is deliberately NOT here.
+  // On an existing database that column does not exist until the ALTER in
+  // alterStatements has run, which is after this function, so indexing it here
+  // throws "no such column" — and createTables() is called unguarded, so that
+  // throw takes the whole of initializeDatabase() with it and the app will not
+  // start. It lives in alterStatements instead, which try/catches per statement.
 }
 
 // =============================================
@@ -903,11 +912,158 @@ function repairOrphanedUnitIds(db) {
 }
 
 // =============================================
+// ONE-TIME MIGRATION: mark ledger entries that mirror an expense
+// =============================================
+// `ledger_entries.source = 'expense'` means "this debit is the ledger-side mirror
+// of a row in `expenses`". Every report that totals ledger debits excludes those
+// (see report.component.ts totalLedgerDebit, farm-report.service.ts,
+// overview.service.ts), because the expenses table already counts the cost.
+// Flipping an entry to 'expense' therefore REMOVES it from the books.
+//
+// The original version of this migration ran on every launch and matched on
+// (ledger_id, date, amount) — a fuzzy triple. Two debits of, say, 5000 booked to
+// the same ledger on the same day are ordinary in this business, so a genuine
+// manual debit that merely coincided with an expense was silently reclassified
+// and vanished from every cost total. Nothing about that was visible in the UI:
+// the row still renders in the ledger, it just stops being counted.
+//
+// This version matches only on the explicit link that expenses.ledger_entry_id
+// already carries — written by linkExpenseToLedger() at the moment the pair is
+// created, so it identifies the mirror rather than guessing at it.
+//
+// Deliberately NOT backfilled by any heuristic: a legacy mirror whose
+// ledger_entry_id was never written stays 'manual'. The two failure directions
+// are not symmetric. Leaving a real mirror unmarked double-counts one cost —
+// wrong, but it shows up as a number that is too big, and both rows are visible.
+// Marking a real debit as a mirror deletes a cost from the books with nothing
+// on screen to say so. Between an overstatement you can see and an understatement
+// you cannot, this migration always errs toward the visible one.
+//
+// Same convergent shape as the backfills above: flag written last, so a throw
+// leaves it unset and the next launch re-runs. The UPDATE is idempotent anyway.
+function migrateExpenseLedgerSource(db) {
+  const MIGRATION_KEY = 'migration_ledger_source_expense_v2'
+  const SETTINGS_SCOPE_APP = 0
+
+  const selectRows = (sql, params = []) => {
+    const stmt = db.prepare(sql)
+    stmt.bind(params)
+    const rows = []
+    while (stmt.step()) rows.push(stmt.getAsObject())
+    stmt.free()
+    return rows
+  }
+
+  const alreadyApplied = selectRows(
+    `SELECT value FROM app_settings WHERE farm_id = ? AND key = ?`,
+    [SETTINGS_SCOPE_APP, MIGRATION_KEY]
+  )
+  if (alreadyApplied.length > 0) return
+
+  const pending = selectRows(`
+    SELECT COUNT(*) AS count FROM ledger_entries
+    WHERE COALESCE(source, 'manual') <> 'expense'
+      AND entry_id IN (SELECT ledger_entry_id FROM expenses WHERE ledger_entry_id IS NOT NULL)
+  `)[0].count
+
+  if (pending > 0) {
+    db.run(`
+      UPDATE ledger_entries
+      SET source = 'expense'
+      WHERE COALESCE(source, 'manual') <> 'expense'
+        AND entry_id IN (SELECT ledger_entry_id FROM expenses WHERE ledger_entry_id IS NOT NULL)
+    `)
+  }
+
+  // Diagnostic only — never modifies anything. An entry marked 'expense' that no
+  // expense row points at is either a pre-link mirror (benign) or a genuine debit
+  // that the old fuzzy migration reclassified (a lost cost). The two cannot be
+  // told apart from the data alone, so this only reports the count; see the
+  // README note on recovering from a backup if it is non-zero and unexplained.
+  const orphaned = selectRows(`
+    SELECT COUNT(*) AS count FROM ledger_entries
+    WHERE source = 'expense'
+      AND entry_id NOT IN (SELECT ledger_entry_id FROM expenses WHERE ledger_entry_id IS NOT NULL)
+  `)[0].count
+
+  db.run(
+    `INSERT INTO app_settings (farm_id, key, value) VALUES (?, ?, ?)
+     ON CONFLICT(farm_id, key) DO UPDATE SET value = excluded.value`,
+    [SETTINGS_SCOPE_APP, MIGRATION_KEY, '1']
+  )
+
+  console.log(`ledger source backfill complete — ${pending} entry(s) linked to an expense marked; ${orphaned} entry(s) marked 'expense' with no linking expense row (see migrateExpenseLedgerSource)`)
+}
+
+// =============================================
+// ONE-TIME MIGRATION: de-duplicate categories
+// =============================================
+// Collapses duplicate (farm_id, category_type, category_name) rows down to the
+// lowest category_id so the unique index below can be created. This ran unguarded
+// on every launch, which is the same shape as the vaccinations bug: a DELETE in
+// the always-runs path keeps deleting for the life of the install. Any category
+// a user legitimately re-created after this first ran was destroyed again at the
+// next start, with no error and nothing on screen to explain where it went.
+//
+// Behind a flag it does what it was meant to do — clean up once, before the index
+// exists — and after that the UNIQUE index is what prevents duplicates.
+function migrateDeduplicateCategories(db) {
+  const MIGRATION_KEY = 'migration_categories_dedupe_v1'
+  const SETTINGS_SCOPE_APP = 0
+
+  const selectRows = (sql, params = []) => {
+    const stmt = db.prepare(sql)
+    stmt.bind(params)
+    const rows = []
+    while (stmt.step()) rows.push(stmt.getAsObject())
+    stmt.free()
+    return rows
+  }
+
+  const alreadyApplied = selectRows(
+    `SELECT value FROM app_settings WHERE farm_id = ? AND key = ?`,
+    [SETTINGS_SCOPE_APP, MIGRATION_KEY]
+  )
+  if (alreadyApplied.length > 0) return
+
+  // No child rows need repointing, and this is worth stating because it is not
+  // obvious: nothing in the schema holds a foreign key to categories.category_id
+  // (`grep "REFERENCES categories"` finds none). `products.category` is TEXT, and
+  // the inventory and expense-ledger screens match categories by NAME. The one
+  // table that does carry a `category_id` — personal_expenses — points at
+  // `expense_categories`, a different table in a different id space; joining it
+  // to `categories` here would repoint rows on a coincidental id collision and
+  // corrupt them. Collapsing same-name rows is therefore invisible to every
+  // consumer: they were already resolving the name to the surviving row.
+  const removed = selectRows(`
+    SELECT COUNT(*) AS count FROM categories WHERE category_id NOT IN (
+      SELECT MIN(category_id) FROM categories
+      GROUP BY farm_id, category_type, category_name
+    )
+  `)[0].count
+
+  db.run(`
+    DELETE FROM categories WHERE category_id NOT IN (
+      SELECT MIN(category_id) FROM categories
+      GROUP BY farm_id, category_type, category_name
+    )
+  `)
+
+  db.run(
+    `INSERT INTO app_settings (farm_id, key, value) VALUES (?, ?, ?)
+     ON CONFLICT(farm_id, key) DO UPDATE SET value = excluded.value`,
+    [SETTINGS_SCOPE_APP, MIGRATION_KEY, '1']
+  )
+
+  console.log(`categories de-duplicated — ${removed} duplicate row(s) removed`)
+}
+
+// =============================================
 // MAIN INITIALIZE FUNCTION
 // =============================================
 async function initializeDatabase() {
   const initSqlJs = require('sql.js')
-  const SQL = await initSqlJs()
+  SQL = await initSqlJs()
 
   const dbPath = path.join(app.getPath('userData'), 'sng_farm.db')
   let recovered = false
@@ -1015,6 +1171,14 @@ async function initializeDatabase() {
     // User-defined personal expense categories. The `category` text column is
     // deliberately left in place and still written — see backfillExpenseCategories().
     `ALTER TABLE personal_expenses ADD COLUMN category_id INTEGER`,
+    // Must come after the ADD COLUMN above — this array runs in order, and the
+    // index cannot be built before the column exists.
+    `CREATE INDEX IF NOT EXISTS idx_personal_expenses_category ON personal_expenses(category_id)`,
+    // Marks a flock_health row whose FCR the user typed by hand, so it survives a
+    // reload and is never overwritten by the auto calculation. Rows saved before
+    // this existed default to 0 (auto), and their stored `fcr` is left untouched —
+    // the UI derives what it displays from cumulative feed instead.
+    `ALTER TABLE flock_health ADD COLUMN fcr_manual INTEGER DEFAULT 0`,
   ]
   
   for (const sql of alterStatements) {
@@ -1030,36 +1194,34 @@ async function initializeDatabase() {
     console.error('vaccinations rebuild failed, will retry on next launch:', e.message)
   }
 
+  // One-shot, flagged. Was an every-launch UPDATE matching expenses on a fuzzy
+  // (ledger_id, date, amount) triple, which reclassified genuine debits out of
+  // the books whenever amounts coincided. See the function for the full story.
   try {
-    db.run(`
-      UPDATE ledger_entries
-      SET source = 'expense'
-      WHERE entry_id IN (
-        SELECT le.entry_id
-        FROM ledger_entries le
-        INNER JOIN expenses e ON le.ledger_id = e.ledger_id
-          AND le.date = e.date
-          AND le.amount = e.amount
-        WHERE e.ledger_id IS NOT NULL
-      )
-    `)
-  } catch(e) {}
+    migrateExpenseLedgerSource(db)
+  } catch (e) {
+    console.error('ledger source backfill failed, will retry on next launch:', e.message)
+  }
 
   try {
     db.run(`DROP INDEX IF EXISTS idx_categories_farm_name`)
   } catch(e) {}
 
+  // Must stay ahead of the de-dupe below and of the unique index: NULLs are
+  // distinct to a UNIQUE index and to GROUP BY, so rows still carrying a NULL
+  // category_type would neither collapse nor be constrained. Idempotent.
   try {
     db.run(`UPDATE categories SET category_type = 'product' WHERE category_type IS NULL`)
   } catch(e) {}
 
+  // One-shot, flagged. Was an unguarded every-launch DELETE — the same shape as
+  // the vaccinations bug, destroying legitimately re-created categories on every
+  // start. The unique index below is what keeps duplicates out from here on.
   try {
-    db.run(`
-      DELETE FROM categories WHERE category_id NOT IN (
-        SELECT MIN(category_id) FROM categories GROUP BY farm_id, category_type, category_name
-      )
-    `)
-  } catch(e) {}
+    migrateDeduplicateCategories(db)
+  } catch (e) {
+    console.error('categories de-dupe failed, will retry on next launch:', e.message)
+  }
 
   try {
     db.run(`CREATE UNIQUE INDEX IF NOT EXISTS idx_categories_farm_type_name ON categories(farm_id, category_type, category_name)`)
@@ -1154,6 +1316,16 @@ async function initializeDatabase() {
 // SAVE DATABASE
 // =============================================
 function saveDatabase(dbPath) {
+  // The last line of defence. runQuery/runBatch already refuse while poisoned,
+  // but a number of helper functions in this file call db.run() directly and
+  // never went through either — those mutate the in-memory database, and this is
+  // the single chokepoint where anything reaches the file. Refusing here is what
+  // makes "nothing was written" true regardless of which path a stray statement
+  // took. clearPoison() then discards that in-memory drift by reloading.
+  if (poisonedConnection) {
+    console.error('🛑 Refused a disk write on a poisoned connection — the file keeps its last committed state.')
+    return
+  }
   // db.export() closes and re-opens the connection, which silently throws away
   // any open transaction (verified against sql.js 1.14). Writing to disk
   // mid-transaction would lose the very work being protected — commitTransaction()
@@ -1282,6 +1454,8 @@ function executeStatement(sql, params = []) {
 }
 
 function runQuery(sql, params = []) {
+  if (poisonedConnection) return refuseWrite('a write')
+
   try {
     const { lastId } = executeStatement(sql, params);
 
@@ -1314,6 +1488,101 @@ let savepointCounter = 0
 // abandoned transaction rather than leaving the app in that state.
 const TRANSACTION_TIMEOUT_MS = 60000
 
+// =============================================
+// POISONED CONNECTION
+// =============================================
+// The watchdog fires on a wall clock, not on the renderer flow it is unwinding.
+// A flow that is merely SLOW — not dead — is still mid-way through its
+// statements when the rollback lands, and the rollback clears `inTransaction`.
+// Without the poison, that flow's remaining statements go to runQuery, see no
+// open transaction, execute in autocommit and each call saveDatabase(). Its
+// eventual commitTransaction() then fails ("No database transaction is open")
+// and the UI reports the save failed — while the tail end of that same save is
+// already on disk, with the first half rolled back. Half a bill, half a ledger,
+// and a screen that says nothing was written.
+//
+// That is strictly worse than having no transaction at all: without one, the
+// whole save reaches disk and the books are at least complete. So once the
+// watchdog has unwound a flow, this refuses every subsequent write on that
+// connection. A save that fails completely is recoverable — the user retries it.
+// A save that half-succeeds while reporting failure is not, because nobody knows
+// to go looking.
+//
+// Cleared when the owning flow acknowledges the failure by calling commit or
+// rollback (both then report the failure honestly), or by the stale-poison
+// escape hatch in beginTransaction() below for a flow that never comes back.
+let poisonedConnection = null
+
+function poisonConnection(reason) {
+  poisonedConnection = { reason, poisonedAt: Date.now(), refusedWrites: 0 }
+  console.error(
+    `🛑 Database connection poisoned: ${reason}\n` +
+    `   Every further write is refused until the interrupted flow finishes. ` +
+    `This is deliberate — see the poisoned-connection note in electron/database.js.`
+  )
+}
+
+// Every refused write pushes `poisonedAt` forward. A zombie flow that is still
+// grinding therefore keeps the poison alive for as long as it keeps trying to
+// write, and only a genuinely silent connection can ever go stale.
+function refuseWrite(what) {
+  poisonedConnection.refusedWrites++
+  poisonedConnection.poisonedAt = Date.now()
+  console.error(
+    `🛑 Refused ${what} on a poisoned connection ` +
+    `(${poisonedConnection.refusedWrites} refused so far): ${poisonedConnection.reason}`
+  )
+  return {
+    success: false,
+    poisoned: true,
+    error:
+      'This save was cancelled part-way through because it took too long, and nothing from it ' +
+      'has been written. The database was left exactly as it was before the save started. ' +
+      'Please close this screen and try again.'
+  }
+}
+
+// The in-memory database after a watchdog rollback cannot be trusted: the
+// ROLLBACK may itself have thrown, and the helper functions in this file that
+// call db.run() directly (rather than going through runQuery) can have mutated
+// it while the poison only blocked the disk write. Rebuilding the connection
+// from the file — which the poison guaranteed nobody wrote to — is what makes
+// "nothing from that save survived" true of memory as well as of disk.
+function reloadFromDisk() {
+  if (!SQL) throw new Error('sql.js is not initialised')
+  const dbPath = getDbPath()
+  if (!fs.existsSync(dbPath)) throw new Error(`No database file at ${dbPath}`)
+  const fresh = new SQL.Database(fs.readFileSync(dbPath))
+  try { if (db) db.close() } catch (e) { /* the old handle is being discarded anyway */ }
+  db = fresh
+}
+
+// Returns true if the connection is usable again. Kept separate from the
+// callers so a failed reload leaves the poison in place rather than handing back
+// a connection whose state nobody can vouch for.
+function clearPoison() {
+  try {
+    reloadFromDisk()
+  } catch (err) {
+    console.error(
+      `🛑 Could not rebuild the database connection after a poisoned transaction: ${err.message}\n` +
+      `   Staying poisoned. Restart the app.`
+    )
+    return false
+  }
+  const held = poisonedConnection
+  poisonedConnection = null
+  console.log(
+    `Database connection recovered after ${held.refusedWrites} refused write(s); ` +
+    `reloaded from the last committed file on disk.`
+  )
+  return true
+}
+
+function isPoisoned() {
+  return poisonedConnection !== null
+}
+
 function getDbPath() {
   return path.join(app.getPath('userData'), 'sng_farm.db')
 }
@@ -1327,8 +1596,12 @@ function startTransactionWatchdog() {
   transactionWatchdog = setTimeout(() => {
     transactionWatchdog = null
     if (!inTransaction) return
-    console.error(`⚠️ A database transaction has been open for more than ${TRANSACTION_TIMEOUT_MS}ms — rolling it back so writes can reach disk again.`)
-    rollbackTransaction()
+    console.error(`⚠️ A database transaction has been open for more than ${TRANSACTION_TIMEOUT_MS}ms — rolling it back.`)
+    // Poison BEFORE the rollback. rollbackTransaction() clears `inTransaction`,
+    // and the instant it does, any statement the owning flow issues would be
+    // free to execute in autocommit and hit the disk.
+    poisonConnection(`a transaction was open for more than ${TRANSACTION_TIMEOUT_MS}ms and was rolled back`)
+    performRollback()
   }, TRANSACTION_TIMEOUT_MS)
   if (typeof transactionWatchdog.unref === 'function') transactionWatchdog.unref()
 }
@@ -1341,6 +1614,22 @@ function clearTransactionWatchdog() {
 }
 
 function beginTransaction() {
+  // Escape hatch for a flow that was killed outright — a renderer reload, or an
+  // exception path that skipped its finally — and so will never call commit or
+  // rollback to clear the poison itself. Without this the app would be
+  // permanently read-only until restart, which is the very lock-up the watchdog
+  // exists to prevent.
+  //
+  // Safe because refuseWrite() pushes `poisonedAt` forward on every refusal: a
+  // zombie flow still issuing statements keeps the poison fresh and never
+  // reaches this branch. Only a connection that has been silent for a full
+  // timeout AND is now seeing a brand-new transaction begin is treated as clear.
+  if (poisonedConnection && Date.now() - poisonedConnection.poisonedAt >= TRANSACTION_TIMEOUT_MS) {
+    console.error('🛑 The poisoned flow has been silent for a full timeout — recovering the connection for a new transaction.')
+    clearPoison()
+  }
+  if (poisonedConnection) return refuseWrite('a BEGIN')
+
   if (inTransaction) {
     return { success: false, error: 'A database transaction is already open' }
   }
@@ -1355,6 +1644,25 @@ function beginTransaction() {
 }
 
 function commitTransaction() {
+  // The owning flow has come back to commit a transaction the watchdog already
+  // unwound. Tell it the truth — nothing it did was kept — and let it go. The
+  // bare `!inTransaction` check below would say "No database transaction is
+  // open", which is accurate and completely uninformative.
+  if (poisonedConnection) {
+    const reason = poisonedConnection.reason
+    const recovered = clearPoison()
+    return {
+      success: false,
+      poisoned: true,
+      recovered,
+      error:
+        'This save was cancelled part-way through because it took too long, and nothing from it ' +
+        'has been written. The database was left exactly as it was before the save started. ' +
+        'Please try again.' + (recovered ? '' : ' If it fails again, restart the app.') +
+        ` (${reason})`
+    }
+  }
+
   if (!inTransaction) {
     return { success: false, error: 'No database transaction is open' }
   }
@@ -1380,10 +1688,12 @@ function commitTransaction() {
   return { success: true }
 }
 
-function rollbackTransaction() {
+// The actual unwind. Split out from rollbackTransaction() so the watchdog can
+// unwind WITHOUT clearing the poison it just set — the public entry point treats
+// a rollback as the owning flow acknowledging the failure, which is exactly what
+// the watchdog is not.
+function performRollback() {
   if (!inTransaction) {
-    // Safe to call from a finally block that doesn't know whether the
-    // transaction is still open.
     return { success: true, rolledBack: false }
   }
 
@@ -1396,6 +1706,21 @@ function rollbackTransaction() {
     console.error('Rollback failed:', err.message)
     return { success: false, error: err.message }
   }
+}
+
+function rollbackTransaction() {
+  // The owning flow's finally block, arriving after the watchdog already unwound
+  // its transaction. The rollback it is asking for has happened, so this reports
+  // success — but it is also the signal that the flow is done, which is what
+  // releases the poison.
+  if (poisonedConnection) {
+    const recovered = clearPoison()
+    return { success: recovered, rolledBack: true, poisoned: true, recovered }
+  }
+
+  // Safe to call from a finally block that doesn't know whether the transaction
+  // is still open.
+  return performRollback()
 }
 
 // Resolves { $lastId: n } placeholders against the ids of earlier operations in
@@ -1429,6 +1754,8 @@ function resolveBatchParams(params, results, opIndex) {
 // or none of them do, and the database file is written once — not once per
 // statement the way runQuery does it.
 function runBatch(ops) {
+  if (poisonedConnection) return refuseWrite('a batch')
+
   if (!Array.isArray(ops) || ops.length === 0) {
     return { success: false, error: 'runBatch expects a non-empty array of { sql, params } operations' }
   }
@@ -2743,6 +3070,7 @@ setAppSetting,
   commitTransaction,
   rollbackTransaction,
   isInTransaction,
+  isPoisoned,
   getBatchesByProduct,
   addBatch,
   updateBatch,

@@ -9,6 +9,7 @@ import { DateOnlyPipe } from '../shared/pipes/date-format.pipe';
 import { Subscription } from 'rxjs';
 import { skip } from 'rxjs/operators';
 
+import { toLocalDateString } from '../shared/utils/date.util';
 @Component({
   selector: 'app-balance',
   standalone: true,
@@ -29,7 +30,7 @@ export class BalanceComponent implements OnInit, OnDestroy {
   private subs = new Subscription();
 
   newRow = {
-    date: new Date().toISOString().split('T')[0],
+    date: toLocalDateString(),
     description: '',
     amount: null as number | null,
     type: 'credit'
@@ -116,7 +117,7 @@ export class BalanceComponent implements OnInit, OnDestroy {
     if (this.isSaving) return;
     this.editingId = null;
     this.newRow = {
-      date: new Date().toISOString().split('T')[0],
+      date: toLocalDateString(),
       description: '',
       amount: null,
       type: 'credit'

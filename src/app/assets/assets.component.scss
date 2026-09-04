@@ -52,3 +52,109 @@ td { padding: 14px 16px; font-size: 14px; border-bottom: 1px solid #f0f0f0; }
 
 .inline-input { width: 100%; padding: 7px 10px; border: 1.5px solid #1a5c38; border-radius: 6px; background: #f0faf4; font-size: 13px; box-sizing: border-box; }
 textarea.inline-input { resize: vertical; font-family: inherit; }
+
+// ── Card grid ────────────────────────────────────────────────
+// Follows the ledger-card conventions in account-ledger.component.scss: a
+// clickable white card that lifts on hover, in an auto-fitting grid.
+.card-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+  gap: 20px;
+}
+
+.asset-card {
+  background: white;
+  border: 1px solid #e0e0e0;
+  border-radius: 16px;
+  padding: 20px;
+  cursor: pointer;
+  transition: all 0.2s;
+
+  &:hover {
+    transform: translateY(-4px);
+    box-shadow: 0 8px 24px rgba(0,0,0,0.12);
+    border-color: #1a5c38;
+  }
+
+  &.sold { background: #fafafa; }
+
+  .card-top {
+    display: flex;
+    justify-content: space-between;
+    align-items: flex-start;
+    gap: 10px;
+
+    h4 { margin: 0; font-size: 16px; }
+  }
+
+  .card-meta { font-size: 12px; color: #888; margin: 4px 0 14px; }
+
+  .card-figures {
+    display: flex;
+    justify-content: space-between;
+    gap: 8px;
+    margin-bottom: 12px;
+
+    .figure { display: flex; flex-direction: column; gap: 2px; }
+    .figure-label { font-size: 11px; color: #888; text-transform: uppercase; letter-spacing: 0.4px; }
+    .figure-value { font-size: 15px; font-weight: 600; }
+    .figure-value.paid { color: #1a5c38; }
+  }
+
+  .card-footer {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-top: 12px;
+    font-size: 12px;
+
+    .payment-count { color: #888; }
+    .open-hint { color: #1a5c38; font-weight: 500; }
+  }
+}
+
+.progress-track {
+  height: 6px;
+  border-radius: 3px;
+  background: #f0f0f0;
+  overflow: hidden;
+
+  .progress-fill {
+    height: 100%;
+    background: #f9a825;
+    transition: width 0.2s;
+
+    &.complete { background: #1a5c38; }
+  }
+}
+
+// ── Detail view ──────────────────────────────────────────────
+.btn-back {
+  background: none;
+  border: none;
+  color: #1a5c38;
+  font-size: 13px;
+  cursor: pointer;
+  padding: 0 0 6px;
+}
+
+.header-actions { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+
+.section-heading { font-size: 15px; font-weight: 600; margin: 24px 0 12px; }
+
+.detail-note {
+  background: white;
+  border: 1px solid #e0e0e0;
+  border-radius: 12px;
+  padding: 14px 20px;
+  font-size: 13px;
+  color: #555;
+}
+
+.field-hint { font-size: 12px; color: #888; margin: 0; }
+
+tfoot td {
+  background: #f8f9fa;
+  font-weight: 600;
+  border-bottom: none;
+}

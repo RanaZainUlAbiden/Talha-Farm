@@ -665,3 +665,28 @@ select.inline-input {
     border: 1px solid #e0e0e0;
   }
 }
+
+.modal-overlay { position: fixed; inset: 0; background: rgba(0,0,0,0.4); display: flex; align-items: center; justify-content: center; z-index: 1000; }
+.modal-card { background: white; border-radius: 12px; padding: 24px; }
+.modal-card.image-modal {
+  position: relative;
+  padding: 16px;
+  max-width: 90vw;
+  max-height: 90vh;
+  display: flex;
+
+  img { max-width: 100%; max-height: 80vh; object-fit: contain; border-radius: 6px; }
+}
+.btn-close-image {
+  position: absolute;
+  top: 6px;
+  right: 10px;
+  background: none;
+  border: none;
+  font-size: 24px;
+  line-height: 1;
+  color: #666;
+  cursor: pointer;
+
+  &:hover { color: #c62828; }
+}

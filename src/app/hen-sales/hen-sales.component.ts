@@ -11,6 +11,7 @@ import { FlockService } from '../shared/services/flock.service';
 import { FarmUnitService } from '../shared/services/farm-unit.service';
 import { Subscription } from 'rxjs';
 
+import { toLocalDateString } from '../shared/utils/date.util';
 @Component({
   selector: 'app-hen-sales',
   standalone: true,
@@ -197,7 +198,7 @@ export class HenSalesComponent implements OnInit, OnDestroy {
   makeNewRow() {
     return {
       batch_id: this.selectedBatchFilter !== 'all' ? Number(this.selectedBatchFilter) : (this.batches[0]?.batch_id || null),
-      date: new Date().toISOString().split('T')[0],
+      date: toLocalDateString(),
       customer_name: '',
       quantity: null,
       rate_per_hen: null,

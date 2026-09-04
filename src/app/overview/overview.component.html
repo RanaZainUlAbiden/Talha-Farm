@@ -35,43 +35,40 @@
       <span>{{ w }}</span>
     </div>
 
-    <!-- Headline block -->
+    <!-- Headline block: money in, money out, profit or loss -->
     <div class="headline-card">
       <div class="headline-row">
-        <span class="headline-label">Total Revenue</span>
-        <span class="headline-value">Rs. {{ s.revenue.total | number:'1.0-0' }}</span>
-      </div>
-      <div class="headline-row">
-        <span class="headline-label">
-          Total Expenses
-          <span class="headline-sub">(of which personal: Rs. {{ s.personalWithdrawals | number:'1.0-0' }})</span>
-        </span>
-        <span class="headline-value">Rs. {{ s.expenses.total | number:'1.0-0' }}</span>
+        <span class="headline-label">Total Money In</span>
+        <span class="headline-value">Rs. {{ s.moneyIn.total | number:'1.0-0' }}</span>
       </div>
 
-      <div class="headline-divider"></div>
-
-      <div class="headline-row emphasis">
-        <span class="headline-label">Business Net Profit</span>
-        <span class="headline-value" [class.positive]="s.businessNetProfit >= 0" [class.negative]="s.businessNetProfit < 0">
-          Rs. {{ s.businessNetProfit | number:'1.0-0' }}
-        </span>
-      </div>
       <div class="headline-row">
-        <span class="headline-label">Less: Personal Withdrawals</span>
-        <span class="headline-value">Rs. {{ s.personalWithdrawals | number:'1.0-0' }}</span>
+        <span class="headline-label">Total Money Out</span>
+        <span class="headline-value">Rs. {{ s.moneyOut.total | number:'1.0-0' }}</span>
+      </div>
+      <div class="headline-breakdown">
+        <div class="breakdown-row">
+          <span>Business expenses</span>
+          <span>Rs. {{ s.moneyOut.expenses | number:'1.0-0' }}</span>
+        </div>
+        <div class="breakdown-row">
+          <span>Personal</span>
+          <span>Rs. {{ s.moneyOut.personal | number:'1.0-0' }}</span>
+        </div>
+        <div class="breakdown-row">
+          <span>Asset payments</span>
+          <span>Rs. {{ s.moneyOut.assetPayments | number:'1.0-0' }}</span>
+        </div>
       </div>
 
       <div class="headline-divider"></div>
 
       <div class="headline-row emphasis final">
-        <span class="headline-label">Net Position</span>
-        <span class="headline-value" [class.positive]="s.netPosition >= 0" [class.negative]="s.netPosition < 0">
-          Rs. {{ s.netPosition | number:'1.0-0' }}
+        <span class="headline-label">{{ s.profit >= 0 ? 'Profit' : 'Loss' }}</span>
+        <span class="headline-value" [class.positive]="s.profit >= 0" [class.negative]="s.profit < 0">
+          Rs. {{ s.profit | number:'1.0-0' }}
         </span>
       </div>
-
-      <p class="basis-note">{{ s.basisLabel }}</p>
     </div>
 
     <!-- Distribution stock: purchases are an asset until they sell -->
@@ -103,39 +100,28 @@
       </p>
     </div>
 
-    <!-- Assets / bank / cash -->
-    <div class="summary-grid">
+    <!-- Assets: what is owned, and what is still owed on it -->
+    <div class="summary-grid assets-grid">
       <div class="summary-card assets">
         <div class="card-icon">🏗️</div>
-        <div class="card-label">Active Asset Value</div>
+        <div class="card-label">Assets Owned (value)</div>
         <div class="card-value">Rs. {{ s.assets.activeValue | number:'1.0-0' }}</div>
       </div>
       <div class="summary-card assets">
-        <div class="card-icon">📦</div>
-        <div class="card-label">Active Assets</div>
-        <div class="card-value">{{ s.assets.activeCount }}</div>
-      </div>
-      <div class="summary-card gain" [class.negative-card]="s.assets.realisedGainLoss < 0">
-        <div class="card-icon">📈</div>
-        <div class="card-label">Realised Gain / Loss (Sold Assets)</div>
-        <div class="card-value" [class.positive]="s.assets.realisedGainLoss >= 0" [class.negative]="s.assets.realisedGainLoss < 0">
-          Rs. {{ s.assets.realisedGainLoss | number:'1.0-0' }}
+        <div class="card-icon">📉</div>
+        <div class="card-label">Outstanding Installments</div>
+        <div class="card-value" [class.negative]="s.assets.outstanding > 0">
+          Rs. {{ s.assets.outstanding | number:'1.0-0' }}
         </div>
       </div>
-      <div class="summary-card bank">
-        <div class="card-icon">🏦</div>
-        <div class="card-label">Bank Balance</div>
-        <div class="card-value">Rs. {{ s.bank.total | number:'1.0-0' }}</div>
-      </div>
-      <div class="summary-card cash">
-        <div class="card-icon">💵</div>
-        <div class="card-label">Cash Position (period)</div>
-        <div class="card-value" [class.positive]="s.cash.net >= 0" [class.negative]="s.cash.net < 0">
-          Rs. {{ s.cash.net | number:'1.0-0' }}
+      <div class="summary-card assets">
+        <div class="card-icon">{{ s.profit >= 0 ? '📈' : '📉' }}</div>
+        <div class="card-label">Overall {{ s.profit >= 0 ? 'Profit' : 'Loss' }} (all farms)</div>
+        <div class="card-value" [class.positive]="s.profit >= 0" [class.negative]="s.profit < 0">
+          Rs. {{ s.profit | number:'1.0-0' }}
         </div>
       </div>
     </div>
-    <p class="cash-note">{{ s.cash.note }}</p>
 
     <!-- Per-farm breakdown -->
     <div class="table-card">

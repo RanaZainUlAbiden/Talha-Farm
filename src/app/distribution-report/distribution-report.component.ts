@@ -160,12 +160,44 @@ export class DistributionReportComponent implements OnInit {
     return this.filteredPurchases.reduce((sum: number, p: any) => sum + (p.total_amount || 0), 0);
   }
 
-  get totalSales(): number {
-    return this.filteredSales.reduce((sum: number, s: any) => sum + (s.total_amount || 0), 0);
+  /**
+   * The bills that represent a real sale to an outside customer.
+   *
+   * An internal bill (`payment_type = 'internal'`) is a transfer of stock to the
+   * owner's own broiler flock or layer batch. `sales-orders.component.ts` stamps
+   * it `amount_paid = total_amount` so it does not sit "Unpaid" forever, which
+   * meant every internal transfer read here as revenue that had been collected
+   * in full — the business appearing to earn money by moving goods from one of
+   * its own shelves to another. Revenue is therefore taken from this set, not
+   * from `filteredSales`.
+   *
+   * COGS is NOT taken from this set: see `totalCOGS`.
+   */
+  get externalSales(): any[] {
+    return this.filteredSales.filter((s: any) => (s.payment_type || 'cash') !== 'internal');
   }
 
+  get internalSales(): any[] {
+    return this.filteredSales.filter((s: any) => (s.payment_type || 'cash') === 'internal');
+  }
+
+  /** Value of internal transfers excluded from revenue — disclosure only. */
+  get internalTransferValue(): number {
+    return this.internalSales.reduce((sum: number, s: any) => sum + (Number(s.total_amount) || 0), 0);
+  }
+
+  get internalTransferCount(): number {
+    return this.internalSales.length;
+  }
+
+  /** Billed to outside customers in the period, paid or not (accrual). */
+  get totalSales(): number {
+    return this.externalSales.reduce((sum: number, s: any) => sum + (s.total_amount || 0), 0);
+  }
+
+  /** The part of `totalSales` actually collected — this is what profit uses. */
   get totalPaidSales(): number {
-    return this.filteredSales.reduce((sum: number, s: any) => sum + this.getBillPaidAmount(s), 0);
+    return this.externalSales.reduce((sum: number, s: any) => sum + this.getBillPaidAmount(s), 0);
   }
 
   get totalReturns(): number {
@@ -187,8 +219,15 @@ export class DistributionReportComponent implements OnInit {
    * that money was still on the shelves.
    *
    * Summed over `filteredSales` rather than queried with its own date filter,
-   * so revenue and cost are always drawn from the exact same set of bills — a
-   * bill can never contribute revenue to one side and nothing to the other.
+   * so cost is always drawn from the same date-filtered set of bills.
+   *
+   * `filteredSales` INCLUDES internal bills, where revenue uses `externalSales`
+   * and excludes them — the asymmetry is deliberate and matches
+   * `qDistributionCogs()` in overview.service.ts. Stock transferred to a flock
+   * or batch was genuinely consumed by the business and its purchase cost is a
+   * real cost; what is not real is the internal selling price, which is why the
+   * revenue side drops it. Netting the cost out as well would make an internal
+   * transfer free, and the goods would leave the books entirely.
    */
   get totalCOGS(): number {
     return this.filteredSales.reduce(
@@ -238,11 +277,17 @@ export class DistributionReportComponent implements OnInit {
   }
 
   get totalProfitLoss(): number {
-    // Profit = paid sales revenue − cost of goods sold − expenses.
+    // Profit = collected sales revenue − cost of goods sold − expenses.
     //
-    // Revenue stays CASH basis: only `bills.amount_paid` counts, so an unpaid
-    // bill contributes nothing positive while the cost of the goods it moved is
-    // already charged, pulling profit down until the money is actually collected.
+    // Revenue stays COLLECTED basis: only `bills.amount_paid` counts, so an
+    // unpaid bill contributes nothing positive while the cost of the goods it
+    // moved is already charged, pulling profit down until the money is actually
+    // collected. The billed (accrual) figure and the uncollected balance are
+    // both displayed above it, but neither feeds this number — an unpaid bill is
+    // not profit. overview.service.ts applies the same rule to the same bills.
+    //
+    // Internal transfers are excluded from revenue but their COGS is retained;
+    // see `externalSales` and `totalCOGS`.
     //
     // Purchase returns are NOT added back here. Stock returned to a supplier was
     // never sold, so it never entered COGS; `purchase-returns.component.ts` has
@@ -256,7 +301,7 @@ export class DistributionReportComponent implements OnInit {
    * This is the correct accounting formula
    */
   get totalUnpaidSales(): number {
-    return this.filteredSales.reduce((sum: number, s: any) => {
+    return this.externalSales.reduce((sum: number, s: any) => {
       const total = Number(s.total_amount) || 0;
       return sum + Math.max(total - this.getBillPaidAmount(s), 0);
     }, 0);
@@ -278,8 +323,9 @@ export class DistributionReportComponent implements OnInit {
     return this.filteredPurchases.length;
   }
 
+  /** External bills only, so it agrees with `totalSales` beside it. */
   get totalSalesCount(): number {
-    return this.filteredSales.length;
+    return this.externalSales.length;
   }
 
   get totalReturnsCount(): number {
@@ -485,6 +531,14 @@ export class DistributionReportComponent implements OnInit {
    * always writes and `restoreBillStock` ("Restored from deleted/edited sale")
    * never does. Anything failing both tests is treated as a bill reference.
    *
+   * The `' - '` in that LIKE pattern is load-bearing, not cosmetic. Matching on
+   * `return_number || '%'` made RET-100 match the notes of RET-1000, RET-1001,
+   * … as well as its own, so from the 100th return onwards a single return row
+   * could join several transactions and net the same goods off more than once.
+   * `restoreReturnedStock()` writes the note as `${return_number} - Bill ...`,
+   * so requiring the separator pins the match to the whole number. Keep the two
+   * in step: change the note format and this pattern changes with it.
+   *
    * `type = 'purchase'` and `type = 'adjustment'` are excluded on purpose:
    * adjustments are stock leaving for a purchase edit, a purchase return or a
    * batch deletion. That stock was never sold, so it is not a cost of sales.
@@ -623,7 +677,7 @@ export class DistributionReportComponent implements OnInit {
          LEFT JOIN sales_returns sr
                 ON sr.return_id = bt.reference_id
                AND sr.farm_id = ?
-               AND bt.notes LIKE sr.return_number || '%'
+               AND bt.notes LIKE sr.return_number || ' - %'
          WHERE pb.farm_id = ? AND bt.type = 'return' AND bt.reference_id IS NOT NULL
        )
        GROUP BY bill_id, product_id`,
@@ -735,6 +789,10 @@ export class DistributionReportComponent implements OnInit {
         `screen to correct the figure.`
       );
     }
+  }
+
+  isInternalBill(bill: any): boolean {
+    return (bill?.payment_type || 'cash') === 'internal';
   }
 
   isBillPaid(bill: any): boolean {
@@ -868,13 +926,19 @@ export class DistributionReportComponent implements OnInit {
           ['Current Inventory Value (all unsold stock, at cost)', rs(this.totalInventoryValue)],
 
           // ── Trading result ──
-          ['Total Sales (Billed)', rs(this.totalSales)],
-          ['Total Paid Sales (revenue counted)', rs(this.totalPaidSales)],
-          ['Total Unpaid Sales (not counted as revenue)', rs(this.totalUnpaidSales)],
+          ['Sales Billed to Customers', rs(this.totalSales)],
+          ['Less: Billed but Not Yet Collected', rs(this.totalUnpaidSales)],
+          ['= Revenue Counted (money collected)', rs(this.totalPaidSales)],
           ['Cost of Goods Sold', rs(this.totalCOGS)],
-          ['Gross Profit (Paid Sales - Cost of Goods Sold)', rs(this.grossProfit)],
+          ['Gross Profit (Revenue Counted - Cost of Goods Sold)', rs(this.grossProfit)],
           ['Total Expenses', rs(this.totalExpenses)],
-          ['Profit / Loss (Paid Sales - Cost of Goods Sold - Expenses)', rs(this.totalProfitLoss)]
+          ['Profit / Loss (Revenue Counted - Cost of Goods Sold - Expenses)', rs(this.totalProfitLoss)],
+          ...(this.internalTransferCount > 0
+            ? ([[
+                `Own-Farm Transfers, excluded from revenue (${this.internalTransferCount})`,
+                rs(this.internalTransferValue)
+              ]] as [string, string][])
+            : [])
         ];
 
         doc.setFont('helvetica', 'normal');
@@ -897,9 +961,11 @@ export class DistributionReportComponent implements OnInit {
           'Profit charges only the purchase cost of the stock that actually sold (cost of goods sold), ' +
           'traced through the stock batches each sale drew from. Stock still on the shelves is an asset ' +
           'you own, not money lost, so it is shown as Inventory Value instead of being charged against ' +
-          'profit. Revenue is cash basis: an unpaid bill is not counted until it is collected. Purchase ' +
-          'returns are not credited to profit — that stock never sold, so its cost never entered the ' +
-          'profit calculation.',
+          'profit. Sales are shown as billed, then reduced by whatever has not yet been collected: an ' +
+          'unpaid bill is never counted as profit until the money arrives. Transfers to your own flocks ' +
+          'or batches are not sales and are excluded from revenue, though the cost of that stock is ' +
+          'still charged. Purchase returns are not credited to profit — that stock never sold, so its ' +
+          'cost never entered the profit calculation.',
           pw - margin * 2 - 12
         );
         doc.text(basisNote, margin + 6, y);

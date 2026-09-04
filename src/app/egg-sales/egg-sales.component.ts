@@ -11,6 +11,7 @@ import { FlockService } from '../shared/services/flock.service';
 import { FarmUnitService } from '../shared/services/farm-unit.service';
 import { Subscription } from 'rxjs';
 
+import { toLocalDateString } from '../shared/utils/date.util';
 @Component({
   selector: 'app-egg-sales',
   standalone: true,
@@ -232,7 +233,7 @@ private editOriginalGrade: string = '';
 
   getBatchName(id: number) { return this.batches.find(b => b.batch_id === id)?.batch_name || '—'; }
 
-  makeNewRow() { return { batch_id: this.selectedBatchFilter !== 'all' ? Number(this.selectedBatchFilter) : (this.batches[0]?.batch_id || null), date: new Date().toISOString().split('T')[0], customer_name: '', grade: 'mixed', quantity: null, rate_per_egg: this.defaultRate, amount: null, payment_type: 'cash' }; }
+  makeNewRow() { return { batch_id: this.selectedBatchFilter !== 'all' ? Number(this.selectedBatchFilter) : (this.batches[0]?.batch_id || null), date: toLocalDateString(), customer_name: '', grade: 'mixed', quantity: null, rate_per_egg: this.defaultRate, amount: null, payment_type: 'cash' }; }
   applyDefaultRateToAll() { if (this.defaultRate !== null) { this.pendingRows.forEach(row => { row.rate_per_egg = this.defaultRate; }); } }
 
   addPendingRow() { if (!this.isSaving) { this.editingId = null; this.pendingRows.push(this.makeNewRow()); } }

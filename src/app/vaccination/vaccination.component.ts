@@ -9,6 +9,7 @@ import { FlockService } from '../shared/services/flock.service';
 import { FarmUnitService } from '../shared/services/farm-unit.service';
 import { Subscription } from 'rxjs';
 
+import { toLocalDateString } from '../shared/utils/date.util';
 @Component({
   selector: 'app-vaccination',
   standalone: true,
@@ -157,7 +158,7 @@ export class VaccinationComponent implements OnInit, OnDestroy {
     return { 
       batch_id: this.currentBatchId || null, 
       flock_id: this.currentFlockId || null, 
-      date: new Date().toISOString().split('T')[0], 
+      date: toLocalDateString(), 
       vaccine_name: '', 
       dose: '', 
       notes: '', 

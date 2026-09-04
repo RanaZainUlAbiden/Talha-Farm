@@ -11,6 +11,7 @@ import { skip } from 'rxjs/operators';
 import { PendingStateService } from '../shared/services/pending-state.service';
 import { PaginationComponent } from '../shared/components/pagination/pagination.component';
 
+import { toLocalDateString } from '../shared/utils/date.util';
 @Component({
   selector: 'app-expenses',
   standalone: true,
@@ -73,6 +74,9 @@ export class ExpensesComponent implements OnInit, OnDestroy {
     if (event.ctrlKey && event.key === 's') {
       event.preventDefault();
       if (this.hasPendingRows) this.saveAllRows();
+    }
+    if (event.key === 'Escape' && this.viewingImage) {
+      this.closeImage();
     }
   }
 
@@ -193,7 +197,7 @@ export class ExpensesComponent implements OnInit, OnDestroy {
   // ── Pending Rows (Multi-row add) ─────────────────────────────
   makeNewRow(): any {
     return {
-      date: new Date().toISOString().split('T')[0],
+      date: toLocalDateString(),
       description: '',
       amount: null,
       ledger_id: 'other',
@@ -320,9 +324,14 @@ export class ExpensesComponent implements OnInit, OnDestroy {
     reader.readAsDataURL(file);
   }
 
+  viewingImage: string | null = null;
+
   openImage(base64: string) {
-    const win = window.open('', '_blank');
-    if (win) win.document.write('<img src="' + base64 + '" style="max-width:100%;">');
+    this.viewingImage = base64;
+  }
+
+  closeImage() {
+    this.viewingImage = null;
   }
   // ── Edit ───────────────────────────────────────────────────
   startEdit(expense: any) {

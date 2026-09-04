@@ -1,4 +1,4 @@
-import { Component, OnInit, ChangeDetectorRef, OnDestroy } from '@angular/core';
+import { Component, OnInit, ChangeDetectorRef, OnDestroy, HostListener } from '@angular/core';
 import { CommonModule } from '@angular/common';
 import { FormsModule } from '@angular/forms';
 import { DatabaseService } from '../shared/services/database.service';
@@ -8,6 +8,7 @@ import { ConfirmDialogComponent } from '../shared/components/confirm-dialog/conf
 import { DateOnlyPipe } from '../shared/pipes/date-format.pipe';
 import { PaginationComponent } from '../shared/components/pagination/pagination.component';
 
+import { toLocalDateString } from '../shared/utils/date.util';
 @Component({
   selector: 'app-purchase-orders',
   standalone: true,
@@ -196,7 +197,7 @@ export class PurchaseOrdersComponent implements OnInit, OnDestroy {
     return { 
       product_id: this.products[0]?.product_id || null, 
       supplier_id: null, 
-      date: new Date().toISOString().split('T')[0], 
+      date: toLocalDateString(), 
       quantity: null, 
       cost_price: null, 
       payment_type: 'cash', 
@@ -269,43 +270,43 @@ export class PurchaseOrdersComponent implements OnInit, OnDestroy {
     reader.readAsDataURL(file);
   }
 
+  viewingImage: string | null = null;
+
   openImage(base64: string) {
-    const win = window.open('', '_blank');
-    if (win) win.document.write('<img src="' + base64 + '" style="max-width:100%;">');
+    this.viewingImage = base64;
+  }
+
+  closeImage() {
+    this.viewingImage = null;
+  }
+
+  @HostListener('window:keydown.escape')
+  handleEscape() {
+    if (this.viewingImage) this.closeImage();
   }
 
 
   // ── BATCH OPERATIONS ─────────────────────────────────────
 
+  /** Throws on failure — callers run inside a `db.transaction`, so a swallowed
+   *  error here would let an incomplete write commit along with the rest. */
   async updateInventoryWithBatch(productId: number, quantity: number, costPrice: number) {
-    try {
-      const today = new Date().toISOString().split('T')[0];
-      const oneYearLater = new Date();
-      oneYearLater.setFullYear(oneYearLater.getFullYear() + 1);
-      const expiryDate = oneYearLater.toISOString().split('T')[0];
-      
-      const result = await this.db.addBatch({
-        product_id: productId,
-        farm_id: this.currentFarm.farm_id,
-        manufacturing_date: today,
-        expiry_date: expiryDate,
-        quantity: quantity,
-        purchase_price: costPrice
-      });
-      
-      if (result.success) {
-        console.log(`✅ Added ${quantity} units to product ${productId} as batch ${result.batch_code}`);
-      } else {
-        console.error('Failed to add batch:', result.error);
-        this.errorMessage = 'Failed to update inventory: ' + result.error;
-      }
-      
-      return result;
-    } catch (error: any) {
-      console.error('Failed to update inventory:', error);
-      this.errorMessage = 'Error updating inventory: ' + error.message;
-      return { success: false, error: error.message };
-    }
+    const today = toLocalDateString();
+    const oneYearLater = new Date();
+    oneYearLater.setFullYear(oneYearLater.getFullYear() + 1);
+    const expiryDate = toLocalDateString(oneYearLater);
+
+    const result = this.assertOk(await this.db.addBatch({
+      product_id: productId,
+      farm_id: this.currentFarm.farm_id,
+      manufacturing_date: today,
+      expiry_date: expiryDate,
+      quantity: quantity,
+      purchase_price: costPrice
+    }), 'Failed to update inventory');
+
+    console.log(`✅ Added ${quantity} units to product ${productId} as batch ${result.batch_code}`);
+    return result;
   }
 
   // ── SUPPLIER LEDGER INTEGRATION ─────────────────────────
@@ -318,51 +319,57 @@ export class PurchaseOrdersComponent implements OnInit, OnDestroy {
     const isPaid = paymentType?.toLowerCase() === 'cash';
     const credit = amount;
     const debit = isPaid ? amount : 0;
-    
-    try {
-      const result = await this.db.addSupplierLedgerEntry({
-        supplier_id: supplierId,
-        transaction_date: new Date().toISOString().split('T')[0],
-        description: `Purchase Order #${purchaseId}${notes ? ' - ' + notes : ''}`,
-        debit: debit,
-        credit: credit,
-        reference_type: 'purchase',
-        reference_id: purchaseId
-      });
-      console.log(`✅ Added ${amount} to supplier ${supplierId} ledger (${paymentType})`, result);
-    } catch (error) {
-      console.error('❌ Failed to add supplier ledger entry:', error);
-      this.errorMessage = 'Failed to update supplier ledger: ' + (error as any).message;
-    }
+
+    this.assertOk(await this.db.addSupplierLedgerEntry({
+      supplier_id: supplierId,
+      transaction_date: toLocalDateString(),
+      description: `Purchase Order #${purchaseId}${notes ? ' - ' + notes : ''}`,
+      debit: debit,
+      credit: credit,
+      reference_type: 'purchase',
+      reference_id: purchaseId
+    }), 'Failed to update supplier ledger');
   }
 
   async removeFromSupplierLedger(purchaseId: number, supplierId: number) {
     if (!supplierId) return;
-    try {
-      await this.db.run('DELETE FROM supplier_ledger WHERE reference_id = ? AND reference_type = ?', [purchaseId, 'purchase']);
-      console.log(`✅ Removed purchase ${purchaseId} from supplier ${supplierId} ledger`);
-    } catch (error) {
-      console.error('❌ Failed to remove supplier ledger entry:', error);
-    }
+    await this.mustRun('DELETE FROM supplier_ledger WHERE reference_id = ? AND reference_type = ?', [purchaseId, 'purchase']);
   }
 
   async updateSupplierLedgerOnEdit(purchaseId: number, supplierId: number, oldSupplierId: number, amount: number, paymentType: string, notes: string) {
     if (oldSupplierId) {
-      await this.db.run('DELETE FROM supplier_ledger WHERE reference_id = ? AND reference_type = ?', [purchaseId, 'purchase']);
+      await this.mustRun('DELETE FROM supplier_ledger WHERE reference_id = ? AND reference_type = ?', [purchaseId, 'purchase']);
     }
     if (supplierId) {
       const isPaid = paymentType?.toLowerCase() === 'cash';
-      await this.db.addSupplierLedgerEntry({
+      this.assertOk(await this.db.addSupplierLedgerEntry({
         supplier_id: supplierId,
-        transaction_date: new Date().toISOString().split('T')[0],
+        transaction_date: toLocalDateString(),
         description: `Purchase Order #${purchaseId}${notes ? ' - ' + notes : ''}`,
         debit: isPaid ? amount : 0,
         credit: amount,
         reference_type: 'purchase',
         reference_id: purchaseId
-      });
+      }), 'Failed to update supplier ledger');
     }
-    console.log(`✅ Updated supplier ledger for purchase ${purchaseId}`);
+  }
+
+  // ── Transaction helpers ──────────────────────────────────────
+  // db.run()/db.get() and the DatabaseService helpers report failures as
+  // { success: false } instead of throwing, so an unchecked write inside a
+  // transaction would otherwise fail silently and still get committed along
+  // with everything else. Everything on the purchase-order save/edit/delete
+  // paths goes through these.
+
+  private assertOk(result: any, what: string): any {
+    if (!result || !result.success) {
+      throw new Error(`${what}: ${(result && result.error) || 'unknown error'}`);
+    }
+    return result;
+  }
+
+  private async mustRun(sql: string, params: any[] = []): Promise<any> {
+    return this.assertOk(await this.db.run(sql, params), 'Database write failed');
   }
 
   // ── SAVE OPERATIONS ──────────────────────────────────────
@@ -388,43 +395,50 @@ export class PurchaseOrdersComponent implements OnInit, OnDestroy {
 
     this.isSavingAll = true;
     this.errorMessage = '';
-    
+
     try {
-      for (const row of this.pendingRows) {
-        const totalAmount = row.quantity * row.cost_price;
-        const paymentType = row.payment_type || 'credit';
-        
-        const result = await this.db.run(
-          'INSERT INTO purchase_orders (farm_id, supplier_id, product_id, date, quantity, cost_price, total_amount, payment_type, notes, receipt_image) VALUES (?,?,?,?,?,?,?,?,?,?)',
-          [this.currentFarm.farm_id, row.supplier_id, row.product_id, row.date, row.quantity, row.cost_price, totalAmount, paymentType, row.notes, row.receipt_image || null]
-        );
-        
-        if (result.success) {
+      // One transaction for every pending row: each order's insert, its
+      // supplier-ledger entry and its inventory batch either all land
+      // together or none of them do, and the database file is written once,
+      // on commit. A failure on row 3 of 5 used to leave rows 1-2 saved,
+      // row 3 half-written (order row with no ledger entry / no batch), and
+      // rows 4-5 silently skipped.
+      await this.db.transaction(async () => {
+        for (const row of this.pendingRows) {
+          const totalAmount = row.quantity * row.cost_price;
+          const paymentType = row.payment_type || 'credit';
+
+          const result = await this.mustRun(
+            'INSERT INTO purchase_orders (farm_id, supplier_id, product_id, date, quantity, cost_price, total_amount, payment_type, notes, receipt_image) VALUES (?,?,?,?,?,?,?,?,?,?)',
+            [this.currentFarm.farm_id, row.supplier_id, row.product_id, row.date, row.quantity, row.cost_price, totalAmount, paymentType, row.notes, row.receipt_image || null]
+          );
+
           const purchaseId = result.lastId;
-          const isValidPurchaseId = typeof purchaseId === 'number' && purchaseId > 0;
-          if (row.supplier_id && isValidPurchaseId) {
+          if (typeof purchaseId !== 'number' || purchaseId <= 0) {
+            throw new Error('The purchase order was saved but its id could not be read back');
+          }
+
+          if (row.supplier_id) {
             await this.addToSupplierLedger(row.supplier_id, purchaseId, totalAmount, paymentType, row.notes);
           }
           const batchResult = await this.updateInventoryWithBatch(row.product_id, row.quantity, row.cost_price);
-          if (batchResult && batchResult.success && batchResult.batch_id && isValidPurchaseId) {
-            await this.db.run('UPDATE purchase_orders SET batch_id = ? WHERE purchase_id = ?', [batchResult.batch_id, purchaseId]);
+          if (batchResult.batch_id) {
+            await this.mustRun('UPDATE purchase_orders SET batch_id = ? WHERE purchase_id = ?', [batchResult.batch_id, purchaseId]);
           }
-        } else {
-          console.error('❌ Failed to save purchase:', result.error);
-          this.errorMessage = 'Failed to save purchase: ' + result.error;
         }
-      }
-      
-      // Clear state on successful save
+      });
+
+      // Committed. Clear state on successful save.
       this.formState.clearState(this.FORM_KEY);
       this.pendingRows = [];
       this.searchTerm = '';
       this.filteredOrders = [];
       await this.loadData();
-      
+
     } catch (error: any) {
+      // The transaction rolled back — none of the pending rows were written.
       console.error('❌ Error saving:', error);
-      this.errorMessage = 'Error saving: ' + error.message;
+      this.errorMessage = 'Error saving: ' + (error?.message || error);
     } finally {
       this.isSavingAll = false;
       this.cdr.detectChanges();
@@ -462,83 +476,92 @@ export class PurchaseOrdersComponent implements OnInit, OnDestroy {
   }
 
   async saveEdit(id: number) {
+    const existing = this.orders.find(o => o.purchase_id === id);
+    if (!existing) return;
+
     try {
-      const existing = this.orders.find(o => o.purchase_id === id);
-      if (!existing) return;
-      
-      const oldSupplierId = existing.supplier_id;
-      const newSupplierId = this.editForm.supplier_id;
-      const newTotal = this.editForm.quantity * this.editForm.cost_price;
-      const paymentType = this.editForm.payment_type || 'credit';
-      const isPaid = paymentType?.toLowerCase() === 'cash';
-      
-      let linkedBatchId: number | null = this.editForm.batch_id ?? null;
-      const productChanged = Number(this.editForm.product_id) !== Number(existing.product_id);
+      // One transaction for the whole edit: the batch adjustment, the order
+      // row and the supplier-ledger change either all land together or none
+      // of them do. A failure part way through used to leave stock already
+      // adjusted for the new quantity while the order row still showed the
+      // old one, or a ledger entry that didn't match either.
+      await this.db.transaction(async () => {
+        const oldSupplierId = existing.supplier_id;
+        const newSupplierId = this.editForm.supplier_id;
+        const newTotal = this.editForm.quantity * this.editForm.cost_price;
+        const paymentType = this.editForm.payment_type || 'credit';
+        const isPaid = paymentType?.toLowerCase() === 'cash';
 
-      if (productChanged) {
-        // The old linked batch belongs to the old product — remove this order's
-        // stock from it, then create a fresh batch for the new product.
-        if (linkedBatchId) {
-          await this.adjustLinkedBatch(linkedBatchId, -Number(existing.quantity), existing.product_id);
-        } else {
-          await this.deductFromBatches(existing.product_id, Number(existing.quantity));
-        }
-        const newBatchResult = await this.updateInventoryWithBatch(this.editForm.product_id, this.editForm.quantity, this.editForm.cost_price);
-        linkedBatchId = newBatchResult && newBatchResult.success ? newBatchResult.batch_id : null;
-      } else {
-        const diff = Number(this.editForm.quantity) - Number(existing.quantity);
+        let linkedBatchId: number | null = this.editForm.batch_id ?? null;
+        const productChanged = Number(this.editForm.product_id) !== Number(existing.product_id);
 
-        if (linkedBatchId) {
-          // Keep the linked batch's cost in sync with this order, then apply
-          // the quantity delta directly to it instead of guessing via FIFO.
-          await this.db.updateBatch(linkedBatchId, { purchase_price: this.editForm.cost_price });
-          if (diff !== 0) {
-            await this.adjustLinkedBatch(linkedBatchId, diff, this.editForm.product_id);
+        if (productChanged) {
+          // The old linked batch belongs to the old product — remove this order's
+          // stock from it, then create a fresh batch for the new product.
+          if (linkedBatchId) {
+            await this.adjustLinkedBatch(linkedBatchId, -Number(existing.quantity), existing.product_id);
+          } else {
+            await this.deductFromBatches(existing.product_id, Number(existing.quantity));
           }
+          const newBatchResult = await this.updateInventoryWithBatch(this.editForm.product_id, this.editForm.quantity, this.editForm.cost_price);
+          linkedBatchId = newBatchResult.batch_id ?? null;
         } else {
-          // Legacy order with no linked batch — fall back to the old FIFO behavior.
-          if (diff > 0) {
-            const newBatchResult = await this.updateInventoryWithBatch(this.editForm.product_id, diff, this.editForm.cost_price);
-            linkedBatchId = newBatchResult && newBatchResult.success ? newBatchResult.batch_id : null;
-          } else if (diff < 0) {
-            await this.deductFromBatches(this.editForm.product_id, Math.abs(diff));
+          const diff = Number(this.editForm.quantity) - Number(existing.quantity);
+
+          if (linkedBatchId) {
+            // Keep the linked batch's cost in sync with this order, then apply
+            // the quantity delta directly to it instead of guessing via FIFO.
+            this.assertOk(await this.db.updateBatch(linkedBatchId, { purchase_price: this.editForm.cost_price }), 'Updating the linked batch cost failed');
+            if (diff !== 0) {
+              await this.adjustLinkedBatch(linkedBatchId, diff, this.editForm.product_id);
+            }
+          } else {
+            // Legacy order with no linked batch — fall back to the old FIFO behavior.
+            if (diff > 0) {
+              const newBatchResult = await this.updateInventoryWithBatch(this.editForm.product_id, diff, this.editForm.cost_price);
+              linkedBatchId = newBatchResult.batch_id ?? null;
+            } else if (diff < 0) {
+              await this.deductFromBatches(this.editForm.product_id, Math.abs(diff));
+            }
           }
         }
-      }
 
-      await this.db.run(
-        'UPDATE purchase_orders SET supplier_id=?, product_id=?, date=?, quantity=?, cost_price=?, total_amount=?, payment_type=?, notes=?, batch_id=?, receipt_image=? WHERE purchase_id=?',
-        [newSupplierId, this.editForm.product_id, this.editForm.date, this.editForm.quantity, this.editForm.cost_price, newTotal, paymentType, this.editForm.notes, linkedBatchId, this.editForm.receipt_image || null, id]
-      );
-      
-      if (oldSupplierId !== newSupplierId) {
-        if (oldSupplierId) {
-          await this.db.run('DELETE FROM supplier_ledger WHERE reference_id = ? AND reference_type = ?', [id, 'purchase']);
-        }
-        if (newSupplierId) {
-          await this.db.addSupplierLedgerEntry({
-            supplier_id: newSupplierId,
-            transaction_date: new Date().toISOString().split('T')[0],
-            description: `Purchase Order #${id}${this.editForm.notes ? ' - ' + this.editForm.notes : ''}`,
-            debit: isPaid ? newTotal : 0,
-            credit: newTotal,
-            reference_type: 'purchase',
-            reference_id: id
-          });
-        }
-      } else if (newSupplierId) {
-        await this.db.run(
-          'UPDATE supplier_ledger SET debit = ?, credit = ? WHERE reference_id = ? AND reference_type = ?',
-          [isPaid ? newTotal : 0, newTotal, id, 'purchase']
+        await this.mustRun(
+          'UPDATE purchase_orders SET supplier_id=?, product_id=?, date=?, quantity=?, cost_price=?, total_amount=?, payment_type=?, notes=?, batch_id=?, receipt_image=? WHERE purchase_id=?',
+          [newSupplierId, this.editForm.product_id, this.editForm.date, this.editForm.quantity, this.editForm.cost_price, newTotal, paymentType, this.editForm.notes, linkedBatchId, this.editForm.receipt_image || null, id]
         );
-      }
-      
+
+        if (oldSupplierId !== newSupplierId) {
+          if (oldSupplierId) {
+            await this.mustRun('DELETE FROM supplier_ledger WHERE reference_id = ? AND reference_type = ?', [id, 'purchase']);
+          }
+          if (newSupplierId) {
+            this.assertOk(await this.db.addSupplierLedgerEntry({
+              supplier_id: newSupplierId,
+              transaction_date: toLocalDateString(),
+              description: `Purchase Order #${id}${this.editForm.notes ? ' - ' + this.editForm.notes : ''}`,
+              debit: isPaid ? newTotal : 0,
+              credit: newTotal,
+              reference_type: 'purchase',
+              reference_id: id
+            }), 'Failed to update supplier ledger');
+          }
+        } else if (newSupplierId) {
+          await this.mustRun(
+            'UPDATE supplier_ledger SET debit = ?, credit = ? WHERE reference_id = ? AND reference_type = ?',
+            [isPaid ? newTotal : 0, newTotal, id, 'purchase']
+          );
+        }
+      });
+
+      // Committed.
       this.editingId = null;
       await this.loadData();
-      
+
     } catch (error: any) {
+      // The transaction rolled back — nothing at all was written.
       console.error('❌ Error saving edit:', error);
-      this.errorMessage = 'Error saving edit: ' + error.message;
+      this.errorMessage = 'Error saving edit: ' + (error?.message || error);
       this.cdr.detectChanges();
     }
   }
@@ -546,79 +569,72 @@ export class PurchaseOrdersComponent implements OnInit, OnDestroy {
   
 
   async deductFromBatches(productId: number, quantity: number) {
-    try {
-      const batchesResult = await this.db.getBatchesByProduct(productId, this.currentFarm.farm_id);
-      if (!batchesResult.success || !batchesResult.data) return;
-      
-      const activeBatches = batchesResult.data
-        .filter((b: any) => (b.calculated_status === 'active' || b.calculated_status === 'expiring') && b.quantity > 0)
-        .sort((a: any, b: any) => a.expiry_date.localeCompare(b.expiry_date));
-      
-      let remaining = quantity;
-      
-      for (const batch of activeBatches) {
-        if (remaining <= 0) break;
-        const deduct = Math.min(remaining, batch.quantity);
-        const newQty = batch.quantity - deduct;
-        
-        await this.db.updateBatch(batch.batch_id, { quantity: newQty });
-        await this.db.addBatchTransaction(
-          batch.batch_id,
-          productId,
-          'adjustment',
-          deduct,
-          new Date().toISOString().split('T')[0],
-          null,
-          `Adjustment from purchase order edit (-${deduct})`
-        );
-        
-        remaining -= deduct;
-      }
-      
-      await this.db.updateBatchStatuses();
-      
-    } catch (error) {
-      console.error('Error deducting from batches:', error);
+    const batchesResult = this.assertOk(
+      await this.db.getBatchesByProduct(productId, this.currentFarm.farm_id),
+      'Could not read the stock batches for this product'
+    );
+
+    const activeBatches = (batchesResult.data || [])
+      .filter((b: any) => (b.calculated_status === 'active' || b.calculated_status === 'expiring') && b.quantity > 0)
+      .sort((a: any, b: any) => a.expiry_date.localeCompare(b.expiry_date));
+
+    let remaining = quantity;
+
+    for (const batch of activeBatches) {
+      if (remaining <= 0) break;
+      const deduct = Math.min(remaining, batch.quantity);
+      const newQty = batch.quantity - deduct;
+
+      this.assertOk(await this.db.updateBatch(batch.batch_id, { quantity: newQty }), 'Deducting stock from a batch failed');
+      this.assertOk(await this.db.addBatchTransaction(
+        batch.batch_id,
+        productId,
+        'adjustment',
+        deduct,
+        toLocalDateString(),
+        null,
+        `Adjustment from purchase order edit (-${deduct})`
+      ), 'Recording the stock adjustment failed');
+
+      remaining -= deduct;
     }
+
+    this.assertOk(await this.db.updateBatchStatuses(), 'Updating the batch statuses failed');
   }
 
   /**
    * Adjusts a specific batch's quantity by `delta` (positive to add stock,
    * negative to remove). Floors at 0 so it can never go negative even if
    * other sales have already consumed part of this batch. Returns the
-   * amount actually applied (may differ from `delta` if floored).
+   * amount actually applied (may differ from `delta` if floored). Throws on
+   * failure — callers run inside a `db.transaction`.
    */
   async adjustLinkedBatch(batchId: number, delta: number, productId: number): Promise<{ success: boolean; appliedDelta: number }> {
-    try {
-      const r = await this.db.get('SELECT * FROM product_batches WHERE batch_id = ?', [batchId]);
-      const batch = r.success && r.data && r.data.length > 0 ? r.data[0] : null;
-      if (!batch) {
-        return { success: false, appliedDelta: 0 };
-      }
-
-      const newQty = Math.max(0, Number(batch.quantity) + delta);
-      const appliedDelta = newQty - Number(batch.quantity);
-
-      await this.db.updateBatch(batchId, { quantity: newQty });
-
-      if (appliedDelta !== 0) {
-        await this.db.addBatchTransaction(
-          batchId,
-          productId,
-          'adjustment',
-          Math.abs(appliedDelta),
-          new Date().toISOString().split('T')[0],
-          null,
-          `Adjustment from purchase order edit (${appliedDelta > 0 ? '+' : ''}${appliedDelta})`
-        );
-      }
-
-      await this.db.updateBatchStatuses();
-      return { success: true, appliedDelta };
-    } catch (error) {
-      console.error('Error adjusting linked batch:', error);
-      return { success: false, appliedDelta: 0 };
+    const r = this.assertOk(await this.db.get('SELECT * FROM product_batches WHERE batch_id = ?', [batchId]), 'Could not read the linked batch');
+    const batch = r.data && r.data.length > 0 ? r.data[0] : null;
+    if (!batch) {
+      throw new Error(`Linked batch ${batchId} no longer exists`);
     }
+
+    const newQty = Math.max(0, Number(batch.quantity) + delta);
+    const appliedDelta = newQty - Number(batch.quantity);
+
+    this.assertOk(await this.db.updateBatch(batchId, { quantity: newQty }), 'Adjusting the linked batch quantity failed');
+
+    if (appliedDelta !== 0) {
+      this.assertOk(await this.db.addBatchTransaction(
+        batchId,
+        productId,
+        'adjustment',
+        Math.abs(appliedDelta),
+        toLocalDateString(),
+        null,
+        `Adjustment from purchase order edit (${appliedDelta > 0 ? '+' : ''}${appliedDelta})`
+      ), 'Recording the batch adjustment failed');
+    }
+
+    this.assertOk(await this.db.updateBatchStatuses(), 'Updating the batch statuses failed');
+    return { success: true, appliedDelta };
   }
 
 
@@ -631,25 +647,34 @@ export class PurchaseOrdersComponent implements OnInit, OnDestroy {
 
   async onDeleteConfirmed() {
     try {
-      const order = this.orders.find(o => o.purchase_id === this.deletingId);
-      if (order) {
-        if (order.supplier_id) {
-          await this.removeFromSupplierLedger(this.deletingId!, order.supplier_id);
+      // One transaction: the supplier-ledger removal, the stock reversal and
+      // the order delete either all land together or none of them do. A
+      // failure part way through used to leave stock un-reversed for an
+      // order row that no longer existed.
+      await this.db.transaction(async () => {
+        const order = this.orders.find(o => o.purchase_id === this.deletingId);
+        if (order) {
+          if (order.supplier_id) {
+            await this.removeFromSupplierLedger(this.deletingId!, order.supplier_id);
+          }
+          if (order.batch_id) {
+            await this.adjustLinkedBatch(order.batch_id, -Number(order.quantity), order.product_id);
+          } else {
+            // Legacy order with no linked batch — fall back to old FIFO behavior.
+            await this.deductFromBatches(order.product_id, order.quantity);
+          }
         }
-        if (order.batch_id) {
-          await this.adjustLinkedBatch(order.batch_id, -Number(order.quantity), order.product_id);
-        } else {
-          // Legacy order with no linked batch — fall back to old FIFO behavior.
-          await this.deductFromBatches(order.product_id, order.quantity);
-        }
-      }
-      await this.db.run('DELETE FROM purchase_orders WHERE purchase_id=?', [this.deletingId]);
+        await this.mustRun('DELETE FROM purchase_orders WHERE purchase_id=?', [this.deletingId]);
+      });
+
+      // Committed.
       this.showDeleteDialog = false;
       await this.loadData();
-      
+
     } catch (error: any) {
+      // The transaction rolled back — nothing at all was written.
       console.error('❌ Error deleting:', error);
-      this.errorMessage = 'Error deleting: ' + error.message;
+      this.errorMessage = 'Error deleting: ' + (error?.message || error);
       this.cdr.detectChanges();
     }
   }

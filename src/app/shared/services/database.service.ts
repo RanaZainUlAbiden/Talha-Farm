@@ -1,5 +1,6 @@
 import { Injectable, NgZone } from '@angular/core';
 
+import { toLocalDateString } from '../utils/date.util';
 /**
  * One statement in a batch. A params entry of `{ $lastId: n }` is replaced, in
  * the main process, with the id inserted by operation `n` of the same batch —
@@ -223,7 +224,7 @@ export class DatabaseService {
           product_id,
           'purchase',
           quantity,
-          new Date().toISOString().split('T')[0],
+          toLocalDateString(),
           null,
           'Initial batch addition'
         );
@@ -275,7 +276,7 @@ export class DatabaseService {
           batch.product_id,
           'adjustment',
           qty,
-          new Date().toISOString().split('T')[0],
+          toLocalDateString(),
           null,
           'Batch deleted — stock zeroed'
         );
@@ -416,10 +417,10 @@ export class DatabaseService {
     }
 
     let migrated = 0;
-    const today = new Date().toISOString().split('T')[0];
+    const today = toLocalDateString();
     const oneYearLater = new Date();
     oneYearLater.setFullYear(oneYearLater.getFullYear() + 1);
-    const expiryDate = oneYearLater.toISOString().split('T')[0];
+    const expiryDate = toLocalDateString(oneYearLater);
 
     for (const product of products.data) {
       const checkResult = await this.get('SELECT COUNT(*) as count FROM product_batches WHERE product_id = ?', [product.product_id]);
@@ -661,7 +662,7 @@ export class DatabaseService {
     if (result.success && result.lastId && opening_balance > 0) {
       await this.addBankLedgerEntry({
         bank_id: result.lastId,
-        transaction_date: new Date().toISOString().split('T')[0],
+        transaction_date: toLocalDateString(),
         description: 'Opening Balance',
         debit: opening_balance,
         credit: 0,
@@ -811,7 +812,7 @@ async addBankLedgerEntry(entry: {
     
     return this.addBankLedgerEntry({
       bank_id: bank.bank_id,
-      transaction_date: new Date().toISOString().split('T')[0],
+      transaction_date: toLocalDateString(),
       description: description,
       debit: 0,
       credit: amount,
@@ -1039,40 +1040,100 @@ async deleteCategory(categoryId: number): Promise<any> {
   }
 
   // ── OVERVIEW: FIXED ASSET METHODS ───────────────────────────
-  // Account-level (farm_id scoped, not flock/batch scoped). No depreciation —
-  // gain/loss is only recognised when an asset is sold.
+  // Account-level (farm_id scoped, not flock/batch scoped). Assets are bought on
+  // installments: `total_price` is the agreed price and the asset's
+  // `asset_payments` rows are what has actually been handed over. No
+  // depreciation — gain/loss is only recognised when an asset is sold, and it is
+  // measured against the full agreed price whether or not it has been paid off.
+  //
+  // `purchase_amount` is the legacy column that predates installments, when an
+  // asset was bought outright and it was both price and payment. It is written
+  // with the same value as total_price on every path here so that anything still
+  // reading it (older report code, a restored pre-migration backup) gets the
+  // right number rather than a silent zero. Never write one without the other.
 
+  /**
+   * Assets with their payment totals attached. The LEFT JOIN keeps assets that
+   * have no payments yet; COALESCE(total_price, purchase_amount) covers rows
+   * written before the installments migration ran.
+   */
   async getAssets(farmId: number, status?: string): Promise<any> {
-    let sql = 'SELECT * FROM assets WHERE farm_id = ?';
+    let sql =
+      `SELECT a.*,
+              COALESCE(a.total_price, a.purchase_amount, 0) AS agreed_price,
+              COALESCE(p.paid, 0) AS amount_paid,
+              COALESCE(a.total_price, a.purchase_amount, 0) - COALESCE(p.paid, 0) AS amount_outstanding,
+              COALESCE(p.payment_count, 0) AS payment_count
+       FROM assets a
+       LEFT JOIN (
+         SELECT asset_id, SUM(amount) AS paid, COUNT(*) AS payment_count
+         FROM asset_payments GROUP BY asset_id
+       ) p ON p.asset_id = a.asset_id
+       WHERE a.farm_id = ?`;
     const params: any[] = [farmId];
     if (status) {
-      sql += ' AND status = ?';
+      sql += ' AND a.status = ?';
       params.push(status);
     }
-    sql += ' ORDER BY purchase_date DESC';
+    sql += ' ORDER BY a.purchase_date DESC, a.asset_id DESC';
     return this.get(sql, params);
   }
 
+  async getAsset(assetId: number, farmId: number): Promise<any> {
+    return this.get(
+      `SELECT a.*,
+              COALESCE(a.total_price, a.purchase_amount, 0) AS agreed_price
+       FROM assets a WHERE a.asset_id = ? AND a.farm_id = ?`,
+      [assetId, farmId]
+    );
+  }
+
+  /**
+   * Creates an asset and, when a down payment was entered, its first payment —
+   * atomically. The payment references the asset with `{ $lastId: -1 }` rather
+   * than a round trip, so there is no window where an asset exists with its
+   * opening payment missing.
+   */
   async addAsset(asset: {
     farm_id: number;
-    unit_id?: number;
+    unit_id?: number | null;
     asset_name: string;
-    category?: string;
+    category?: string | null;
     purchase_date: string;
-    purchase_amount?: number;
+    total_price?: number;
     payment_source?: string;
-    bank_id?: number;
-    notes?: string;
+    bank_id?: number | null;
+    notes?: string | null;
+    initial_payment?: number | null;
   }): Promise<any> {
-    const { farm_id, unit_id, asset_name, category, purchase_date, purchase_amount, payment_source, bank_id, notes } = asset;
+    const {
+      farm_id, unit_id, asset_name, category, purchase_date,
+      total_price, payment_source, bank_id, notes, initial_payment
+    } = asset;
     if (!farm_id || !asset_name || !purchase_date) {
       return { success: false, error: 'farm_id, asset_name and purchase_date are required' };
     }
-    return this.run(
-      `INSERT INTO assets (farm_id, unit_id, asset_name, category, purchase_date, purchase_amount, payment_source, bank_id, notes)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-      [farm_id, unit_id || null, asset_name, category || null, purchase_date, purchase_amount || 0, payment_source || 'cash', bank_id || null, notes || null]
-    );
+
+    const price = total_price || 0;
+    const source = payment_source || 'cash';
+    const bank = source === 'bank' ? (bank_id || null) : null;
+
+    const ops: DbBatchOp[] = [{
+      sql: `INSERT INTO assets (farm_id, unit_id, asset_name, category, purchase_date, total_price, purchase_amount, payment_source, bank_id, notes)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      params: [farm_id, unit_id || null, asset_name, category || null, purchase_date, price, price, source, bank, notes || null]
+    }];
+
+    const down = initial_payment || 0;
+    if (down > 0) {
+      ops.push({
+        sql: `INSERT INTO asset_payments (asset_id, farm_id, date, amount, payment_source, bank_id, notes)
+              VALUES (?, ?, ?, ?, ?, ?, ?)`,
+        params: [{ $lastId: -1 }, farm_id, purchase_date, down, source, bank, 'Initial payment']
+      });
+    }
+
+    return ops.length === 1 ? this.run(ops[0].sql, ops[0].params) : this.runBatch(ops);
   }
 
   async updateAsset(assetId: number, data: any): Promise<any> {
@@ -1083,7 +1144,16 @@ async deleteCategory(categoryId: number): Promise<any> {
     if (data.asset_name !== undefined) { fields.push('asset_name = ?'); values.push(data.asset_name); }
     if (data.category !== undefined) { fields.push('category = ?'); values.push(data.category); }
     if (data.purchase_date !== undefined) { fields.push('purchase_date = ?'); values.push(data.purchase_date); }
-    if (data.purchase_amount !== undefined) { fields.push('purchase_amount = ?'); values.push(data.purchase_amount); }
+    // total_price and purchase_amount are one value stored in two columns.
+    // Setting either updates both — letting a caller move one alone is exactly
+    // how the two would drift apart.
+    const newPrice = data.total_price !== undefined ? data.total_price
+                   : data.purchase_amount !== undefined ? data.purchase_amount
+                   : undefined;
+    if (newPrice !== undefined) {
+      fields.push('total_price = ?'); values.push(newPrice);
+      fields.push('purchase_amount = ?'); values.push(newPrice);
+    }
     if (data.payment_source !== undefined) { fields.push('payment_source = ?'); values.push(data.payment_source); }
     if (data.bank_id !== undefined) { fields.push('bank_id = ?'); values.push(data.bank_id); }
     if (data.notes !== undefined) { fields.push('notes = ?'); values.push(data.notes); }
@@ -1110,8 +1180,203 @@ async deleteCategory(categoryId: number): Promise<any> {
     );
   }
 
+  /**
+   * Foreign keys are declared but never enforced in this database, so nothing
+   * cascades. The payments have to go explicitly or they are left orphaned,
+   * still counting toward the account's outstanding installments. One batch, so
+   * the asset and its payments go together or not at all.
+   */
   async deleteAsset(assetId: number): Promise<any> {
-    return this.run('DELETE FROM assets WHERE asset_id = ?', [assetId]);
+    return this.runBatch([
+      { sql: 'DELETE FROM asset_payments WHERE asset_id = ?', params: [assetId] },
+      { sql: 'DELETE FROM assets WHERE asset_id = ?', params: [assetId] }
+    ]);
+  }
+
+  // ── OVERVIEW: ASSET INSTALLMENT PAYMENTS ────────────────────
+
+  /** Newest first, matching how the payment history reads on the detail view. */
+  async getAssetPayments(assetId: number, farmId: number): Promise<any> {
+    return this.get(
+      `SELECT p.*, b.bank_name
+       FROM asset_payments p
+       LEFT JOIN bank_accounts b ON b.bank_id = p.bank_id
+       WHERE p.asset_id = ? AND p.farm_id = ?
+       ORDER BY p.date DESC, p.payment_id DESC`,
+      [assetId, farmId]
+    );
+  }
+
+  async addAssetPayment(payment: {
+    asset_id: number;
+    farm_id: number;
+    date: string;
+    amount: number;
+    payment_source?: string;
+    bank_id?: number | null;
+    notes?: string | null;
+  }): Promise<any> {
+    const { asset_id, farm_id, date, amount, payment_source, bank_id, notes } = payment;
+    if (!asset_id || !farm_id || !date) {
+      return { success: false, error: 'asset_id, farm_id and date are required' };
+    }
+    const source = payment_source || 'cash';
+    return this.run(
+      `INSERT INTO asset_payments (asset_id, farm_id, date, amount, payment_source, bank_id, notes)
+       VALUES (?, ?, ?, ?, ?, ?, ?)`,
+      [asset_id, farm_id, date, amount || 0, source, source === 'bank' ? (bank_id || null) : null, notes || null]
+    );
+  }
+
+  async deleteAssetPayment(paymentId: number, farmId: number): Promise<any> {
+    return this.run(
+      'DELETE FROM asset_payments WHERE payment_id = ? AND farm_id = ?',
+      [paymentId, farmId]
+    );
+  }
+
+  // ── OVERVIEW: PERSONAL EXPENSE CATEGORIES ───────────────────
+  // User-defined, one set per account. Each category is an account the client
+  // clicks into, so the card grid needs the per-category totals up front.
+
+  /**
+   * Categories with their entry count and total spent.
+   *
+   * The join condition is `category_id = c.category_id OR (category_id IS NULL
+   * AND category = c.category_name)`. The second half is the reason
+   * personal_expenses.category is still written: if a row's link is ever
+   * missing, it still counts toward its named category instead of vanishing
+   * from a grid that only knows about ids. `date BETWEEN` is applied inside the
+   * join so a category with no entries in range still shows, at zero.
+   */
+  async getPersonalExpenseCategories(farmId: number, fromDate?: string, toDate?: string): Promise<any> {
+    // Params are positional and must be pushed in the order the `?`s appear in
+    // the SQL below: the date bounds sit inside the JOIN, so they come BEFORE
+    // the farm_id in the WHERE.
+    const params: any[] = [];
+    let dateClause = '';
+    if (fromDate && toDate) {
+      dateClause = ' AND pe.date BETWEEN ? AND ?';
+      params.push(fromDate, toDate);
+    }
+    params.push(farmId);
+    return this.get(
+      `SELECT c.category_id, c.category_name, c.created_at,
+              COUNT(pe.pexpense_id) AS entry_count,
+              COALESCE(SUM(pe.amount), 0) AS total_spent
+       FROM expense_categories c
+       LEFT JOIN personal_expenses pe
+         ON pe.farm_id = c.farm_id
+        AND (pe.category_id = c.category_id
+             OR (pe.category_id IS NULL AND TRIM(COALESCE(pe.category,'')) = c.category_name COLLATE NOCASE))
+        ${dateClause}
+       WHERE c.farm_id = ?
+       GROUP BY c.category_id, c.category_name, c.created_at
+       ORDER BY c.category_name COLLATE NOCASE ASC`,
+      params
+    );
+  }
+
+  async addPersonalExpenseCategory(farmId: number, categoryName: string): Promise<any> {
+    const name = (categoryName || '').trim();
+    if (!farmId || !name) {
+      return { success: false, error: 'A category name is required.' };
+    }
+    const clash = await this.get(
+      `SELECT category_id FROM expense_categories
+       WHERE farm_id = ? AND category_name = ? COLLATE NOCASE`,
+      [farmId, name]
+    );
+    if (clash.success && clash.data && clash.data.length > 0) {
+      return { success: false, error: `A category called "${name}" already exists.` };
+    }
+    return this.run(
+      'INSERT INTO expense_categories (farm_id, category_name) VALUES (?, ?)',
+      [farmId, name]
+    );
+  }
+
+  /**
+   * Renaming has to move the denormalised `category` text on the entries too, or
+   * the two would disagree and the fallback match above would start pulling
+   * entries back under the old name.
+   */
+  async renamePersonalExpenseCategory(categoryId: number, farmId: number, categoryName: string): Promise<any> {
+    const name = (categoryName || '').trim();
+    if (!name) return { success: false, error: 'A category name is required.' };
+
+    const clash = await this.get(
+      `SELECT category_id FROM expense_categories
+       WHERE farm_id = ? AND category_name = ? COLLATE NOCASE AND category_id <> ?`,
+      [farmId, name, categoryId]
+    );
+    if (clash.success && clash.data && clash.data.length > 0) {
+      return { success: false, error: `A category called "${name}" already exists.` };
+    }
+
+    const previous = await this.get(
+      'SELECT category_name FROM expense_categories WHERE category_id = ? AND farm_id = ?',
+      [categoryId, farmId]
+    );
+    if (!previous.success) return previous;
+    if (!previous.data || previous.data.length === 0) {
+      return { success: false, error: 'Category not found.' };
+    }
+    const oldName = previous.data[0].category_name;
+
+    return this.runBatch([
+      {
+        sql: 'UPDATE expense_categories SET category_name = ? WHERE category_id = ? AND farm_id = ?',
+        params: [name, categoryId, farmId]
+      },
+      {
+        sql: `UPDATE personal_expenses SET category = ?
+              WHERE farm_id = ?
+                AND (category_id = ? OR (category_id IS NULL AND TRIM(COALESCE(category,'')) = ? COLLATE NOCASE))`,
+        params: [name, farmId, categoryId, oldName]
+      }
+    ]);
+  }
+
+  /**
+   * Refused while the category still has entries. Foreign keys are not enforced
+   * in this database, so this check is the only thing standing between a delete
+   * and a set of orphaned expense rows that no card would ever show again. The
+   * count uses the same id-or-name predicate as the grid, so an entry whose link
+   * is missing still blocks the delete rather than being quietly stranded.
+   */
+  async deletePersonalExpenseCategory(categoryId: number, farmId: number): Promise<any> {
+    const existing = await this.get(
+      'SELECT category_name FROM expense_categories WHERE category_id = ? AND farm_id = ?',
+      [categoryId, farmId]
+    );
+    if (!existing.success) return existing;
+    if (!existing.data || existing.data.length === 0) {
+      return { success: false, error: 'Category not found.' };
+    }
+    const name = existing.data[0].category_name;
+
+    const used = await this.get(
+      `SELECT COUNT(*) AS entry_count FROM personal_expenses
+       WHERE farm_id = ?
+         AND (category_id = ? OR (category_id IS NULL AND TRIM(COALESCE(category,'')) = ? COLLATE NOCASE))`,
+      [farmId, categoryId, name]
+    );
+    if (!used.success) return used;
+
+    const count = Number(used.data?.[0]?.entry_count || 0);
+    if (count > 0) {
+      return {
+        success: false,
+        error: `"${name}" still has ${count} ${count === 1 ? 'entry' : 'entries'}. ` +
+               'Move or delete them first — deleting the category would leave those entries unreachable.'
+      };
+    }
+
+    return this.run(
+      'DELETE FROM expense_categories WHERE category_id = ? AND farm_id = ?',
+      [categoryId, farmId]
+    );
   }
 
   // ── OVERVIEW: PERSONAL EXPENSE METHODS ──────────────────────
@@ -1119,34 +1384,64 @@ async deleteCategory(categoryId: number): Promise<any> {
   // table even though its total rolls into the dashboard's expense figure.
 
   async getPersonalExpenses(farmId: number, fromDate?: string, toDate?: string): Promise<any> {
-    let sql = 'SELECT * FROM personal_expenses WHERE farm_id = ?';
+    let sql =
+      `SELECT pe.*
+       FROM personal_expenses pe
+       WHERE pe.farm_id = ?`;
     const params: any[] = [farmId];
     if (fromDate && toDate) {
-      sql += ' AND date BETWEEN ? AND ?';
+      sql += ' AND pe.date BETWEEN ? AND ?';
       params.push(fromDate, toDate);
     }
-    sql += ' ORDER BY date DESC';
+    sql += ' ORDER BY pe.date DESC, pe.pexpense_id DESC';
     return this.get(sql, params);
   }
 
+  /** One category's entries, newest first. Same id-or-name predicate as the grid. */
+  async getPersonalExpensesByCategory(
+    farmId: number, categoryId: number, categoryName: string,
+    fromDate?: string, toDate?: string
+  ): Promise<any> {
+    let sql =
+      `SELECT pe.*
+       FROM personal_expenses pe
+       WHERE pe.farm_id = ?
+         AND (pe.category_id = ?
+              OR (pe.category_id IS NULL AND TRIM(COALESCE(pe.category,'')) = ? COLLATE NOCASE))`;
+    const params: any[] = [farmId, categoryId, categoryName];
+    if (fromDate && toDate) {
+      sql += ' AND pe.date BETWEEN ? AND ?';
+      params.push(fromDate, toDate);
+    }
+    sql += ' ORDER BY pe.date DESC, pe.pexpense_id DESC';
+    return this.get(sql, params);
+  }
+
+  /**
+   * category_id is the link; `category` carries the name alongside it. Both are
+   * written on every path so the two never disagree — see the note on
+   * getPersonalExpenseCategories() for what the text column is actually protecting.
+   */
   async addPersonalExpense(pe: {
     farm_id: number;
     date: string;
-    category?: string;
-    description?: string;
+    category_id: number;
+    category?: string | null;
+    description?: string | null;
     amount?: number;
-    payment_source?: string;
-    bank_id?: number;
-    notes?: string;
+    notes?: string | null;
   }): Promise<any> {
-    const { farm_id, date, category, description, amount, payment_source, bank_id, notes } = pe;
+    const { farm_id, date, category_id, category, description, amount, notes } = pe;
     if (!farm_id || !date) {
       return { success: false, error: 'farm_id and date are required' };
     }
+    if (!category_id) {
+      return { success: false, error: 'A category is required.' };
+    }
     return this.run(
-      `INSERT INTO personal_expenses (farm_id, date, category, description, amount, payment_source, bank_id, notes)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
-      [farm_id, date, category || null, description || null, amount || 0, payment_source || 'cash', bank_id || null, notes || null]
+      `INSERT INTO personal_expenses (farm_id, date, category_id, category, description, amount, notes)
+       VALUES (?, ?, ?, ?, ?, ?, ?)`,
+      [farm_id, date, category_id, category || null, description || null, amount || 0, notes || null]
     );
   }
 
@@ -1155,11 +1450,11 @@ async deleteCategory(categoryId: number): Promise<any> {
     const values: any[] = [];
 
     if (data.date !== undefined) { fields.push('date = ?'); values.push(data.date); }
+    // Moving an entry between categories must move both columns together.
+    if (data.category_id !== undefined) { fields.push('category_id = ?'); values.push(data.category_id); }
     if (data.category !== undefined) { fields.push('category = ?'); values.push(data.category); }
     if (data.description !== undefined) { fields.push('description = ?'); values.push(data.description); }
     if (data.amount !== undefined) { fields.push('amount = ?'); values.push(data.amount); }
-    if (data.payment_source !== undefined) { fields.push('payment_source = ?'); values.push(data.payment_source); }
-    if (data.bank_id !== undefined) { fields.push('bank_id = ?'); values.push(data.bank_id); }
     if (data.notes !== undefined) { fields.push('notes = ?'); values.push(data.notes); }
 
     if (fields.length === 0) return { success: false, error: 'No fields to update' };

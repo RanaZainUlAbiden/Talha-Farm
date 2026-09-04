@@ -69,7 +69,7 @@
           <th>Mortality</th>
           <th>Remaining</th>
           <th>Feed Used (in Bags)</th>
-          <th>Avg Weight (kg)</th>
+          <th>Avg Weight (g)</th>
           <th>FCR</th>
           <th>Actions</th>
         </tr>
@@ -86,18 +86,19 @@
           <td>
             <input class="inline-input" type="number"
               [(ngModel)]="row.week_number"
+              (ngModelChange)="onRowFeedOrWeightChange()"
               placeholder="Day #" />
           </td>
           <td>
             <input class="inline-input" type="number"
               [(ngModel)]="row.total_birds"
-              (ngModelChange)="onRowFeedOrWeightChange(row)"
+              (ngModelChange)="onRowFeedOrWeightChange()"
               placeholder="Total birds" />
           </td>
           <td>
             <input class="inline-input" type="number"
               [(ngModel)]="row.mortality"
-              (ngModelChange)="onRowFeedOrWeightChange(row)"
+              (ngModelChange)="onRowFeedOrWeightChange()"
               placeholder="Mortality" />
           </td>
           <td class="computed">
@@ -106,15 +107,15 @@
           <td>
             <input class="inline-input" type="number"
               [(ngModel)]="row.feed_used"
-              (ngModelChange)="onRowFeedOrWeightChange(row)"
+              (ngModelChange)="onRowFeedOrWeightChange()"
               placeholder="Feed kg" />
           </td>
           <td>
             <input class="inline-input" type="number"
               step="0.001"
               [(ngModel)]="row.avg_weight"
-              (ngModelChange)="onRowFeedOrWeightChange(row)"
-              placeholder="Avg wt" />
+              (ngModelChange)="onRowFeedOrWeightChange()"
+              placeholder="Avg wt (g)" />
           </td>
           <td>
             <input class="inline-input fcr-input" type="number"
@@ -143,7 +144,7 @@
             <td>{{ record.total_birds - record.mortality | number }}</td>
             <td>{{ record.feed_used | number }}</td>
             <td>{{ record.avg_weight }}</td>
-            <td class="fcr">{{ record.fcr }}</td>
+            <td class="fcr">{{ getDisplayFcr(record) }}</td>
             <td class="actions">
               <button
                 class="btn-edit"
@@ -165,7 +166,8 @@
             <td></td>
             <td>
               <input class="inline-input" type="number"
-                [(ngModel)]="editForm.week_number" />
+                [(ngModel)]="editForm.week_number"
+                (ngModelChange)="onEditFeedOrWeightChange()" />
             </td>
             <td>
               <input class="inline-input" type="number"

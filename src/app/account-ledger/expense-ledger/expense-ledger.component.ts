@@ -9,6 +9,7 @@ import { jsPDF } from 'jspdf';
 import autoTable from 'jspdf-autotable';
 import { DeleteCodeDialogComponent } from '../../shared/components/delete-code-dialog/delete-code-dialog.component';
 
+import { toLocalDateString } from '../../shared/utils/date.util';
 @Component({
   selector: 'app-expense-ledger',
   standalone: true,
@@ -69,7 +70,7 @@ export class ExpenseLedgerComponent implements OnInit {
 
   async ngOnInit() {
     this.currentFarm = this.authService.getCurrentFarm();
-    this.expenseForm.transaction_date = new Date().toISOString().split('T')[0];
+    this.expenseForm.transaction_date = toLocalDateString();
     await this.loadCategories();
     this.loadExpenses();
   }
@@ -227,7 +228,7 @@ export class ExpenseLedgerComponent implements OnInit {
     this.isEditing = false;
     this.editingId = null;
     this.expenseForm = {
-      transaction_date: new Date().toISOString().split('T')[0],
+      transaction_date: toLocalDateString(),
       description: '',
       amount: 0,
       category: '',
@@ -349,7 +350,7 @@ export class ExpenseLedgerComponent implements OnInit {
     const B: [number, number, number] = [0, 0, 0];
     const G: [number, number, number] = [120, 120, 120];
     const farmName = this.currentFarm?.farm_name || 'Farm';
-    const today = new Date().toISOString().split('T')[0];
+    const today = toLocalDateString();
     const margin = 14;
     const pageWidth = pw - (margin * 2);
 

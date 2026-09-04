@@ -5,6 +5,7 @@ import { DatabaseService } from '../shared/services/database.service';
 import { AuthService } from '../shared/services/auth.service';
 import { DateOnlyPipe } from '../shared/pipes/date-format.pipe';
 
+import { toLocalDateString } from '../shared/utils/date.util';
 @Component({
   selector: 'app-sales-returns',
   standalone: true,
@@ -20,7 +21,7 @@ export class SalesReturnsComponent implements OnInit {
   returns: any[] = [];
   selectedBill: any = null;
   returnRows: any[] = [];
-  returnDate = new Date().toISOString().split('T')[0];
+  returnDate = toLocalDateString();
   reason = '';
   refundMethod: 'cash' | 'bank' = 'cash';
   isLoading = true;
@@ -110,7 +111,7 @@ export class SalesReturnsComponent implements OnInit {
   async selectBill(bill: any) {
     this.selectedBill = bill;
     this.reason = '';
-    this.returnDate = new Date().toISOString().split('T')[0];
+    this.returnDate = toLocalDateString();
     this.errorMessage = '';
     this.successMessage = '';
 
@@ -271,12 +272,12 @@ export class SalesReturnsComponent implements OnInit {
       if (existing.success && existing.data && existing.data.length > 0) {
         const cur = existing.data[0];
         const restoredQty = (Number(cur.quantity) || 0) + Number(item.quantity);
-        await this.db.run(
+        await this.mustRun(
           `UPDATE bill_items SET quantity = ?, total_price = ? WHERE item_id = ?`,
           [restoredQty, restoredQty * Number(item.unit_price), item.bill_item_id]
         );
       } else {
-        await this.db.run(
+        await this.mustRun(
           `INSERT INTO bill_items (bill_id, product_id, product_name, quantity, unit_price, total_price) VALUES (?,?,?,?,?,?)`,
           [item.bill_id, item.product_id, item.product_name, item.quantity, item.unit_price, Number(item.quantity) * Number(item.unit_price)]
         );
@@ -292,29 +293,50 @@ export class SalesReturnsComponent implements OnInit {
           if (batchResult.success && batchResult.data && batchResult.data.length > 0) {
             const batch = batchResult.data[0];
             const newQty = Math.max(0, (Number(batch.quantity) || 0) - Number(tx.quantity));
-            await this.db.updateBatch(batch.batch_id, { quantity: newQty });
-            await this.db.addBatchTransaction(
+            this.assertOk(await this.db.updateBatch(batch.batch_id, { quantity: newQty }), 'Reversing the restored batch quantity failed');
+            this.assertOk(await this.db.addBatchTransaction(
               batch.batch_id, item.product_id, 'sale', Number(tx.quantity),
               this.returnDate, ret.bill_id, `Reversed for edit of ${ret.return_number}`
-            );
+            ), 'Recording the reversal transaction failed');
           }
         }
       }
     }
 
     if (ret.refund_method === 'bank' && Number(ret.refund_amount) > 0) {
-      await this.db.run(
+      await this.mustRun(
         `DELETE FROM bank_ledger WHERE reference_type = 'return' AND reference_id = ?`,
         [ret.bill_id]
       );
     }
 
-    await this.db.run(`DELETE FROM sales_return_items WHERE return_id = ?`, [ret.return_id]);
-    await this.db.run(`DELETE FROM sales_returns WHERE return_id = ?`, [ret.return_id]);
-    await this.db.updateBatchStatuses();
+    await this.mustRun(`DELETE FROM sales_return_items WHERE return_id = ?`, [ret.return_id]);
+    await this.mustRun(`DELETE FROM sales_returns WHERE return_id = ?`, [ret.return_id]);
+    this.assertOk(await this.db.updateBatchStatuses(), 'Updating the batch statuses failed');
 
-    const freshBill = await this.db.get(`SELECT * FROM bills WHERE bill_id = ?`, [ret.bill_id]);
-    return freshBill.success && freshBill.data && freshBill.data.length > 0 ? freshBill.data[0] : null;
+    const freshBill = this.assertOk(
+      await this.db.get(`SELECT * FROM bills WHERE bill_id = ?`, [ret.bill_id]),
+      'Could not re-read the bill after reversing the previous return'
+    );
+    return freshBill.data.length > 0 ? freshBill.data[0] : null;
+  }
+
+  // ── Transaction helpers ──────────────────────────────────────
+  // db.run()/db.get() and the DatabaseService helpers report failures as
+  // { success: false } instead of throwing, so an unchecked write inside the
+  // transaction below would otherwise fail silently and still get committed
+  // along with everything else. Everything on the return-save path goes
+  // through these.
+
+  private assertOk(result: any, what: string): any {
+    if (!result || !result.success) {
+      throw new Error(`${what}: ${(result && result.error) || 'unknown error'}`);
+    }
+    return result;
+  }
+
+  private async mustRun(sql: string, params: any[] = []): Promise<any> {
+    return this.assertOk(await this.db.run(sql, params), 'Database write failed');
   }
 
   // ── Save Return ───────────────────────────────────────────────
@@ -342,113 +364,131 @@ export class SalesReturnsComponent implements OnInit {
     this.errorMessage = '';
     this.successMessage = '';
 
+    let returnNumber = '';
     try {
-      // If editing an existing return, undo its effects first so the bill
-      // is back to its pre-return state, then fall through to the normal
-      // save logic below as if this were a brand-new return.
-      if (this.editingReturnId) {
-        const originalReturn = this.returns.find(r => r.return_id === this.editingReturnId);
-        if (!originalReturn) throw new Error('Original return record not found.');
-        const restoredBill = await this.reverseReturnEffects(originalReturn);
-        if (!restoredBill) throw new Error('Failed to restore the bill before applying the edit.');
-        this.selectedBill = restoredBill;
+      // One transaction for the whole return: reversing a prior edit, the
+      // return header and items, the bill_items reduction, the stock
+      // restore, the customer ledger rebuild, the bank refund and the
+      // internal-transfer rebuild either all land together or none of them
+      // do. A failure part way through used to leave a return whose stock
+      // had been restored but whose bill totals were never updated, or the
+      // reverse.
+      //
+      // Reads inside here see the transaction's own uncommitted writes, so
+      // the edit path (reverse, then re-read bill_items to validate against
+      // the restored quantities) still behaves the way it always has.
+      await this.db.transaction(async () => {
+        // If editing an existing return, undo its effects first so the bill
+        // is back to its pre-return state, then fall through to the normal
+        // save logic below as if this were a brand-new return.
+        if (this.editingReturnId) {
+          const originalReturn = this.returns.find(r => r.return_id === this.editingReturnId);
+          if (!originalReturn) throw new Error('Original return record not found.');
+          const restoredBill = await this.reverseReturnEffects(originalReturn);
+          if (!restoredBill) throw new Error('Failed to restore the bill before applying the edit.');
+          this.selectedBill = restoredBill;
 
-        // sold_quantity ceilings were computed against the pre-restore state
-        // for display purposes — refresh them against the now-restored
-        // bill_items so validation and stock math both use current numbers.
-        const refreshedItems = await this.db.get(`SELECT * FROM bill_items WHERE bill_id = ?`, [this.selectedBill.bill_id]);
-        const byId = new Map<number, any>((refreshedItems.success ? refreshedItems.data : []).map((i: any) => [i.item_id, i]));
-        for (const row of this.returnRows) {
-          const match = byId.get(row.bill_item_id);
-          if (match) {
-            row.bill_item_id = match.item_id;
-            row.sold_quantity = Number(match.quantity);
+          // sold_quantity ceilings were computed against the pre-restore state
+          // for display purposes — refresh them against the now-restored
+          // bill_items so validation and stock math both use current numbers.
+          const refreshedItems = this.assertOk(
+            await this.db.get(`SELECT * FROM bill_items WHERE bill_id = ?`, [this.selectedBill.bill_id]),
+            'Could not re-read the bill items after restoring the previous return'
+          );
+          const byId = new Map<number, any>(refreshedItems.data.map((i: any) => [i.item_id, i]));
+          for (const row of this.returnRows) {
+            const match = byId.get(row.bill_item_id);
+            if (match) {
+              row.bill_item_id = match.item_id;
+              row.sold_quantity = Number(match.quantity);
+            }
+          }
+          for (const row of rows) {
+            if (Number(row.return_quantity) > row.sold_quantity) {
+              throw new Error(`Return qty for "${row.product_name}" exceeds what's available (${row.sold_quantity}).`);
+            }
           }
         }
-        for (const row of rows) {
-          if (Number(row.return_quantity) > row.sold_quantity) {
-            throw new Error(`Return qty for "${row.product_name}" exceeds what's available (${row.sold_quantity}).`);
-          }
-        }
-      }
 
-      const returnNumber  = await this.getNextReturnNumber();
-      const returnAmount  = this.totalReturnAmount;
-      const oldPaid       = Number(this.selectedBill.amount_paid) || 0;
-      const nextTotal     = this.newBillTotal;
-      const nextPaid      = Math.min(oldPaid, nextTotal);
-      const refundAmount  = oldPaid - nextPaid;
+        returnNumber        = await this.getNextReturnNumber();
+        const returnAmount  = this.totalReturnAmount;
+        const oldPaid       = Number(this.selectedBill.amount_paid) || 0;
+        const nextTotal     = this.newBillTotal;
+        const nextPaid      = Math.min(oldPaid, nextTotal);
+        const refundAmount  = oldPaid - nextPaid;
 
-      // 1. Insert sales_returns header
-      const insertReturn = await this.db.run(
-        `INSERT INTO sales_returns
-          (farm_id, bill_id, return_number, return_date, return_amount, refund_amount, refund_method, reason)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
-        [
-          this.currentFarm.farm_id,
-          this.selectedBill.bill_id,
-          returnNumber,
-          this.returnDate,
-          returnAmount,
-          refundAmount,
-          this.refundMethod,
-          this.reason || null
-        ]
-      );
-
-      if (!insertReturn.success) throw new Error('Failed to create return record: ' + insertReturn.error);
-      const returnId = insertReturn.lastId;
-      if (!returnId) throw new Error('Return ID not obtained — check PRIMARY_KEY_MAP.');
-
-      // 2. Insert return items + restore stock + reduce bill items
-      for (const row of rows) {
-        const qty      = Number(row.return_quantity) || 0;
-        const rowTotal = qty * (Number(row.unit_price) || 0);
-
-        await this.db.run(
-          `INSERT INTO sales_return_items
-            (return_id, bill_id, bill_item_id, product_id, product_name, quantity, unit_price, total_price)
+        // 1. Insert sales_returns header
+        const insertReturn = await this.mustRun(
+          `INSERT INTO sales_returns
+            (farm_id, bill_id, return_number, return_date, return_amount, refund_amount, refund_method, reason)
            VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
-          [returnId, this.selectedBill.bill_id, row.bill_item_id, row.product_id ?? null, row.product_name, qty, row.unit_price, rowTotal]
+          [
+            this.currentFarm.farm_id,
+            this.selectedBill.bill_id,
+            returnNumber,
+            this.returnDate,
+            returnAmount,
+            refundAmount,
+            this.refundMethod,
+            this.reason || null
+          ]
         );
 
-        // Restore stock only if product_id is known (distribution items)
-        if (row.product_id) {
-          await this.restoreReturnedStock(row, qty, returnId, returnNumber);
+        const returnId = insertReturn.lastId;
+        if (!returnId) throw new Error('Return ID not obtained — check PRIMARY_KEY_MAP.');
+
+        // 2. Insert return items + restore stock + reduce bill items
+        for (const row of rows) {
+          const qty      = Number(row.return_quantity) || 0;
+          const rowTotal = qty * (Number(row.unit_price) || 0);
+
+          await this.mustRun(
+            `INSERT INTO sales_return_items
+              (return_id, bill_id, bill_item_id, product_id, product_name, quantity, unit_price, total_price)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+            [returnId, this.selectedBill.bill_id, row.bill_item_id, row.product_id ?? null, row.product_name, qty, row.unit_price, rowTotal]
+          );
+
+          // Restore stock only if product_id is known (distribution items)
+          if (row.product_id) {
+            await this.restoreReturnedStock(row, qty, returnId, returnNumber);
+          }
+
+          await this.reduceBillItem(row, qty);
         }
 
-        await this.reduceBillItem(row, qty);
-      }
+        // 3. Update bill totals and status
+        const newStatus = nextTotal === 0 ? 'returned' : 'partial_return';
+        await this.mustRun(
+          `UPDATE bills SET subtotal = ?, total_amount = ?, amount_paid = ?, status = ? WHERE bill_id = ?`,
+          [nextTotal, nextTotal, nextPaid, newStatus, this.selectedBill.bill_id]
+        );
 
-      // 3. Update bill totals and status
-      const newStatus = nextTotal === 0 ? 'returned' : 'partial_return';
-      await this.db.run(
-        `UPDATE bills SET subtotal = ?, total_amount = ?, amount_paid = ?, status = ? WHERE bill_id = ?`,
-        [nextTotal, nextTotal, nextPaid, newStatus, this.selectedBill.bill_id]
-      );
+        // 4. Rebuild customer ledger (if customer-linked bill)
+        if (this.selectedBill.customer_id) {
+          await this.rebuildCustomerLedger(this.selectedBill, nextTotal, nextPaid);
+        }
 
-      // 4. Rebuild customer ledger (if customer-linked bill)
-      if (this.selectedBill.customer_id) {
-        await this.rebuildCustomerLedger(this.selectedBill, nextTotal, nextPaid);
-      }
+        // 5. Bank refund (if applicable)
+        if (refundAmount > 0 && this.refundMethod === 'bank' && this.selectedBill.customer_id) {
+          await this.refundCustomerBank(this.selectedBill.customer_id, refundAmount, `Refund - ${returnNumber}`);
+        }
 
-      // 5. Bank refund (if applicable)
-      if (refundAmount > 0 && this.refundMethod === 'bank' && this.selectedBill.customer_id) {
-        await this.refundCustomerBank(this.selectedBill.customer_id, refundAmount, `Refund - ${returnNumber}`);
-      }
+        // 6. Rebuild internal-transfer expenses (if internal sale)
+        if (this.selectedBill.payment_type === 'internal') {
+          await this.rebuildInternalTransferExpenses(this.selectedBill.bill_id);
+        }
+      });
 
-      // 6. Rebuild internal-transfer expenses (if internal sale)
-      if (this.selectedBill.payment_type === 'internal') {
-        await this.rebuildInternalTransferExpenses(this.selectedBill.bill_id);
-      }
-
+      // Committed.
       this.successMessage = this.editingReturnId
         ? `Return updated (was ${this.editingReturnNumber}, now ${returnNumber}).`
         : `Return ${returnNumber} saved successfully.`;
       this.clearSelection();
       await this.loadData();
     } catch (error: any) {
-      this.errorMessage = 'Failed to save return: ' + error.message;
+      // The transaction rolled back — nothing at all was written.
+      this.errorMessage = 'Failed to save return: ' + (error?.message || error);
     } finally {
       this.isSaving = false;
       this.cdr.detectChanges();
@@ -495,12 +535,12 @@ export class SalesReturnsComponent implements OnInit {
       if (batchResult.success && batchResult.data && batchResult.data.length > 0) {
         const batch = batchResult.data[0];
         const newQty = (Number(batch.quantity) || 0) + restoreQty;
-        await this.db.updateBatch(batch.batch_id, { quantity: newQty, status: 'active' });
-        await this.db.addBatchTransaction(
+        this.assertOk(await this.db.updateBatch(batch.batch_id, { quantity: newQty, status: 'active' }), 'Restoring stock to a batch failed');
+        this.assertOk(await this.db.addBatchTransaction(
           batch.batch_id, row.product_id, 'return', restoreQty,
           this.returnDate, returnId,
           `${returnNumber} - Bill ${this.selectedBill.bill_number}`
-        );
+        ), 'Recording the stock-restore transaction failed');
         remaining -= restoreQty;
       }
     }
@@ -512,24 +552,24 @@ export class SalesReturnsComponent implements OnInit {
         const target = batches.data.find((b: any) => b.calculated_status === 'active' || b.calculated_status === 'expiring')
           || batches.data[0];
         const newQty = (Number(target.quantity) || 0) + remaining;
-        await this.db.updateBatch(target.batch_id, { quantity: newQty, status: 'active' });
-        await this.db.addBatchTransaction(
+        this.assertOk(await this.db.updateBatch(target.batch_id, { quantity: newQty, status: 'active' }), 'Restoring stock to a fallback batch failed');
+        this.assertOk(await this.db.addBatchTransaction(
           target.batch_id, row.product_id, 'return', remaining,
           this.returnDate, returnId,
           `${returnNumber} - Bill ${this.selectedBill.bill_number} (fallback batch)`
-        );
+        ), 'Recording the fallback stock-restore transaction failed');
       }
     }
 
-    await this.db.updateBatchStatuses();
+    this.assertOk(await this.db.updateBatchStatuses(), 'Updating the batch statuses failed');
   }
 
   private async reduceBillItem(row: any, qty: number) {
     const remainingQty = Math.max((Number(row.sold_quantity) || 0) - qty, 0);
     if (remainingQty === 0) {
-      await this.db.run('DELETE FROM bill_items WHERE item_id = ?', [row.bill_item_id]);
+      await this.mustRun('DELETE FROM bill_items WHERE item_id = ?', [row.bill_item_id]);
     } else {
-      await this.db.run(
+      await this.mustRun(
         'UPDATE bill_items SET quantity = ?, total_price = ? WHERE item_id = ?',
         [remainingQty, remainingQty * (Number(row.unit_price) || 0), row.bill_item_id]
       );
@@ -538,13 +578,13 @@ export class SalesReturnsComponent implements OnInit {
 
   private async rebuildCustomerLedger(bill: any, total: number, paid: number) {
     // Remove old ledger entries for this bill
-    await this.db.run(
+    await this.mustRun(
       `DELETE FROM customer_ledger WHERE reference_id = ? AND reference_type IN ('bill', 'payment')`,
       [bill.bill_id]
     );
 
     if (total > 0) {
-      await this.db.addCustomerLedgerEntry({
+      this.assertOk(await this.db.addCustomerLedgerEntry({
         customer_id: bill.customer_id,
         transaction_date: this.returnDate,
         description: `Bill #${bill.bill_number} (after return)`,
@@ -552,11 +592,11 @@ export class SalesReturnsComponent implements OnInit {
         credit: 0,
         reference_type: 'bill',
         reference_id: bill.bill_id
-      });
+      }), 'Rebuilding the customer ledger failed');
     }
 
     if (paid > 0) {
-      await this.db.addCustomerLedgerEntry({
+      this.assertOk(await this.db.addCustomerLedgerEntry({
         customer_id: bill.customer_id,
         transaction_date: this.returnDate,
         description: `Payment - Bill #${bill.bill_number}`,
@@ -564,12 +604,16 @@ export class SalesReturnsComponent implements OnInit {
         credit: paid,
         reference_type: 'payment',
         reference_id: bill.bill_id
-      });
+      }), 'Rebuilding the customer ledger failed');
     }
 
-    await this.db.updateCustomerOutstandingBalance(bill.customer_id);
+    this.assertOk(await this.db.updateCustomerOutstandingBalance(bill.customer_id), 'Updating the customer balance failed');
   }
 
+  // A missing bank account is an expected business state (not every customer
+  // has one on file), not a write failure — it does not abort the surrounding
+  // transaction. The write that follows once an account IS found still goes
+  // through assertOk, same as everything else on this path.
   private async refundCustomerBank(customerId: number, amount: number, description: string) {
     // getCustomerBankAccount returns { success, data: [] }
     const bankResult = await this.db.getCustomerBankAccount(customerId);
@@ -578,7 +622,7 @@ export class SalesReturnsComponent implements OnInit {
       return;
     }
     const bank = bankResult.data[0];
-    await this.db.addBankLedgerEntry({
+    this.assertOk(await this.db.addBankLedgerEntry({
       bank_id: bank.bank_id,
       transaction_date: this.returnDate,
       description,
@@ -586,7 +630,7 @@ export class SalesReturnsComponent implements OnInit {
       credit: amount,    // Credit bank = money leaving our bank (refund to customer)
       reference_type: 'return',
       reference_id: this.selectedBill.bill_id
-    });
+    }), 'Posting the bank refund failed');
   }
 
   private async rebuildInternalTransferExpenses(billId: number) {
@@ -618,17 +662,17 @@ export class SalesReturnsComponent implements OnInit {
       const refId = row.reference_id || row.expense_id;
 
       if (targetType === 'medicine' && refId) {
-        await this.db.run('DELETE FROM medicine_entries WHERE entry_id = ?', [refId]);
+        await this.mustRun('DELETE FROM medicine_entries WHERE entry_id = ?', [refId]);
       } else if (targetType === 'feed' && refId) {
-        await this.db.run('DELETE FROM feed_entries WHERE entry_id = ?', [refId]);
+        await this.mustRun('DELETE FROM feed_entries WHERE entry_id = ?', [refId]);
       } else if (targetType === 'vaccination' && refId) {
-        await this.db.run('DELETE FROM vaccinations WHERE vaccination_id = ?', [refId]);
+        await this.mustRun('DELETE FROM vaccinations WHERE vaccination_id = ?', [refId]);
       } else if (row.expense_id) {
-        await this.db.run('DELETE FROM expenses WHERE expense_id = ?', [row.expense_id]);
+        await this.mustRun('DELETE FROM expenses WHERE expense_id = ?', [row.expense_id]);
       }
     }
     // Remove old internal_transfer rows
-    await this.db.run('DELETE FROM internal_transfers WHERE bill_id = ?', [billId]);
+    await this.mustRun('DELETE FROM internal_transfers WHERE bill_id = ?', [billId]);
 
     // 🔥 FIX: re-create each remaining bill item in ITS OWN category table,
     // not always as a generic expense — otherwise every returned
@@ -660,14 +704,14 @@ export class SalesReturnsComponent implements OnInit {
         );
         let traderId = traderRes.success && traderRes.data.length > 0 ? traderRes.data[0].trader_id : null;
         if (!traderId) {
-          const newTrader = await this.db.run(
+          const newTrader = await this.mustRun(
             'INSERT INTO medicine_traders (flock_id, trader_name, module_type) VALUES (?, ?, ?)',
             [transfer.target_flock_id, 'Internal Distribution', transfer.target_module]
           );
           traderId = newTrader.lastId;
         }
         if (traderId) {
-          const entryResult = await this.db.run(
+          const entryResult = await this.mustRun(
             'INSERT INTO medicine_entries (trader_id, flock_id, date, medicine_name, quantity, price_per_unit, total_amount, module_type, bill_id, bill_number) VALUES (?,?,?,?,?,?,?,?,?,?)',
             [traderId, transfer.target_flock_id, this.returnDate, item.product_name + billTag, item.quantity, item.unit_price, item.total_price, transfer.target_module, billId, billNumber]
           );
@@ -681,14 +725,14 @@ export class SalesReturnsComponent implements OnInit {
         );
         let traderId = traderRes.success && traderRes.data.length > 0 ? traderRes.data[0].trader_id : null;
         if (!traderId) {
-          const newTrader = await this.db.run(
+          const newTrader = await this.mustRun(
             'INSERT INTO feed_traders (flock_id, trader_name, module_type) VALUES (?, ?, ?)',
             [transfer.target_flock_id, 'Internal Distribution', transfer.target_module]
           );
           traderId = newTrader.lastId;
         }
         if (traderId) {
-          const entryResult = await this.db.run(
+          const entryResult = await this.mustRun(
             'INSERT INTO feed_entries (trader_id, flock_id, date, feed_name, quantity, price_per_unit, total_amount, module_type, bill_id, bill_number) VALUES (?,?,?,?,?,?,?,?,?,?)',
             [traderId, transfer.target_flock_id, this.returnDate, item.product_name + billTag, item.quantity, item.unit_price, item.total_price, transfer.target_module, billId, billNumber]
           );
@@ -699,7 +743,7 @@ export class SalesReturnsComponent implements OnInit {
         // cost must be written here, exactly as medicine/feed write total_amount
         // above — omitting it made every returned vaccination item come back at
         // zero cost. dose carries the remaining quantity, not a hardcoded '1'.
-        const vaccResult = await this.db.run(
+        const vaccResult = await this.mustRun(
           'INSERT INTO vaccinations (batch_id, flock_id, date, vaccine_name, dose, notes, cost, done, bill_id, bill_number) VALUES (?,?,?,?,?,?,?,?,?,?)',
           [
             transfer.target_module === 'layer' ? transfer.target_flock_id : null,
@@ -712,7 +756,7 @@ export class SalesReturnsComponent implements OnInit {
         referenceId = vaccResult.lastId;
       } else {
         targetType = 'expense';
-        const expenseResult = await this.db.run(
+        const expenseResult = await this.mustRun(
           'INSERT INTO expenses (flock_id, date, description, amount, module_type) VALUES (?, ?, ?, ?, ?)',
           [transfer.target_flock_id, this.returnDate, `${item.product_name} x ${item.quantity}${billTag}`, item.total_price, transfer.target_module]
         );
@@ -720,7 +764,7 @@ export class SalesReturnsComponent implements OnInit {
         referenceId = expenseId;
       }
 
-      await this.db.run(
+      await this.mustRun(
         'INSERT INTO internal_transfers (bill_id, expense_id, target_module, target_flock_id, target_type, reference_id) VALUES (?,?,?,?,?,?)',
         [billId, expenseId, transfer.target_module, transfer.target_flock_id, targetType, referenceId]
       );

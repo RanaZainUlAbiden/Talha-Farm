@@ -10,27 +10,30 @@ import { DatabaseService } from './database.service';
  * the books inconsistent; consolidation therefore never writes.
  *
  * ─────────────────────────────────────────────────────────────────────────
- * ACCOUNTING BASIS: ACCRUAL
+ * THE PICTURE: MONEY IN, MONEY OUT, PROFIT OR LOSS
  * ─────────────────────────────────────────────────────────────────────────
- * The existing reports disagree — `distribution-report.component.ts` is cash
- * basis (`totalPaidSales`, only `bills.amount_paid` counts), while
- * `report.component.ts` and `layer-report.component.ts` count income as
- * recorded. Summing the two produces a number that means nothing.
+ * The dashboard shows one thing: profit = money in - money out. For broiler and
+ * layer, revenue is counted when a sale is recorded, not when it is collected,
+ * because `sales`, `egg_sales` and `hen_sales` carry a `payment_type` but no
+ * customer-payment table — there is no way to know how much of a credit sale
+ * has since been collected, so recording-time is the only basis those modules
+ * can actually produce.
  *
- * This service standardises on ACCRUAL for one reason: cash basis is not
- * expressible for broiler and layer. `sales`, `egg_sales` and `hen_sales`
- * carry a `payment_type` but no `amount_paid`, and there is no
- * customer-payment table on that side — so there is no way to know how much
- * of a credit sale has since been collected. Accrual is the only basis all
- * three modules can actually produce, so it is the one applied here.
+ * Distribution is the exception, and deliberately so: `bills.amount_paid` is
+ * maintained per bill, so distribution revenue is counted when it is COLLECTED
+ * (`qDistributionBills()`). An unpaid bill must never appear as profit — that
+ * is a standing rule from the client, not an implementation preference. The
+ * uncollected balance is reported as `revenue.distributionUnpaid`, outside both
+ * `revenue.total` and profit. `distribution-report.component.ts` applies the
+ * same rule with the same clamp, so the two screens agree.
  *
- * Consequence to surface on the dashboard: the distribution slice of
- * `revenue.distribution` will read HIGHER than the Distribution Report's
- * own profit figure, because unpaid bills count here and do not there.
- * `revenue.distributionCollected` is exposed so the dashboard can show the
- * cash-basis figure alongside it, but it is NOT part of any total.
- *
- * `basisLabel` is meant to be rendered verbatim next to the headline number.
+ * Everything to do with assets is cash as it happens instead: an asset
+ * installment counts as money out when it is actually paid, not when the
+ * asset is bought, and selling an asset counts as money in at the full sale
+ * price, not the gain over its cost. There is deliberately no bank balance
+ * or cash-position figure here — asset payments made by bank never wrote a
+ * `bank_ledger` entry, so that balance drifted upward over time, and it has
+ * been removed rather than shown unreliable.
  *
  * ─────────────────────────────────────────────────────────────────────────
  * DISTRIBUTION COST: COST OF GOODS SOLD, NOT PURCHASES
@@ -80,9 +83,14 @@ export interface OverviewRevenue {
   total: number;
   broiler: number;
   layer: number;
+  /** Distribution revenue actually COLLECTED. See `qDistributionBills()`. */
   distribution: number;
-  /** Cash-basis distribution revenue (bills.amount_paid). Reference only — not in any total. */
-  distributionCollected: number;
+  /**
+   * External distribution bills billed but not yet collected. Reported for
+   * visibility only — deliberately NOT part of `distribution` or `total`, and
+   * therefore never part of profit.
+   */
+  distributionUnpaid: number;
 }
 
 export interface OverviewExpenses {
@@ -113,35 +121,12 @@ export interface OverviewExpenses {
   byModule: { broiler: number; layer: number; distribution: number };
 }
 
+/** The compact assets section: what is owned, and what is still owed on it. */
 export interface OverviewAssets {
-  /** Sold assets only: sale_amount - purchase_amount */
-  realisedGainLoss: number;
-  soldCount: number;
-  /** purchase_amount of assets still held */
+  /** Total agreed price of assets still owned (not sold), as at range.to. */
   activeValue: number;
-  activeCount: number;
-}
-
-export interface OverviewBankAccount {
-  bank_id: number;
-  bank_name: string;
-  account_number: string | null;
-  /** Ledger balance as at range.to (or all-time when no upper bound). */
-  balance: number;
-  /** The stored running balance on bank_accounts, for cross-checking. */
-  currentBalance: number;
-}
-
-export interface OverviewBank {
-  accounts: OverviewBankAccount[];
-  total: number;
-}
-
-export interface OverviewCash {
-  inflow: number;
-  outflow: number;
-  net: number;
-  note: string;
+  /** Still owed on installments across every asset, sold ones included, as at range.to. */
+  outstanding: number;
 }
 
 export interface OverviewFarmProfit {
@@ -180,19 +165,33 @@ export interface OverviewInventory {
   unpricedUnits: number;
 }
 
+export interface OverviewMoneyIn {
+  total: number;
+  /** All revenue, accrual, every module, internal transfers eliminated. */
+  revenue: number;
+  /** Full sale_amount of assets sold in the period — money in, not gain/loss. */
+  assetSales: number;
+}
+
+export interface OverviewMoneyOut {
+  total: number;
+  /** Business expenses across every module, including distribution COGS. */
+  expenses: number;
+  /** Owner's drawings (personal_expenses). */
+  personal: number;
+  /** Asset installments actually paid in the period. */
+  assetPayments: number;
+}
+
 export interface OverviewSummary {
-  basis: 'accrual';
-  basisLabel: string;
   range: OverviewDateRange;
   revenue: OverviewRevenue;
   expenses: OverviewExpenses;
   inventory: OverviewInventory;
-  businessNetProfit: number;
-  personalWithdrawals: number;
-  netPosition: number;
+  moneyIn: OverviewMoneyIn;
+  moneyOut: OverviewMoneyOut;
+  profit: number;
   assets: OverviewAssets;
-  bank: OverviewBank;
-  cash: OverviewCash;
   perFarm: OverviewFarmProfit[];
   internalTransfers: OverviewInternalTransfers;
   /** Non-fatal problems (failed queries, data the basis can't represent). */
@@ -203,24 +202,10 @@ export interface OverviewSummary {
 interface UnitRow {
   unitId: number | null;
   amount: number;
-  cashAmount: number;
   rowCount: number;
 }
 
 type ModuleKey = 'broiler' | 'layer' | 'distribution';
-
-const BASIS_LABEL =
-  'Accrual basis - revenue counted when the sale is recorded, not when it is collected. ' +
-  'Distribution cost is the purchase cost of the stock that actually sold; stock still ' +
-  'on the shelves is reported as inventory, not charged against profit. ' +
-  'Internal farm-to-farm transfers are excluded from both sides.';
-
-const CASH_NOTE =
-  'Cash movement over the period, derived from records that carry a payment type ' +
-  '(anything not marked "bank" is treated as cash, matching the app default). ' +
-  'Medicine, feed and vaccination costs have no payment field and are counted as cash. ' +
-  'Ledger debits are amounts owed, not paid, and are excluded. ' +
-  'There is no cash account in the database, so this is a period movement, not a balance.';
 
 @Injectable({ providedIn: 'root' })
 export class OverviewService {
@@ -244,7 +229,7 @@ export class OverviewService {
     const [
       units,
       broilerSales, eggSales, henSales, broilerIncome, layerIncome,
-      distributionBills, internalBills,
+      distributionBills, distributionUnpaidBills, internalBills,
       broilerExpenses, layerExpenses,
       broilerMedicine, layerMedicine,
       broilerFeed, layerFeed,
@@ -253,9 +238,8 @@ export class OverviewService {
       broilerLedgerDebits,
       purchases, purchaseReturns, distributionCogs, inventoryOnHand, distributionExpenses,
       internalExpenseSide,
-      assetsRealised, assetsActive, assetPurchases,
-      personal,
-      bankAccounts
+      assetSales, assetsActive, assetPayments, assetOutstanding,
+      personal
     ] = await Promise.all([
       this.loadUnits(farmId, warnings),
 
@@ -266,6 +250,7 @@ export class OverviewService {
       this.unitRows(this.qBroilerIncome(farmId, range), warnings),
       this.unitRows(this.qLayerIncome(farmId, range), warnings),
       this.scalarRow(this.qDistributionBills(farmId, range), warnings),
+      this.scalarRow(this.qDistributionUnpaid(farmId, range), warnings),
       this.scalarRow(this.qInternalBills(farmId, range), warnings),
 
       // ── Expenses ──
@@ -287,25 +272,28 @@ export class OverviewService {
       this.scalarRow(this.qDistributionExpenses(farmId, range), warnings),
       this.scalarRow(this.qInternalExpenseSide(farmId, range), warnings),
 
-      // ── Assets / personal / bank ──
-      this.unitRows(this.qAssetsRealised(farmId, range), warnings),
-      this.unitRows(this.qAssetsActive(farmId, range), warnings),
-      this.scalarRow(this.qAssetPurchases(farmId, range), warnings),
-      this.scalarRow(this.qPersonalExpenses(farmId, range), warnings),
-      this.loadBankAccounts(farmId, range, warnings)
+      // ── Assets / personal ──
+      this.scalarRow(this.qAssetSales(farmId, range), warnings),
+      this.scalarRow(this.qAssetsActive(farmId, range), warnings),
+      this.scalarRow(this.qAssetPayments(farmId, range), warnings),
+      this.scalarRow(this.qAssetOutstanding(farmId, range), warnings),
+      this.scalarRow(this.qPersonalExpenses(farmId, range), warnings)
     ]);
 
     // ── Revenue ────────────────────────────────────────────────────────────
     const broilerRevenue = this.sum(broilerSales) + this.sum(broilerIncome);
     const layerRevenue = this.sum(eggSales) + this.sum(henSales) + this.sum(layerIncome);
     const distributionRevenue = this.num(distributionBills['amount']);
+    const distributionUnpaid = this.num(distributionUnpaidBills['amount']);
 
     const revenue: OverviewRevenue = {
+      // distributionUnpaid is deliberately absent from `total`: an uncollected
+      // bill is not profit. See qDistributionBills().
       total: broilerRevenue + layerRevenue + distributionRevenue,
       broiler: broilerRevenue,
       layer: layerRevenue,
       distribution: distributionRevenue,
-      distributionCollected: this.num(distributionBills['paid_amount'])
+      distributionUnpaid
     };
 
     // ── Expenses ───────────────────────────────────────────────────────────
@@ -372,44 +360,31 @@ export class OverviewService {
       );
     }
 
-    const businessNetProfit = revenue.total - expenses.total;
-    const personalWithdrawals = this.num(personal['amount']);
-    const netPosition = businessNetProfit - personalWithdrawals;
-
     // ── Assets ─────────────────────────────────────────────────────────────
     const assets: OverviewAssets = {
-      realisedGainLoss: this.sum(assetsRealised),
-      soldCount: this.count(assetsRealised),
-      activeValue: this.sum(assetsActive),
-      activeCount: this.count(assetsActive)
+      activeValue: this.num(assetsActive['amount']),
+      outstanding: this.num(assetOutstanding['amount'])
     };
 
-    // ── Cash ───────────────────────────────────────────────────────────────
-    const cashInflow =
-      this.cash(broilerSales) + this.cash(eggSales) + this.cash(henSales) +
-      this.cash(broilerIncome) + this.cash(layerIncome) +
-      this.num(distributionBills['cash_amount']) +
-      this.num(purchaseReturns['cash_amount']) +
-      // Asset sales have no settlement record; proceeds are treated as cash in.
-      this.cash(assetsRealised);
+    // ── Money in / money out / profit ─────────────────────────────────────
+    const assetSalesTotal = this.num(assetSales['amount']);
+    const assetPaymentsTotal = this.num(assetPayments['amount']);
+    const personalTotal = this.num(personal['amount']);
 
-    const cashOutflow =
-      this.cash(broilerExpenses) + this.cash(layerExpenses) +
-      this.cash(broilerMedicine) + this.cash(layerMedicine) +
-      this.cash(broilerFeed) + this.cash(layerFeed) +
-      this.cash(broilerVaccination) + this.cash(layerVaccination) +
-      this.cash(broilerLabour) + this.cash(layerLabour) +
-      this.num(purchases['cash_amount']) +
-      this.num(distributionExpenses['cash_amount']) +
-      this.num(assetPurchases['cash_amount']) +
-      this.num(personal['cash_amount']);
-
-    const cash: OverviewCash = {
-      inflow: cashInflow,
-      outflow: cashOutflow,
-      net: cashInflow - cashOutflow,
-      note: CASH_NOTE
+    const moneyIn: OverviewMoneyIn = {
+      total: revenue.total + assetSalesTotal,
+      revenue: revenue.total,
+      assetSales: assetSalesTotal
     };
+
+    const moneyOut: OverviewMoneyOut = {
+      total: expenses.total + personalTotal + assetPaymentsTotal,
+      expenses: expenses.total,
+      personal: personalTotal,
+      assetPayments: assetPaymentsTotal
+    };
+
+    const profit = moneyIn.total - moneyOut.total;
 
     // ── Per-farm breakdown ─────────────────────────────────────────────────
     const perFarm = this.buildPerFarm(units, {
@@ -441,18 +416,14 @@ export class OverviewService {
     }
 
     return {
-      basis: 'accrual',
-      basisLabel: BASIS_LABEL,
       range,
       revenue,
       expenses,
       inventory,
-      businessNetProfit,
-      personalWithdrawals,
-      netPosition,
+      moneyIn,
+      moneyOut,
+      profit,
       assets,
-      bank: bankAccounts,
-      cash,
       perFarm,
       internalTransfers,
       warnings
@@ -552,8 +523,6 @@ export class OverviewService {
     const sql =
       `SELECT f.unit_id AS unit_id,
               COALESCE(SUM(s.total_amount), 0) AS amount,
-              COALESCE(SUM(CASE WHEN COALESCE(s.payment_type,'cash') <> 'bank'
-                                THEN s.total_amount ELSE 0 END), 0) AS cash_amount,
               COUNT(*) AS row_count
        FROM sales s
        JOIN flocks f ON f.flock_id = s.flock_id
@@ -568,8 +537,6 @@ export class OverviewService {
     const sql =
       `SELECT b.unit_id AS unit_id,
               COALESCE(SUM(es.total_amount), 0) AS amount,
-              COALESCE(SUM(CASE WHEN COALESCE(es.payment_type,'cash') <> 'bank'
-                                THEN es.total_amount ELSE 0 END), 0) AS cash_amount,
               COUNT(*) AS row_count
        FROM egg_sales es
        JOIN batches b ON b.batch_id = es.batch_id
@@ -584,8 +551,6 @@ export class OverviewService {
     const sql =
       `SELECT b.unit_id AS unit_id,
               COALESCE(SUM(hs.total_amount), 0) AS amount,
-              COALESCE(SUM(CASE WHEN COALESCE(hs.payment_type,'cash') <> 'bank'
-                                THEN hs.total_amount ELSE 0 END), 0) AS cash_amount,
               COUNT(*) AS row_count
        FROM hen_sales hs
        JOIN batches b ON b.batch_id = hs.batch_id
@@ -600,7 +565,6 @@ export class OverviewService {
     const sql =
       `SELECT f.unit_id AS unit_id,
               COALESCE(SUM(i.amount), 0) AS amount,
-              COALESCE(SUM(i.amount), 0) AS cash_amount,
               COUNT(*) AS row_count
        FROM income i
        JOIN flocks f ON f.flock_id = i.flock_id
@@ -616,7 +580,6 @@ export class OverviewService {
     const sql =
       `SELECT b.unit_id AS unit_id,
               COALESCE(SUM(i.amount), 0) AS amount,
-              COALESCE(SUM(i.amount), 0) AS cash_amount,
               COUNT(*) AS row_count
        FROM income i
        JOIN batches b ON b.batch_id = i.flock_id
@@ -627,15 +590,49 @@ export class OverviewService {
     return [sql, params];
   }
 
-  /** External distribution sales. Internal bills are dropped here. */
+  /**
+   * External distribution revenue, COLLECTED basis. Internal bills are dropped.
+   *
+   * Distribution is the one module that knows what it has actually been paid:
+   * `bills.amount_paid` is maintained per bill, where broiler and layer have a
+   * `payment_type` and no payment table at all. So while the rest of this file
+   * counts revenue when the sale is recorded — the only basis those modules can
+   * produce — distribution counts it when the money arrives, because it can, and
+   * because an unpaid bill must never show up as profit.
+   *
+   * That is a deliberate mixed basis, and it is the conservative direction on
+   * the only module where the choice exists: COGS for a credit sale is charged
+   * as soon as the goods leave, so an uncollected bill pulls profit DOWN until
+   * it is paid, and can never inflate it. The uncollected amount is reported
+   * separately as `revenue.distributionUnpaid` so it stays visible.
+   *
+   * The clamp matches `getBillPaidAmount()` in distribution-report.component.ts
+   * exactly — MIN/MAX with two arguments are SQLite's scalar forms, not the
+   * aggregates — so both screens compute the same figure from the same rows.
+   */
   private qDistributionBills(farmId: number, range: OverviewDateRange): [string, any[]] {
     const params: any[] = [farmId];
     const sql =
-      `SELECT COALESCE(SUM(bl.total_amount), 0) AS amount,
-              COALESCE(SUM(bl.amount_paid), 0) AS paid_amount,
-              COALESCE(SUM(CASE WHEN COALESCE(bl.payment_type,'cash') = 'cash'
-                                THEN bl.amount_paid ELSE 0 END), 0) AS cash_amount,
-              COUNT(*) AS row_count
+      `SELECT COALESCE(SUM(
+                MIN(MAX(COALESCE(bl.amount_paid, 0), 0), COALESCE(bl.total_amount, 0))
+              ), 0) AS amount
+       FROM bills bl
+       WHERE bl.farm_id = ? AND COALESCE(bl.payment_type,'cash') <> 'internal'` +
+      this.dateClause('bl.bill_date', range, params);
+    return [sql, params];
+  }
+
+  /**
+   * Billed but not yet collected on external bills — reported, never added to
+   * revenue or profit. Same clamp as above, so `billed = collected + unpaid`.
+   */
+  private qDistributionUnpaid(farmId: number, range: OverviewDateRange): [string, any[]] {
+    const params: any[] = [farmId];
+    const sql =
+      `SELECT COALESCE(SUM(
+                MAX(COALESCE(bl.total_amount, 0)
+                    - MIN(MAX(COALESCE(bl.amount_paid, 0), 0), COALESCE(bl.total_amount, 0)), 0)
+              ), 0) AS amount
        FROM bills bl
        WHERE bl.farm_id = ? AND COALESCE(bl.payment_type,'cash') <> 'internal'` +
       this.dateClause('bl.bill_date', range, params);
@@ -647,7 +644,6 @@ export class OverviewService {
     const params: any[] = [farmId];
     const sql =
       `SELECT COALESCE(SUM(bl.total_amount), 0) AS amount,
-              0 AS cash_amount,
               COUNT(*) AS row_count
        FROM bills bl
        WHERE bl.farm_id = ? AND COALESCE(bl.payment_type,'cash') = 'internal'` +
@@ -671,8 +667,6 @@ export class OverviewService {
     const sql =
       `SELECT u.unit_id AS unit_id,
               COALESCE(SUM(e.amount), 0) AS amount,
-              COALESCE(SUM(CASE WHEN COALESCE(e.payment_type,'cash') <> 'bank'
-                                THEN e.amount ELSE 0 END), 0) AS cash_amount,
               COUNT(*) AS row_count
        FROM expenses e
        ${join}
@@ -703,7 +697,6 @@ export class OverviewService {
     const sql =
       `SELECT u.unit_id AS unit_id,
               COALESCE(SUM(t.total_amount), 0) AS amount,
-              COALESCE(SUM(t.total_amount), 0) AS cash_amount,
               COUNT(*) AS row_count
        FROM ${table} t
        ${join}
@@ -731,7 +724,6 @@ export class OverviewService {
     const sql =
       `SELECT u.unit_id AS unit_id,
               COALESCE(SUM(v.cost), 0) AS amount,
-              COALESCE(SUM(v.cost), 0) AS cash_amount,
               COUNT(*) AS row_count
        FROM vaccinations v
        ${join}
@@ -756,8 +748,6 @@ export class OverviewService {
     const sql =
       `SELECT u.unit_id AS unit_id,
               COALESCE(SUM(lp.amount), 0) AS amount,
-              COALESCE(SUM(CASE WHEN COALESCE(lp.payment_type,'cash') <> 'bank'
-                                THEN lp.amount ELSE 0 END), 0) AS cash_amount,
               COUNT(*) AS row_count
        FROM labour_payments lp
        ${join}
@@ -770,15 +760,13 @@ export class OverviewService {
   /**
    * Broiler-only — `ledgers` hang off `flocks`. Debits sourced from the
    * expenses screen are skipped because `expenses` already counts them;
-   * same guard as `report.component.ts`. Ledger debits are obligations, not
-   * payments, so they contribute nothing to the cash figure.
+   * same guard as `report.component.ts`.
    */
   private qLedgerDebits(farmId: number, range: OverviewDateRange): [string, any[]] {
     const params: any[] = [farmId];
     const sql =
       `SELECT f.unit_id AS unit_id,
               COALESCE(SUM(le.amount), 0) AS amount,
-              0 AS cash_amount,
               COUNT(*) AS row_count
        FROM ledger_entries le
        JOIN flocks f ON f.flock_id = le.flock_id
@@ -836,6 +824,14 @@ export class OverviewService {
    * sales-return path always writes and the bill-edit path ("Restored from
    * deleted/edited sale") never does.
    *
+   * The `' - '` in that LIKE pattern is load-bearing, not cosmetic. Matching on
+   * `return_number || '%'` made RET-100 match the notes of RET-1000, RET-1001,
+   * … as well as its own, so from the 100th return onwards a single return row
+   * could join several transactions and net the same goods off more than once.
+   * `restoreReturnedStock()` writes the note as `${return_number} - Bill ...`,
+   * so requiring the separator pins the match to the whole number. Keep the two
+   * in step: change the note format and this pattern changes with it.
+   *
    * `type = 'purchase'` and `type = 'adjustment'` are excluded deliberately:
    * adjustments are stock leaving for a purchase edit, a purchase return or a
    * batch deletion. None of it sold, so none of it is a cost of sales.
@@ -855,9 +851,6 @@ export class OverviewService {
    * consumed by the business; `eliminateInternalRows()` removes the mirrored
    * broiler/layer cost row (which stands at the bill's selling price), so the
    * purchase cost has to remain or the transfer would cost the account nothing.
-   *
-   * `cash_amount` is 0: no cash moves when stock sells, it moved when the stock
-   * was bought. The cash statement keeps using `qPurchases()` for that.
    *
    * Batch draws against a bill with no surviving `bill_items` line are not
    * picked up. A fully returned bill nets to roughly zero anyway, so the
@@ -892,7 +885,7 @@ export class OverviewService {
          LEFT JOIN sales_returns sr
                 ON sr.return_id = bt.reference_id
                AND sr.farm_id = ?
-               AND bt.notes LIKE sr.return_number || '%'
+               AND bt.notes LIKE sr.return_number || ' - %'
          WHERE pb.farm_id = ? AND bt.type = 'return' AND bt.reference_id IS NOT NULL
        ),
        drawn AS (
@@ -919,7 +912,6 @@ export class OverviewService {
                 + (MAX(COALESCE(d.unpriced_qty, 0), 0)
                    + MAX(s.qty - COALESCE(d.net_qty, 0), 0)) * COALESCE(r.unit_cost, 0)
               ), 0) AS amount,
-              0 AS cash_amount,
               COALESCE(SUM(
                 CASE WHEN COALESCE(r.unit_cost, 0) > 0 THEN 0
                      ELSE MAX(COALESCE(d.unpriced_qty, 0), 0)
@@ -956,7 +948,6 @@ export class OverviewService {
        SELECT COALESCE(SUM(CASE WHEN COALESCE(pb.purchase_price, 0) > 0
                                 THEN pb.quantity * pb.purchase_price
                                 ELSE pb.quantity * COALESCE(r.unit_cost, 0) END), 0) AS amount,
-              0 AS cash_amount,
               COALESCE(SUM(CASE WHEN COALESCE(pb.purchase_price, 0) > 0
                                 THEN 0 ELSE pb.quantity END), 0) AS unpriced_qty,
               COUNT(*) AS row_count
@@ -971,8 +962,6 @@ export class OverviewService {
     const params: any[] = [farmId];
     const sql =
       `SELECT COALESCE(SUM(po.total_amount), 0) AS amount,
-              COALESCE(SUM(CASE WHEN COALESCE(po.payment_type,'cash') <> 'bank'
-                                THEN po.total_amount ELSE 0 END), 0) AS cash_amount,
               COUNT(*) AS row_count
        FROM purchase_orders po
        WHERE po.farm_id = ?` +
@@ -984,8 +973,6 @@ export class OverviewService {
     const params: any[] = [farmId];
     const sql =
       `SELECT COALESCE(SUM(pr.return_amount), 0) AS amount,
-              COALESCE(SUM(CASE WHEN COALESCE(pr.refund_method,'cash') <> 'bank'
-                                THEN pr.return_amount ELSE 0 END), 0) AS cash_amount,
               COUNT(*) AS row_count
        FROM purchase_returns pr
        WHERE pr.farm_id = ?` +
@@ -997,8 +984,6 @@ export class OverviewService {
     const params: any[] = [farmId];
     const sql =
       `SELECT COALESCE(SUM(el.amount), 0) AS amount,
-              COALESCE(SUM(CASE WHEN COALESCE(el.payment_type,'cash') <> 'bank'
-                                THEN el.amount ELSE 0 END), 0) AS cash_amount,
               COUNT(*) AS row_count
        FROM expense_ledger el
        WHERE el.farm_id = ?` +
@@ -1044,7 +1029,7 @@ export class OverviewService {
     params.push(...expensesParams, ...medicineParams, ...feedParams, ...vaccParams);
 
     const sql =
-      `SELECT COALESCE(SUM(amt), 0) AS amount, 0 AS cash_amount, COUNT(*) AS row_count
+      `SELECT COALESCE(SUM(amt), 0) AS amount, COUNT(*) AS row_count
        FROM (
          ${expensesSql}
          UNION ALL
@@ -1059,64 +1044,90 @@ export class OverviewService {
 
   // ── Asset / personal queries ─────────────────────────────────────────────
 
-  /** Sold assets only — this app books no depreciation, so gain is realised on sale. */
-  private qAssetsRealised(farmId: number, range: OverviewDateRange): [string, any[]] {
+  /** Money in from asset sales — the full sale price, not the gain over cost. */
+  private qAssetSales(farmId: number, range: OverviewDateRange): [string, any[]] {
     const params: any[] = [farmId];
     const sql =
-      `SELECT a.unit_id AS unit_id,
-              COALESCE(SUM(COALESCE(a.sale_amount,0) - COALESCE(a.purchase_amount,0)), 0) AS amount,
-              COALESCE(SUM(COALESCE(a.sale_amount,0)), 0) AS cash_amount,
-              COUNT(*) AS row_count
+      `SELECT COALESCE(SUM(COALESCE(a.sale_amount,0)), 0) AS amount
        FROM assets a
        WHERE a.farm_id = ? AND COALESCE(a.status,'active') = 'sold'` +
-      this.dateClause('a.sale_date', range, params) +
-      ` GROUP BY a.unit_id`;
+      this.dateClause('a.sale_date', range, params);
     return [sql, params];
   }
 
   /**
-   * Assets still held. This is a stock, not a flow, so only the upper bound of
-   * the range applies — "what was owned as at range.to".
+   * Assets still held, at their full agreed price. This is a stock, not a
+   * flow, so only the upper bound of the range applies — "what was owned as
+   * at range.to".
    */
   private qAssetsActive(farmId: number, range: OverviewDateRange): [string, any[]] {
     const params: any[] = [farmId];
     const sql =
-      `SELECT a.unit_id AS unit_id,
-              COALESCE(SUM(a.purchase_amount), 0) AS amount,
-              0 AS cash_amount,
-              COUNT(*) AS row_count
+      `SELECT COALESCE(SUM(COALESCE(a.total_price, a.purchase_amount, 0)), 0) AS amount
        FROM assets a
        WHERE a.farm_id = ? AND COALESCE(a.status,'active') = 'active'` +
-      this.dateClause('a.purchase_date', { to: range.to }, params) +
-      ` GROUP BY a.unit_id`;
-    return [sql, params];
-  }
-
-  /** Every asset bought in the range, sold or not — the cash that went out. */
-  private qAssetPurchases(farmId: number, range: OverviewDateRange): [string, any[]] {
-    const params: any[] = [farmId];
-    const sql =
-      `SELECT COALESCE(SUM(a.purchase_amount), 0) AS amount,
-              COALESCE(SUM(CASE WHEN COALESCE(a.payment_source,'cash') <> 'bank'
-                                THEN a.purchase_amount ELSE 0 END), 0) AS cash_amount,
-              COUNT(*) AS row_count
-       FROM assets a
-       WHERE a.farm_id = ?` +
-      this.dateClause('a.purchase_date', range, params);
+      this.dateClause('a.purchase_date', { to: range.to }, params);
     return [sql, params];
   }
 
   /**
-   * Owner's drawings. Not a business expense — it sits below the profit line,
-   * which is why it is subtracted from profit rather than added to expenses.
+   * Money out for asset installments actually paid in the period.
+   *
+   * This used to charge an asset's whole price to the purchase date. That was
+   * right when assets were bought outright and wrong now that they are paid off
+   * over time: the money leaves as each installment is handed over. Legacy
+   * assets come out unchanged either way, because the installments migration
+   * seeded each one a payment for its full amount dated on its purchase date.
+   */
+  private qAssetPayments(farmId: number, range: OverviewDateRange): [string, any[]] {
+    const params: any[] = [farmId];
+    const sql =
+      `SELECT COALESCE(SUM(p.amount), 0) AS amount
+       FROM asset_payments p
+       WHERE p.farm_id = ?` +
+      this.dateClause('p.date', range, params);
+    return [sql, params];
+  }
+
+  /**
+   * What is still owed on assets, as at range.to. A stock, not a flow, so only
+   * the upper bound applies — both to which assets existed and to which
+   * payments had been made by then.
+   *
+   * Assets that are square or overpaid are excluded rather than netted off, so
+   * one overpaid asset cannot mask another's debt.
+   */
+  private qAssetOutstanding(farmId: number, range: OverviewDateRange): [string, any[]] {
+    const params: any[] = [];
+    const paidParams: any[] = [];
+    const paidClause = this.dateClause('p.date', { to: range.to }, paidParams);
+    params.push(...paidParams, farmId);
+
+    const assetParams: any[] = [];
+    const assetClause = this.dateClause('a.purchase_date', { to: range.to }, assetParams);
+    params.push(...assetParams);
+
+    const sql =
+      `SELECT COALESCE(SUM(owed), 0) AS amount
+       FROM (
+         SELECT COALESCE(a.total_price, a.purchase_amount, 0)
+                - COALESCE((SELECT SUM(p.amount) FROM asset_payments p
+                            WHERE p.asset_id = a.asset_id${paidClause}), 0) AS owed
+         FROM assets a
+         WHERE a.farm_id = ?${assetClause}
+       )
+       WHERE owed > 0`;
+    return [sql, params];
+  }
+
+  /**
+   * Owner's drawings. Not a business expense — it is its own line under
+   * money out, alongside expenses and asset payments.
    */
   private qPersonalExpenses(farmId: number, range: OverviewDateRange): [string, any[]] {
     const params: any[] = [farmId];
     const sql =
-      `SELECT COALESCE(SUM(pe.amount), 0) AS amount,
-              COALESCE(SUM(CASE WHEN COALESCE(pe.payment_source,'cash') <> 'bank'
-                                THEN pe.amount ELSE 0 END), 0) AS cash_amount,
-              COUNT(*) AS row_count
+      `SELECT COALESCE(SUM(pe.amount), 0) AS amount
        FROM personal_expenses pe
        WHERE pe.farm_id = ?` +
       this.dateClause('pe.date', range, params);
@@ -1136,56 +1147,6 @@ export class OverviewService {
       return [];
     }
     return res.data || [];
-  }
-
-  /**
-   * Own bank accounts only. `bank_accounts` rows with a `customer_id` belong to
-   * a customer and are used to settle their receivable — they are not the
-   * business's money.
-   *
-   * `addBankLedgerEntry()` posts the opening balance as a ledger debit, so the
-   * ledger is self-contained: balance = SUM(debit) - SUM(credit). Computing it
-   * that way (rather than reading `current_balance`) is what makes the figure
-   * respect `range.to`; `currentBalance` is returned alongside so the dashboard
-   * can flag a drift between the two.
-   */
-  private async loadBankAccounts(
-    farmId: number,
-    range: OverviewDateRange,
-    warnings: string[]
-  ): Promise<OverviewBank> {
-    const params: any[] = [];
-    const ledgerParams: any[] = [];
-    const asOf = this.dateClause('bl.transaction_date', { to: range.to }, ledgerParams);
-    params.push(...ledgerParams, farmId);
-
-    const res = await this.db.get(
-      `SELECT ba.bank_id, ba.bank_name, ba.account_number, ba.current_balance,
-              COALESCE((SELECT SUM(bl.debit - bl.credit) FROM bank_ledger bl
-                        WHERE bl.bank_id = ba.bank_id${asOf}), 0) AS balance
-       FROM bank_accounts ba
-       WHERE ba.farm_id = ? AND ba.customer_id IS NULL
-       ORDER BY ba.bank_name ASC`,
-      params
-    );
-
-    if (!res?.success) {
-      warnings.push('Could not load bank balances: ' + (res?.error || 'unknown error'));
-      return { accounts: [], total: 0 };
-    }
-
-    const accounts: OverviewBankAccount[] = (res.data || []).map((r: any) => ({
-      bank_id: r.bank_id,
-      bank_name: r.bank_name,
-      account_number: r.account_number ?? null,
-      balance: this.num(r.balance),
-      currentBalance: this.num(r.current_balance)
-    }));
-
-    return {
-      accounts,
-      total: accounts.reduce((s, a) => s + a.balance, 0)
-    };
   }
 
   // ── Per-farm assembly ────────────────────────────────────────────────────
@@ -1286,7 +1247,6 @@ export class OverviewService {
     return (res.data || []).map((r: any) => ({
       unitId: r.unit_id ?? null,
       amount: this.num(r.amount),
-      cashAmount: this.num(r.cash_amount),
       rowCount: this.num(r.row_count)
     }));
   }
@@ -1305,14 +1265,6 @@ export class OverviewService {
     return rows.reduce((s, r) => s + r.amount, 0);
   }
 
-  private cash(rows: UnitRow[]): number {
-    return rows.reduce((s, r) => s + r.cashAmount, 0);
-  }
-
-  private count(rows: UnitRow[]): number {
-    return rows.reduce((s, r) => s + r.rowCount, 0);
-  }
-
   private num(value: any): number {
     const n = Number(value);
     return Number.isFinite(n) ? n : 0;
@@ -1320,10 +1272,8 @@ export class OverviewService {
 
   private emptySummary(range: OverviewDateRange, warnings: string[]): OverviewSummary {
     return {
-      basis: 'accrual',
-      basisLabel: BASIS_LABEL,
       range,
-      revenue: { total: 0, broiler: 0, layer: 0, distribution: 0, distributionCollected: 0 },
+      revenue: { total: 0, broiler: 0, layer: 0, distribution: 0, distributionUnpaid: 0 },
       expenses: {
         total: 0, general: 0, medicine: 0, feed: 0, vaccination: 0, labour: 0,
         ledgerDebits: 0, costOfGoodsSold: 0, purchases: 0, purchaseReturns: 0,
@@ -1331,12 +1281,10 @@ export class OverviewService {
         byModule: { broiler: 0, layer: 0, distribution: 0 }
       },
       inventory: { value: 0, unpricedUnits: 0 },
-      businessNetProfit: 0,
-      personalWithdrawals: 0,
-      netPosition: 0,
-      assets: { realisedGainLoss: 0, soldCount: 0, activeValue: 0, activeCount: 0 },
-      bank: { accounts: [], total: 0 },
-      cash: { inflow: 0, outflow: 0, net: 0, note: CASH_NOTE },
+      moneyIn: { total: 0, revenue: 0, assetSales: 0 },
+      moneyOut: { total: 0, expenses: 0, personal: 0, assetPayments: 0 },
+      profit: 0,
+      assets: { activeValue: 0, outstanding: 0 },
       perFarm: [],
       internalTransfers: { billCount: 0, revenueExcluded: 0, expenseExcluded: 0, expenseRowCount: 0 },
       warnings

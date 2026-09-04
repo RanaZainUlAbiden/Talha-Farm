@@ -51,24 +51,24 @@
   &.final .headline-value { font-size: 22px; }
 }
 .headline-label { font-size: 14px; color: #444; }
-.headline-sub { font-size: 12px; color: #999; margin-left: 6px; }
 .headline-value { font-size: 15px; font-weight: 600; color: #1a1a1a; }
 .headline-value.positive { color: #1a5c38; }
 .headline-value.negative { color: #c62828; }
 .headline-divider { height: 1px; background: #e8e8e8; margin: 8px 0; }
-.basis-note { font-size: 11.5px; color: #999; margin: 14px 0 0; font-style: italic; }
+.headline-breakdown {
+  margin: 2px 0 4px 0; padding: 10px 14px; background: #f8f9fa; border-radius: 8px;
+}
+.breakdown-row {
+  display: flex; justify-content: space-between; padding: 3px 0; font-size: 12.5px; color: #666;
+}
 
-// Asset / bank / cash cards
+// Assets section
 .summary-grid {
   display: grid; grid-template-columns: repeat(auto-fit, minmax(190px, 1fr)); gap: 16px; margin-bottom: 8px;
 }
 .summary-card {
   background: white; border-radius: 12px; padding: 20px; border: 1px solid #e0e0e0; text-align: center;
   &.assets { border-top: 4px solid #1565c0; }
-  &.gain { border-top: 4px solid #1a5c38; }
-  &.gain.negative-card { border-top-color: #c62828; }
-  &.bank { border-top: 4px solid #6a1b9a; }
-  &.cash { border-top: 4px solid #e65100; }
 }
 .card-icon { font-size: 22px; margin-bottom: 8px; }
 .card-label { font-size: 12px; color: #888; font-weight: 500; margin-bottom: 6px; }

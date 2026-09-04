@@ -6,6 +6,7 @@ import { AuthService } from '../shared/services/auth.service';
 import { DateOnlyPipe } from '../shared/pipes/date-format.pipe';
 import { PaginationComponent } from '../shared/components/pagination/pagination.component';
 
+import { toLocalDateString } from '../shared/utils/date.util';
 @Component({
   selector: 'app-purchase-returns',
   standalone: true,
@@ -22,7 +23,7 @@ export class PurchaseReturnsComponent implements OnInit {
 
   selectedPurchase: any = null;
   returnQuantity: number | null = null;
-  returnDate = new Date().toISOString().split('T')[0];
+  returnDate = toLocalDateString();
   reason = '';
   refundMethod: 'cash' | 'bank' = 'cash';
 
@@ -150,7 +151,7 @@ export class PurchaseReturnsComponent implements OnInit {
   selectPurchase(purchase: any) {
     this.selectedPurchase = purchase;
     this.returnQuantity = null;
-    this.returnDate = new Date().toISOString().split('T')[0];
+    this.returnDate = toLocalDateString();
     this.reason = '';
     this.refundMethod = 'cash';
     this.errorMessage = '';
@@ -266,7 +267,7 @@ export class PurchaseReturnsComponent implements OnInit {
   }
 
   private async deductReturnedStock(purchase: any, qty: number, returnId: number, returnNumber: string) {
-    const today = new Date().toISOString().split('T')[0];
+    const today = toLocalDateString();
     const note = `${returnNumber} - Returned to supplier`;
 
     if (purchase.batch_id) {
@@ -312,7 +313,7 @@ export class PurchaseReturnsComponent implements OnInit {
     if (appliedDelta !== 0) {
       await this.db.addBatchTransaction(
         batchId, productId, 'adjustment', Math.abs(appliedDelta),
-        new Date().toISOString().split('T')[0], null, note
+        toLocalDateString(), null, note
       );
     }
     return { success: true };

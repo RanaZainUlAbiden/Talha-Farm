@@ -11,6 +11,7 @@ import { FlockService } from '../shared/services/flock.service';
 import { FarmUnitService } from '../shared/services/farm-unit.service';
 import { Subscription } from 'rxjs';
 
+import { toLocalDateString } from '../shared/utils/date.util';
 @Component({
   selector: 'app-layer-mortality',
   standalone: true,
@@ -155,7 +156,7 @@ export class LayerMortalityComponent implements OnInit, OnDestroy {
 
   makeNewRow() { 
     const defaultBatchId = this.currentBatchId || this.batches[0]?.batch_id;
-    return { batch_id: defaultBatchId, date: new Date().toISOString().split('T')[0], count: null, reason: '' }; 
+    return { batch_id: defaultBatchId, date: toLocalDateString(), count: null, reason: '' }; 
   }
   addPendingRow() { if (!this.isSaving) this.pendingRows.push(this.makeNewRow()); }
   addRowAfter(i: number) { this.pendingRows.splice(i + 1, 0, this.makeNewRow()); }

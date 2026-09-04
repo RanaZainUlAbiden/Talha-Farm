@@ -6,6 +6,7 @@ import { DatabaseService } from '../shared/services/database.service';
 import { AuthService } from '../shared/services/auth.service';
 import { ConfirmDialogComponent } from '../shared/components/confirm-dialog/confirm-dialog.component';
 
+import { toLocalDateString } from '../shared/utils/date.util';
 @Component({
   selector: 'app-distribution-batch',
   standalone: true,
@@ -108,7 +109,7 @@ export class DistributionBatchComponent implements OnInit {
     this.isEditing = false;
     this.editingBatchId = null;
     this.batchForm = {
-      manufacturing_date: new Date().toISOString().split('T')[0],
+      manufacturing_date: toLocalDateString(),
       expiry_date: '',
       quantity: 0,
       purchase_price: 0
@@ -176,7 +177,7 @@ export class DistributionBatchComponent implements OnInit {
             this.productId,
             'adjustment',
             Math.abs(newQuantity - oldQuantity),
-            new Date().toISOString().split('T')[0],
+            toLocalDateString(),
             null,
             `Manual batch edit (${newQuantity > oldQuantity ? '+' : ''}${newQuantity - oldQuantity})`
           );

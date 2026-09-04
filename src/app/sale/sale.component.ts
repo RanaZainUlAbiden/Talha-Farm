@@ -14,6 +14,7 @@ import { jsPDF } from 'jspdf';
 import autoTable from 'jspdf-autotable';
 import { PaginationComponent } from '../shared/components/pagination/pagination.component';
 
+import { toLocalDateString } from '../shared/utils/date.util';
 @Component({
   changeDetection: ChangeDetectionStrategy.OnPush,
   selector: 'app-sale',
@@ -88,6 +89,7 @@ export class SaleComponent implements OnInit, OnDestroy {
   handleKeyboard(event: KeyboardEvent) {
     if (event.ctrlKey && event.key === 'a') { event.preventDefault(); if (this.brokers.length > 0) this.addPendingRow(); }
     if (event.ctrlKey && event.key === 's') { event.preventDefault(); if (this.hasPendingRows) this.saveAllRows(); }
+    if (event.key === 'Escape' && this.viewingImage) { this.closeImage(); }
   }
 
   constructor(
@@ -146,7 +148,7 @@ export class SaleComponent implements OnInit, OnDestroy {
   async onDeleteBrokerConfirmed() { if (this.isSaving || !this.deletingBrokerId) return; this.isSaving = true; this.showDeleteBrokerDialog = false; try { await this.db.run('DELETE FROM brokers WHERE broker_id=?', [this.deletingBrokerId]); await this.loadData(); } finally { this.deletingBrokerId = null; this.isSaving = false; this.cdr.detectChanges(); } }
   onDeleteBrokerCancelled() { this.showDeleteBrokerDialog = false; this.deletingBrokerId = null; }
 
-  makeNewRow(): any { return { date: new Date().toISOString().split('T')[0], vehicle_number: '', driver_name: '', driver_phone: '', broker_id: this.brokers.length > 0 ? this.brokers[0].broker_id : null, empty_weight: null, load_weight: null, rate: this.defaultRate, payment_type: 'cash', receipt_image: null }; }
+  makeNewRow(): any { return { date: toLocalDateString(), vehicle_number: '', driver_name: '', driver_phone: '', broker_id: this.brokers.length > 0 ? this.brokers[0].broker_id : null, empty_weight: null, load_weight: null, rate: this.defaultRate, payment_type: 'cash', receipt_image: null }; }
   applyDefaultRateToAll() { if (this.defaultRate !== null) { this.pendingRows.forEach(row => { row.rate = this.defaultRate; }); } }
   addPendingRow() { if (!this.isSaving) { this.editingId = null; this.pendingRows.push(this.makeNewRow()); } }
   addRowAfter(i: number) { this.pendingRows.splice(i + 1, 0, this.makeNewRow()); }
@@ -216,7 +218,9 @@ export class SaleComponent implements OnInit, OnDestroy {
   onDeleteCancelled() { this.showDeleteDialog = false; this.deletingId = null; }
 
   onFileSelected(event: any, target: any) { const file = event.target.files?.[0]; if (!file) return; const reader = new FileReader(); reader.onload = () => { const img = new Image(); img.onload = () => { const canvas = document.createElement('canvas'); const maxWidth = 800; let w = img.width, h = img.height; if (w > maxWidth) { h = (h * maxWidth) / w; w = maxWidth; } canvas.width = w; canvas.height = h; canvas.getContext('2d')!.drawImage(img, 0, 0, w, h); target.receipt_image = canvas.toDataURL('image/jpeg', 0.7); this.cdr.detectChanges(); }; img.src = reader.result as string; }; reader.readAsDataURL(file); }
-  openImage(base64: string) { const win = window.open('', '_blank'); if (win) win.document.write('<img src="' + base64 + '" style="max-width:100%;">'); }
+  viewingImage: string | null = null;
+  openImage(base64: string) { this.viewingImage = base64; }
+  closeImage() { this.viewingImage = null; }
 
 
   selectedDateFilter: string = '';

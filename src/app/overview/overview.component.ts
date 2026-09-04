@@ -114,15 +114,7 @@ export class OverviewComponent implements OnInit {
       doc.line(14, y, pageWidth - 14, y);
       y += 8;
 
-      // ── Accounting basis ──
-      doc.setFont('helvetica', 'italic');
-      doc.setFontSize(8);
-      doc.setTextColor(...GRAY);
-      const basisLines = doc.splitTextToSize(s.basisLabel, pageWidth - 28);
-      doc.text(basisLines, 14, y);
-      y += basisLines.length * 4 + 6;
-
-      // ── Headline block ──
+      // ── Headline block: money in, money out, profit or loss ──
       doc.setFont('helvetica', 'bold');
       doc.setFontSize(11);
       doc.setTextColor(...BLACK);
@@ -132,19 +124,18 @@ export class OverviewComponent implements OnInit {
       doc.line(14, y, pageWidth - 14, y);
       y += 6;
 
+      const profitLabel = s.profit >= 0 ? 'PROFIT' : 'LOSS';
       autoTable(doc, {
         startY: y,
         body: [
-          ['Total Revenue', rs(s.revenue.total)],
-          ['Total Expenses (of which personal: ' + rs(s.personalWithdrawals) + ')', rs(s.expenses.total)],
+          ['Total Money In', rs(s.moneyIn.total)],
+          ['Total Money Out', rs(s.moneyOut.total)],
+          ['  Business expenses', rs(s.moneyOut.expenses)],
+          ['  Personal', rs(s.moneyOut.personal)],
+          ['  Asset payments', rs(s.moneyOut.assetPayments)],
           [
-            { content: 'Business Net Profit', styles: { fontStyle: 'bold' } },
-            { content: rs(s.businessNetProfit), styles: { fontStyle: 'bold', textColor: s.businessNetProfit >= 0 ? GREEN : RED } }
-          ],
-          ['Less: Personal Withdrawals', rs(s.personalWithdrawals)],
-          [
-            { content: 'NET POSITION', styles: { fontStyle: 'bold' } },
-            { content: rs(s.netPosition), styles: { fontStyle: 'bold', textColor: s.netPosition >= 0 ? GREEN : RED } }
+            { content: profitLabel, styles: { fontStyle: 'bold' } },
+            { content: rs(s.profit), styles: { fontStyle: 'bold', textColor: s.profit >= 0 ? GREEN : RED } }
           ]
         ],
         theme: 'plain',
@@ -154,11 +145,11 @@ export class OverviewComponent implements OnInit {
       });
       y = (doc as any).lastAutoTable.finalY + 10;
 
-      // ── Assets / bank ──
+      // ── Stock & assets ──
       doc.setFont('helvetica', 'bold');
       doc.setFontSize(11);
       doc.setTextColor(...BLACK);
-      doc.text('STOCK, ASSETS & CASH POSITION', 14, y);
+      doc.text('DISTRIBUTION STOCK & ASSETS', 14, y);
       y += 3;
       doc.line(14, y, pageWidth - 14, y);
       y += 6;
@@ -170,11 +161,8 @@ export class OverviewComponent implements OnInit {
           ['Distribution Stock Returned to Supplier', rs(s.expenses.purchaseReturns)],
           ['Cost of Goods Sold (charged against profit)', rs(s.expenses.costOfGoodsSold)],
           ['Distribution Stock on Hand, at cost', rs(s.inventory.value)],
-          ['Active Asset Value', rs(s.assets.activeValue)],
-          ['Active Asset Count', String(s.assets.activeCount)],
-          ['Realised Gain / Loss on Sold Assets', rs(s.assets.realisedGainLoss)],
-          ['Bank Balance', rs(s.bank.total)],
-          ['Cash Position (period movement)', rs(s.cash.net)]
+          ['Assets Owned (value)', rs(s.assets.activeValue)],
+          ['Outstanding Installments', rs(s.assets.outstanding)]
         ],
         theme: 'plain',
         bodyStyles: { fontSize: 10, textColor: BLACK, lineWidth: { bottom: 0.15 }, lineColor: LGRAY },

@@ -101,7 +101,15 @@
 
       <div class="recon-col">
         <div class="recon-row">
-          <span>Paid sales (revenue counted)</span>
+          <span>Sales billed to customers</span>
+          <span class="num">Rs. {{ totalSales | number:'1.0-0' }}</span>
+        </div>
+        <div class="recon-row">
+          <span>Less: billed but not yet collected</span>
+          <span class="num">- Rs. {{ totalUnpaidSales | number:'1.0-0' }}</span>
+        </div>
+        <div class="recon-row strong">
+          <span>= Revenue counted (money collected)</span>
           <span class="num">Rs. {{ totalPaidSales | number:'1.0-0' }}</span>
         </div>
         <div class="recon-row">
@@ -120,9 +128,12 @@
           <span>= Profit / Loss</span>
           <span class="num" [style.color]="totalProfitLoss >= 0 ? '#2e7d32' : '#d32f2f'">Rs. {{ totalProfitLoss | number:'1.0-0' }}</span>
         </div>
-        <div class="recon-row muted">
-          <span>Unpaid bills (not counted as revenue)</span>
-          <span class="num">Rs. {{ totalUnpaidSales | number:'1.0-0' }}</span>
+        <div class="recon-row muted" *ngIf="internalTransferCount > 0">
+          <span>
+            Own-farm transfers, excluded from revenue
+            ({{ internalTransferCount }} {{ internalTransferCount === 1 ? 'bill' : 'bills' }})
+          </span>
+          <span class="num">Rs. {{ internalTransferValue | number:'1.0-0' }}</span>
         </div>
       </div>
     </div>
@@ -315,19 +326,26 @@
           <td class="amount">Rs. {{ s.total_amount | number:'1.0-0' }}</td>
           <td>Rs. {{ getBillPaidAmount(s) | number:'1.0-0' }}</td>
           <td>
-            <span class="status-badge" [class.paid]="isBillPaid(s)" [class.unpaid]="!isBillPaid(s)">
+            <span class="status-badge" *ngIf="isInternalBill(s)">🔄 Own farm</span>
+            <span class="status-badge" *ngIf="!isInternalBill(s)"
+                  [class.paid]="isBillPaid(s)" [class.unpaid]="!isBillPaid(s)">
               {{ isBillPaid(s) ? '✅ Paid' : '⏳ Unpaid' }}
             </span>
           </td>
         </tr>
         <tr class="total-row">
-          <td colspan="3"><strong>Totals</strong></td>
+          <td colspan="3"><strong>Totals (customer sales)</strong></td>
           <td class="amount"><strong>Rs. {{ totalSales | number:'1.0-0' }}</strong></td>
           <td class="amount"><strong>Rs. {{ totalPaidSales | number:'1.0-0' }}</strong></td>
           <td class="amount"><strong>Rs. {{ totalUnpaidSales | number:'1.0-0' }}</strong></td>
         </tr>
       </tbody>
     </table>
+    <p class="cash-note" *ngIf="internalTransferCount > 0">
+      Own-farm transfers are listed above but excluded from these totals and from revenue — moving
+      stock to your own flock or batch is not a sale. Their purchase cost is still charged as cost
+      of goods sold.
+    </p>
   </div>
 
   <!-- Expenses Table -->

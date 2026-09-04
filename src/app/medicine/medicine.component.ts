@@ -11,6 +11,7 @@ import { skip } from 'rxjs/operators';
 import { PendingStateService } from '../shared/services/pending-state.service';
 import { PaginationComponent } from '../shared/components/pagination/pagination.component';
 
+import { toLocalDateString } from '../shared/utils/date.util';
 @Component({
   selector: 'app-medicine',
   standalone: true,
@@ -271,7 +272,7 @@ export class MedicineComponent implements OnInit, OnDestroy {
   // ── Pending Rows (Multi-row add) ─────────────────────────────
   makeNewRow(): any {
     return {
-      date: new Date().toISOString().split('T')[0],
+      date: toLocalDateString(),
       medicine_name: '',
       quantity: null,
       price_per_unit: null

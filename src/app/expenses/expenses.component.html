@@ -276,3 +276,10 @@
   (confirmed)="showValidationDialog = false"
   (cancelled)="showValidationDialog = false">
 </app-confirm-dialog>
+
+<div class="modal-overlay" *ngIf="viewingImage" (click)="closeImage()">
+  <div class="modal-card image-modal" (click)="$event.stopPropagation()">
+    <button class="btn-close-image" (click)="closeImage()">&times;</button>
+    <img [src]="viewingImage" alt="Receipt"/>
+  </div>
+</div>

@@ -11,6 +11,7 @@ import { skip } from 'rxjs/operators';
 import { PendingStateService } from '../shared/services/pending-state.service';
 import { PaginationComponent } from '../shared/components/pagination/pagination.component';
 
+import { toLocalDateString } from '../shared/utils/date.util';
 @Component({
   selector: 'app-Feed',
   standalone: true,
@@ -270,7 +271,7 @@ get moduleType(): string {
   // ── Pending Rows (Multi-row add) ─────────────────────────────
   makeNewRow(): any {
     return {
-      date: new Date().toISOString().split('T')[0],
+      date: toLocalDateString(),
       Feed_name: '',
       quantity: null,
       price_per_unit: null

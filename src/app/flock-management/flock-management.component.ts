@@ -10,6 +10,7 @@ import { ConfirmDialogComponent } from '../shared/components/confirm-dialog/conf
 import { DateOnlyPipe } from '../shared/pipes/date-format.pipe';
 import { PaginationComponent } from '../shared/components/pagination/pagination.component';
 
+import { toLocalDateString } from '../shared/utils/date.util';
 @Component({
   selector: 'app-flock-management',
   standalone: true,
@@ -60,7 +61,7 @@ export class FlockManagementComponent implements OnInit, OnDestroy {
 
   newRow = {
     flock_name: '',
-    start_date: new Date().toISOString().split('T')[0],
+    start_date: toLocalDateString(),
     end_date: '',
     status: 'active',
     unit_id: null as number | null
@@ -130,7 +131,7 @@ export class FlockManagementComponent implements OnInit, OnDestroy {
   // ── Auto-fill end date when status changes to closed ──────
   onStatusChangeForNew() {
     if (this.newRow.status === 'closed' && !this.newRow.end_date) {
-      this.newRow.end_date = new Date().toISOString().split('T')[0];
+      this.newRow.end_date = toLocalDateString();
     }
     if (this.newRow.status === 'active') {
       this.newRow.end_date = '';
@@ -139,7 +140,7 @@ export class FlockManagementComponent implements OnInit, OnDestroy {
 
   onStatusChangeForEdit() {
     if (this.editForm.status === 'closed' && !this.editForm.end_date) {
-      this.editForm.end_date = new Date().toISOString().split('T')[0];
+      this.editForm.end_date = toLocalDateString();
     }
     if (this.editForm.status === 'active') {
       this.editForm.end_date = '';
@@ -163,7 +164,7 @@ export class FlockManagementComponent implements OnInit, OnDestroy {
 
     this.newRow = {
       flock_name: 'F#' + nextNum + '-Y' + year,
-      start_date: new Date().toISOString().split('T')[0],
+      start_date: toLocalDateString(),
       end_date: '',
       status: 'active',
       unit_id: this.currentUnit?.unit_id ?? this.units[0].unit_id

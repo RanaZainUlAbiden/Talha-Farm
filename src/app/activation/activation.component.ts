@@ -4,6 +4,7 @@ import { FormsModule } from '@angular/forms';
 import { Router } from '@angular/router';
 import { LicenseService } from '../shared/services/license.service';
 
+import { toLocalDateString } from '../shared/utils/date.util';
 @Component({
   selector: 'app-activation',
   standalone: true,
@@ -105,13 +106,13 @@ export class ActivationComponent implements OnInit {
     this.licenseService.startTrial();
     this.isTrialStarted = true;
     this.daysRemaining = 7;
-    this.expirationDate = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString().split('T')[0];
+    this.expirationDate = toLocalDateString(new Date(Date.now() + 7 * 24 * 60 * 60 * 1000));
     setTimeout(() => {
       this.router.navigate(['/login']);
     }, 300);
   }
 
   getTodayDate(): string {
-    return new Date().toISOString().split('T')[0];
+    return toLocalDateString();
   }
 }

@@ -8,6 +8,7 @@ import { FormStateService } from '../shared/services/form-state.service';
 import { ConfirmDialogComponent } from '../shared/components/confirm-dialog/confirm-dialog.component';
 import { PaginationComponent } from '../shared/components/pagination/pagination.component';
 
+import { toLocalDateString } from '../shared/utils/date.util';
 @Component({
   selector: 'app-inventory',
   standalone: true,
@@ -407,10 +408,10 @@ confirmDeleteCategory(cat: any) {
           const stockToAdd = (this.newRow.current_stock || 0) > 0 ? this.newRow.current_stock || 0 : 0;
           
           if (stockToAdd > 0) {
-            const today = new Date().toISOString().split('T')[0];
+            const today = toLocalDateString();
             const oneYearLater = new Date(); 
             oneYearLater.setFullYear(oneYearLater.getFullYear() + 1);
-            const expiryDate = this.newRow.expiry_date || oneYearLater.toISOString().split('T')[0];
+            const expiryDate = this.newRow.expiry_date || toLocalDateString(oneYearLater);
             
             await this.db.addBatch({ 
               product_id: productId, 

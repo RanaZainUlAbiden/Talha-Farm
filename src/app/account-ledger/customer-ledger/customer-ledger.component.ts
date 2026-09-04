@@ -9,6 +9,7 @@ import { jsPDF } from 'jspdf';
 import autoTable from 'jspdf-autotable';
 import { DeleteCodeDialogComponent } from '../../shared/components/delete-code-dialog/delete-code-dialog.component';
 
+import { toLocalDateString } from '../../shared/utils/date.util';
 @Component({
   selector: 'app-customer-ledger',
   standalone: true,
@@ -54,7 +55,7 @@ export class CustomerLedgerComponent implements OnInit {
 
   ngOnInit() {
     this.currentFarm = this.authService.getCurrentFarm();
-    this.paymentDate = new Date().toISOString().split('T')[0];
+    this.paymentDate = toLocalDateString();
     
     this.route.params.subscribe(params => {
       const customerId = params['id'];
@@ -212,7 +213,7 @@ export class CustomerLedgerComponent implements OnInit {
   openPaymentForm() {
     this.showPaymentForm = true;
     this.paymentAmount = this.getCustomerBalance();
-    this.paymentDate = new Date().toISOString().split('T')[0];
+    this.paymentDate = toLocalDateString();
     this.paymentNote = '';
     this.selectedBillId = null;
     
@@ -387,7 +388,7 @@ export class CustomerLedgerComponent implements OnInit {
     const B: [number, number, number] = [0, 0, 0];
     const G: [number, number, number] = [120, 120, 120];
     const farmName = this.currentFarm?.farm_name || 'Farm';
-    const today = new Date().toISOString().split('T')[0];
+    const today = toLocalDateString();
     const margin = 14;
     const pageWidth = pw - (margin * 2);
     

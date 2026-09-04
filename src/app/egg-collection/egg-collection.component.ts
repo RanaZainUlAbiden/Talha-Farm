@@ -11,6 +11,7 @@ import { FlockService } from '../shared/services/flock.service';
 import { FarmUnitService } from '../shared/services/farm-unit.service';
 import { Subscription } from 'rxjs';
 
+import { toLocalDateString } from '../shared/utils/date.util';
 @Component({
   selector: 'app-egg-collection',
   standalone: true,
@@ -155,7 +156,7 @@ export class EggCollectionComponent implements OnInit, OnDestroy {
   makeNewRow(): any {
     return {
       batch_id: this.selectedBatchFilter !== 'all' ? Number(this.selectedBatchFilter) : (this.batches.length > 0 ? this.batches[0].batch_id : null),
-      date: new Date().toISOString().split('T')[0],
+      date: toLocalDateString(),
       total_eggs: null, broken_eggs: 0, small_grade: 0, medium_grade: 0, large_grade: 0, xl_grade: 0
     };
   }

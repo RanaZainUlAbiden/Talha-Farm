@@ -12,6 +12,7 @@ import autoTable from 'jspdf-autotable';
 import { PaginationComponent } from '../shared/components/pagination/pagination.component';
 import { DeleteCodeDialogComponent } from '../shared/components/delete-code-dialog/delete-code-dialog.component';
 
+import { toLocalDateString } from '../shared/utils/date.util';
 /**
  * Unwinds a bill save or delete that has already told the user why it stopped —
  * a bank movement that could not be applied, for example. The transaction rolls
@@ -481,7 +482,7 @@ export class SalesOrdersComponent implements OnInit, OnDestroy {
 
     return this.db.addBankLedgerEntry({
       bank_id: bankResult.data[0].bank_id,
-      transaction_date: new Date().toISOString().split('T')[0],
+      transaction_date: toLocalDateString(),
       description,
       debit: amount,
       credit: 0,
@@ -802,7 +803,7 @@ export class SalesOrdersComponent implements OnInit, OnDestroy {
 
     this.assertOk(await this.db.addCustomerLedgerEntry({
       customer_id: customerId,
-      transaction_date: new Date().toISOString().split('T')[0],
+      transaction_date: toLocalDateString(),
       description: `Bill #${billNumber}`,
       debit: totalAmount,
       credit: 0,
@@ -813,7 +814,7 @@ export class SalesOrdersComponent implements OnInit, OnDestroy {
     if (paidAmount > 0) {
       this.assertOk(await this.db.addCustomerLedgerEntry({
         customer_id: customerId,
-        transaction_date: new Date().toISOString().split('T')[0],
+        transaction_date: toLocalDateString(),
         description: `Payment - Bill #${billNumber}`,
         debit: 0,
         credit: paidAmount,
@@ -842,7 +843,7 @@ export class SalesOrdersComponent implements OnInit, OnDestroy {
     const check = (result: any, what: string) => { if (strict) this.assertOk(result, what); };
 
     const existingItems = await this.getBillItems(billId);
-    const today = new Date().toISOString().split('T')[0];
+    const today = toLocalDateString();
 
     // 🔥 FIX: compute the NET outstanding quantity per batch (sale − return)
     // for this bill, not the raw sum of every 'sale' transaction ever logged
@@ -914,7 +915,7 @@ export class SalesOrdersComponent implements OnInit, OnDestroy {
             product_id: item.product_id,
             farm_id: this.currentFarm.farm_id,
             manufacturing_date: today,
-            expiry_date: oneYearLater.toISOString().split('T')[0],
+            expiry_date: toLocalDateString(oneYearLater),
             quantity: item.quantity,
             purchase_price: 0
           });
@@ -986,7 +987,7 @@ export class SalesOrdersComponent implements OnInit, OnDestroy {
     // Unchanged FIFO walk — the difference is that the writes are collected and
     // sent as one atomic batch instead of a round trip (and a full rewrite of
     // the database file) per statement.
-    const today = new Date().toISOString().split('T')[0];
+    const today = toLocalDateString();
     const ops: DbBatchOp[] = [];
     let remaining = quantity;
 
@@ -1126,7 +1127,7 @@ export class SalesOrdersComponent implements OnInit, OnDestroy {
           await this.mustRun(
             'INSERT INTO bills (farm_id, bill_number, customer_id, customer_name, bill_date, subtotal, total_amount, amount_paid, payment_type) VALUES (?,?,?,?,?,?,?,?,?)',
             [this.currentFarm.farm_id, billNumber, this.selectedCustomerId, customerName,
-             new Date().toISOString().split('T')[0], totalAmount, totalAmount, effectivePaid, paymentType]
+             toLocalDateString(), totalAmount, totalAmount, effectivePaid, paymentType]
           );
 
           const lastBill = await this.db.get('SELECT MAX(bill_id) as bid FROM bills WHERE farm_id=?', [this.currentFarm.farm_id]);
@@ -1156,7 +1157,7 @@ export class SalesOrdersComponent implements OnInit, OnDestroy {
           for (const item of this.gridItems) {
             const billTag = billNumber ? ` (Bill #${billNumber})` : '';
             const desc = item.productName + ' × ' + item.quantity + billTag;
-            const todayDate = new Date().toISOString().split('T')[0];
+            const todayDate = toLocalDateString();
 
             const productRes = await this.db.get('SELECT category FROM products WHERE product_id=?', [item.productId]);
             this.assertOk(productRes, 'Could not read the product category');

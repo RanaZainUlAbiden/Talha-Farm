@@ -1,4 +1,5 @@
-<div class="module-container">
+<!-- ── CARD GRID ─────────────────────────────────────────────── -->
+<div class="module-container" *ngIf="!selectedAsset">
   <div class="module-header">
     <div>
       <h3>Assets</h3>
@@ -18,8 +19,18 @@
         <span class="summary-value">{{ activeAssets.length }}</span>
       </div>
       <div class="summary-card">
-        <span class="summary-label">Active Purchase Value</span>
-        <span class="summary-value">Rs. {{ totalActivePurchaseValue | number:'1.0-0' }}</span>
+        <span class="summary-label">Active Asset Value</span>
+        <span class="summary-value">Rs. {{ totalActiveValue | number:'1.0-0' }}</span>
+      </div>
+      <div class="summary-card">
+        <span class="summary-label">Total Paid</span>
+        <span class="summary-value">Rs. {{ totalPaid | number:'1.0-0' }}</span>
+      </div>
+      <div class="summary-card">
+        <span class="summary-label">Outstanding Installments</span>
+        <span class="summary-value" [class.loss]="totalOutstanding > 0">
+          Rs. {{ totalOutstanding | number:'1.0-0' }}
+        </span>
       </div>
       <div class="summary-card">
         <span class="summary-label">Realised Gain / Loss</span>
@@ -33,45 +44,149 @@
       <p>No assets yet. Click "Add Asset" to get started.</p>
     </div>
 
-    <div class="table-card" *ngIf="assets.length > 0">
+    <div class="card-grid" *ngIf="assets.length > 0">
+      <div class="asset-card" *ngFor="let a of assets"
+           [class.sold]="a.status === 'sold'"
+           (click)="openAsset(a)">
+        <div class="card-top">
+          <h4 class="asset-name">{{ a.asset_name }}</h4>
+          <span class="status-badge" [class.sold]="a.status === 'sold'">
+            {{ a.status === 'sold' ? 'Sold' : 'Active' }}
+          </span>
+        </div>
+        <p class="card-meta">{{ a.category || '—' }} · {{ a.purchase_date | dateOnly }}</p>
+
+        <div class="card-figures">
+          <div class="figure">
+            <span class="figure-label">Total Price</span>
+            <span class="figure-value">Rs. {{ agreedPrice(a) | number:'1.0-0' }}</span>
+          </div>
+          <div class="figure">
+            <span class="figure-label">Paid</span>
+            <span class="figure-value paid">Rs. {{ paidAmount(a) | number:'1.0-0' }}</span>
+          </div>
+          <div class="figure">
+            <span class="figure-label">Outstanding</span>
+            <span class="figure-value" [class.loss]="outstanding(a) > 0" [class.paid]="isFullyPaid(a)">
+              Rs. {{ outstanding(a) | number:'1.0-0' }}
+            </span>
+          </div>
+        </div>
+
+        <div class="progress-track" [title]="(paidPercent(a) | number:'1.0-0') + '% paid'">
+          <div class="progress-fill" [class.complete]="isFullyPaid(a)" [style.width.%]="paidPercent(a)"></div>
+        </div>
+
+        <div class="card-footer">
+          <span class="payment-count">
+            {{ a.payment_count || 0 }} {{ (a.payment_count === 1) ? 'payment' : 'payments' }}
+          </span>
+          <span class="open-hint">View →</span>
+        </div>
+      </div>
+    </div>
+  </ng-container>
+</div>
+
+<!-- ── DETAIL VIEW ───────────────────────────────────────────── -->
+<div class="module-container" *ngIf="selectedAsset">
+  <div class="module-header">
+    <div>
+      <button class="btn-back" (click)="closeAsset()">← Assets</button>
+      <h3>{{ selectedAsset.asset_name }}</h3>
+      <p class="subtitle">
+        {{ selectedAsset.category || '—' }} · Bought {{ selectedAsset.purchase_date | dateOnly }}
+        · {{ selectedAsset.status === 'sold' ? 'Sold' : 'Active' }}
+      </p>
+    </div>
+    <div class="header-actions">
+      <button class="btn-primary" (click)="openPaymentForm()" *ngIf="!isFullyPaid(selectedAsset)">+ Add Payment</button>
+      <button class="btn-edit" *ngIf="selectedAsset.status !== 'sold'" (click)="openSellForm(selectedAsset)">Sell</button>
+      <button class="btn-edit" (click)="openEditForm(selectedAsset)">Edit</button>
+      <button class="btn-delete" (click)="confirmDelete(selectedAsset.asset_id)">Delete</button>
+    </div>
+  </div>
+
+  <div class="error-message" *ngIf="detailError">{{ detailError }}</div>
+
+  <div class="summary-row">
+    <div class="summary-card">
+      <span class="summary-label">Total Price</span>
+      <span class="summary-value">Rs. {{ agreedPrice(selectedAsset) | number:'1.0-0' }}</span>
+    </div>
+    <div class="summary-card">
+      <span class="summary-label">Amount Paid</span>
+      <span class="summary-value gain">Rs. {{ paidAmount(selectedAsset) | number:'1.0-0' }}</span>
+    </div>
+    <div class="summary-card">
+      <span class="summary-label">Outstanding</span>
+      <span class="summary-value" [class.loss]="outstanding(selectedAsset) > 0">
+        Rs. {{ outstanding(selectedAsset) | number:'1.0-0' }}
+      </span>
+    </div>
+    <div class="summary-card" *ngIf="selectedAsset.status === 'sold'">
+      <span class="summary-label">Sold For</span>
+      <span class="summary-value">Rs. {{ selectedAsset.sale_amount | number:'1.0-0' }}</span>
+    </div>
+    <div class="summary-card" *ngIf="selectedAsset.status === 'sold'">
+      <span class="summary-label">Gain / Loss on Sale</span>
+      <span class="summary-value" [class.gain]="gainLoss(selectedAsset) > 0" [class.loss]="gainLoss(selectedAsset) < 0">
+        Rs. {{ gainLoss(selectedAsset) | number:'1.0-0' }}
+      </span>
+    </div>
+  </div>
+
+  <div class="detail-note" *ngIf="selectedAsset.notes">{{ selectedAsset.notes }}</div>
+
+  <h4 class="section-heading">Payment History</h4>
+
+  <div class="loading-state" *ngIf="isLoadingPayments"><p>Loading payments...</p></div>
+
+  <ng-container *ngIf="!isLoadingPayments">
+    <div class="empty-state" *ngIf="payments.length === 0">
+      <p>No payments recorded yet. Click "Add Payment" to record one.</p>
+    </div>
+
+    <div class="table-card" *ngIf="payments.length > 0">
       <table>
         <thead>
           <tr>
-            <th>Name</th>
-            <th>Category</th>
-            <th>Purchase Date</th>
-            <th>Purchase Amount</th>
-            <th>Status</th>
-            <th>Sale Amount</th>
-            <th>Gain / Loss</th>
+            <th>Date</th>
+            <th>Amount</th>
+            <th>Notes</th>
             <th>Actions</th>
           </tr>
         </thead>
         <tbody>
-          <tr *ngFor="let a of assets">
-            <td class="asset-name">{{ a.asset_name }}</td>
-            <td>{{ a.category || '—' }}</td>
-            <td>{{ a.purchase_date | dateOnly }}</td>
-            <td class="amount">Rs. {{ a.purchase_amount | number:'1.0-0' }}</td>
-            <td>
-              <span class="status-badge" [class.sold]="a.status === 'sold'">{{ a.status === 'sold' ? 'Sold' : 'Active' }}</span>
-            </td>
-            <td class="amount">{{ a.status === 'sold' ? ('Rs. ' + (a.sale_amount | number:'1.0-0')) : '—' }}</td>
-            <td class="amount" [class.gain]="a.status === 'sold' && gainLoss(a) > 0" [class.loss]="a.status === 'sold' && gainLoss(a) < 0">
-              {{ a.status === 'sold' ? ('Rs. ' + (gainLoss(a) | number:'1.0-0')) : '—' }}
-            </td>
+          <tr *ngFor="let p of payments">
+            <td>{{ p.date | dateOnly }}</td>
+            <td class="amount">Rs. {{ p.amount | number:'1.0-0' }}</td>
+            <td>{{ p.notes || '—' }}</td>
             <td class="actions">
-              <button class="btn-edit" *ngIf="a.status !== 'sold'" (click)="openSellForm(a)">Sell</button>
-              <button class="btn-edit" (click)="openEditForm(a)">Edit</button>
-              <button class="btn-delete" (click)="confirmDelete(a.asset_id)">Delete</button>
+              <button class="btn-delete" (click)="confirmDeletePayment(p.payment_id)">Delete</button>
             </td>
           </tr>
         </tbody>
+        <tfoot>
+          <tr>
+            <td>Total Paid</td>
+            <td class="amount">Rs. {{ paidAmount(selectedAsset) | number:'1.0-0' }}</td>
+            <td colspan="2"></td>
+          </tr>
+          <tr>
+            <td>Still Outstanding</td>
+            <td class="amount" [class.loss]="outstanding(selectedAsset) > 0">
+              Rs. {{ outstanding(selectedAsset) | number:'1.0-0' }}
+            </td>
+            <td colspan="2"></td>
+          </tr>
+        </tfoot>
       </table>
     </div>
   </ng-container>
 </div>
 
+<!-- ── MODALS ────────────────────────────────────────────────── -->
 <div class="modal-overlay" *ngIf="showForm">
   <div class="modal-card">
     <h4>{{ editingId ? 'Edit Asset' : 'Add Asset' }}</h4>
@@ -84,17 +199,13 @@
     </select>
 
     <input class="inline-input" type="date" [(ngModel)]="form.purchase_date"/>
-    <input class="inline-input" type="number" [(ngModel)]="form.purchase_amount" placeholder="Purchase amount"/>
+    <input class="inline-input" type="number" [(ngModel)]="form.total_price" placeholder="Total price (full agreed price)"/>
 
-    <select class="inline-input" [(ngModel)]="form.payment_source">
-      <option value="cash">Cash</option>
-      <option value="bank">Bank</option>
-    </select>
-
-    <select class="inline-input" *ngIf="form.payment_source === 'bank'" [(ngModel)]="form.bank_id">
-      <option [ngValue]="null">Select bank account</option>
-      <option *ngFor="let b of bankAccounts" [ngValue]="b.bank_id">{{ b.bank_name }}</option>
-    </select>
+    <input class="inline-input" *ngIf="!editingId" type="number" [(ngModel)]="form.initial_payment"
+           placeholder="Paid now (leave blank if nothing paid yet)"/>
+    <p class="field-hint" *ngIf="editingId">
+      Payments are managed from the asset's payment history, not here.
+    </p>
 
     <textarea class="inline-input" [(ngModel)]="form.notes" placeholder="Notes (optional)" rows="2"></textarea>
 
@@ -105,11 +216,36 @@
   </div>
 </div>
 
+<div class="modal-overlay" *ngIf="showPaymentForm">
+  <div class="modal-card">
+    <h4>Add Payment</h4>
+    <p class="subtitle">
+      {{ selectedAsset?.asset_name }} · Rs. {{ outstanding(selectedAsset) | number:'1.0-0' }} outstanding
+    </p>
+    <div class="error-message" *ngIf="paymentError">{{ paymentError }}</div>
+
+    <input class="inline-input" type="date" [(ngModel)]="paymentForm.date"/>
+    <input class="inline-input" type="number" [(ngModel)]="paymentForm.amount" placeholder="Payment amount"/>
+
+    <textarea class="inline-input" [(ngModel)]="paymentForm.notes" placeholder="Notes (optional)" rows="2"></textarea>
+
+    <div class="modal-actions">
+      <button class="btn-secondary" (click)="cancelPaymentForm()">Cancel</button>
+      <button class="btn-primary" (click)="savePayment()">Save Payment</button>
+    </div>
+  </div>
+</div>
+
 <div class="modal-overlay" *ngIf="showSellForm">
   <div class="modal-card">
     <h4>Sell Asset</h4>
     <p class="subtitle">{{ sellingAsset?.asset_name }}</p>
     <div class="error-message" *ngIf="sellError">{{ sellError }}</div>
+
+    <p class="field-hint" *ngIf="sellingAsset && outstanding(sellingAsset) > 0">
+      Rs. {{ outstanding(sellingAsset) | number:'1.0-0' }} is still owed on this asset.
+      Selling it does not clear that — it stays in outstanding installments.
+    </p>
 
     <input class="inline-input" type="date" [(ngModel)]="sellForm.sale_date"/>
     <input class="inline-input" type="number" [(ngModel)]="sellForm.sale_amount" placeholder="Sale amount"/>
@@ -124,9 +260,19 @@
 <app-confirm-dialog
   *ngIf="showDeleteDialog"
   title="Delete Asset"
-  message="Are you sure? This cannot be undone."
+  message="This deletes the asset and its whole payment history. This cannot be undone."
   confirmText="Delete"
   cancelText="Cancel"
   type="danger"
   (confirmed)="onDeleteConfirmed()"
   (cancelled)="onDeleteCancelled()"/>
+
+<app-confirm-dialog
+  *ngIf="showDeletePaymentDialog"
+  title="Delete Payment"
+  message="Are you sure? The amount goes back to outstanding."
+  confirmText="Delete"
+  cancelText="Cancel"
+  type="danger"
+  (confirmed)="onDeletePaymentConfirmed()"
+  (cancelled)="onDeletePaymentCancelled()"/>

@@ -10,6 +10,7 @@ import { ConfirmDialogComponent } from '../shared/components/confirm-dialog/conf
 import { DateOnlyPipe } from '../shared/pipes/date-format.pipe';
 import { PaginationComponent } from '../shared/components/pagination/pagination.component';
 
+import { toLocalDateString } from '../shared/utils/date.util';
 @Component({
   selector: 'app-batch-management',
   standalone: true,
@@ -45,7 +46,7 @@ export class BatchManagementComponent implements OnInit, OnDestroy {
     return this.batches.slice(start, start + this.pageSize);
   }
 
-  newRow = { batch_name: '', start_date: new Date().toISOString().split('T')[0], end_date: '', initial_birds: null, breed: '', status: 'active', unit_id: null as number | null };
+  newRow = { batch_name: '', start_date: toLocalDateString(), end_date: '', initial_birds: null, breed: '', status: 'active', unit_id: null as number | null };
 
   constructor(
     private db: DatabaseService,
@@ -118,7 +119,7 @@ export class BatchManagementComponent implements OnInit, OnDestroy {
 
     this.newRow = {
       batch_name: '',
-      start_date: new Date().toISOString().split('T')[0],
+      start_date: toLocalDateString(),
       end_date: '',
       initial_birds: null,
       breed: '',
@@ -131,7 +132,7 @@ export class BatchManagementComponent implements OnInit, OnDestroy {
 
   onStatusChangeForNew() {
     if (this.newRow.status === 'closed' && !this.newRow.end_date) {
-      this.newRow.end_date = new Date().toISOString().split('T')[0];
+      this.newRow.end_date = toLocalDateString();
     } else if (this.newRow.status === 'active') {
       this.newRow.end_date = '';
     }
@@ -139,7 +140,7 @@ export class BatchManagementComponent implements OnInit, OnDestroy {
 
   onStatusChangeForEdit() {
     if (this.editForm.status === 'closed' && !this.editForm.end_date) {
-      this.editForm.end_date = new Date().toISOString().split('T')[0];
+      this.editForm.end_date = toLocalDateString();
     } else if (this.editForm.status === 'active') {
       this.editForm.end_date = '';
     }
